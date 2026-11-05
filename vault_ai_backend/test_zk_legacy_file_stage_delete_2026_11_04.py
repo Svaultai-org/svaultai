@@ -42,6 +42,8 @@ class _Cursor:
                 self.result = None
         elif query.startswith("update vaults"):
             assert self.result is not None
+            if self.db.fail_quota_update:
+                raise RuntimeError("synthetic quota write failure")
             self.db.state["quota"] -= params[0]
         else:
             raise AssertionError(f"Unexpected SQL: {query[:110]}")
@@ -51,7 +53,8 @@ class _Cursor:
 
 
 class _Db:
-    def __init__(self, *, marked=True, verified=False, missing_old_delete=False):
+    def __init__(self, *, marked=True, verified=False, missing_old_delete=False,
+                 fail_quota_update=False):
         self.state = {
             "legacy": {"id": FILE_ID, "file_name": "synthetic.txt", "file_size": 37},
             "v2": {
@@ -64,6 +67,7 @@ class _Db:
         }
         self.initial = copy.deepcopy(self.state)
         self.missing_old_delete = missing_old_delete
+        self.fail_quota_update = fail_quota_update
         self.queries = []
         self.cur = _Cursor(self)
         self.commits = 0
@@ -96,17 +100,19 @@ def test_explicit_old_file_delete_atomically_removes_only_marked_stage(
     monkeypatch.setattr(pin_only_action_gate, "authorize_pin_only_action", mock.Mock())
     monkeypatch.setattr(vault_manage_routes, "authorize_pin_only_action", mock.Mock())
     if path == "primary":
+        import billing
+
         monkeypatch.setattr(main, "get_db", lambda: db)
-        quota_bump = mock.Mock(side_effect=lambda _vault, delta: db.state.__setitem__(
-            "quota", db.state["quota"] + delta,
-        ))
-        monkeypatch.setattr(main, "bump_vault_total_bytes", quota_bump)
+        account_bump = mock.Mock()
+        monkeypatch.setattr(billing, "get_account_id_for_vault",
+                            lambda _vault: "synthetic-account")
+        monkeypatch.setattr(billing, "bump_account_total_bytes", account_bump)
         result = asyncio.run(main.delete_file_endpoint(
             mock.Mock(),
             main.DeleteFileRequest(vault_name="synthetic", file_id=FILE_ID, pin="123456"),
             {"vault_id": VAULT_ID},
         ))
-        quota_bump.assert_called_once_with(VAULT_ID, -37)
+        account_bump.assert_called_once_with("synthetic-account", -37)
     else:
         monkeypatch.setattr(vault_manage_routes, "get_db", lambda: db)
         result = vault_manage_routes._delete_file_impl(
@@ -135,7 +141,6 @@ def test_unmarked_or_verified_v2_cannot_be_removed_by_legacy_delete(
     monkeypatch.setattr(vault_manage_routes, "authorize_pin_only_action", mock.Mock())
     if path == "primary":
         monkeypatch.setattr(main, "get_db", lambda: db)
-        monkeypatch.setattr(main, "bump_vault_total_bytes", mock.Mock())
         action = lambda: asyncio.run(main.delete_file_endpoint(
             mock.Mock(), main.DeleteFileRequest(
                 vault_name="synthetic", file_id=FILE_ID, pin="123456",
@@ -167,7 +172,6 @@ def test_failed_old_row_delete_rolls_back_stage_cleanup(monkeypatch, path):
     monkeypatch.setattr(vault_manage_routes, "authorize_pin_only_action", mock.Mock())
     if path == "primary":
         monkeypatch.setattr(main, "get_db", lambda: db)
-        monkeypatch.setattr(main, "bump_vault_total_bytes", mock.Mock())
         action = lambda: asyncio.run(main.delete_file_endpoint(
             mock.Mock(), main.DeleteFileRequest(
                 vault_name="synthetic", file_id=FILE_ID, pin="123456",
@@ -186,6 +190,59 @@ def test_failed_old_row_delete_rolls_back_stage_cleanup(monkeypatch, path):
     assert db.rollbacks == 1
     assert db.commits == 0
     assert db.state == db.initial
+
+
+def test_primary_quota_failure_rolls_back_legacy_and_v2_stage(monkeypatch):
+    import billing
+    import main
+    import pin_only_action_gate
+
+    db = _Db(fail_quota_update=True)
+    account_bump = mock.Mock()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(pin_only_action_gate, "authorize_pin_only_action", mock.Mock())
+    monkeypatch.setattr(billing, "bump_account_total_bytes", account_bump)
+    with pytest.raises(RuntimeError, match="synthetic quota write failure"):
+        asyncio.run(main.delete_file_endpoint(
+            mock.Mock(), main.DeleteFileRequest(
+                vault_name="synthetic", file_id=FILE_ID, pin="123456",
+            ), {"vault_id": VAULT_ID},
+        ))
+    assert any(q.startswith("delete from file_v2_records") for q in db.queries)
+    assert any(q.startswith("delete from uploaded_files") for q in db.queries)
+    assert any(q.startswith("update vaults") for q in db.queries)
+    assert db.rollbacks == 1
+    assert db.commits == 0
+    assert db.state == db.initial
+    account_bump.assert_not_called()
+
+
+def test_primary_delete_retry_does_not_debit_quota_twice(monkeypatch):
+    import billing
+    import main
+    import pin_only_action_gate
+
+    db = _Db()
+    account_bump = mock.Mock()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(pin_only_action_gate, "authorize_pin_only_action", mock.Mock())
+    monkeypatch.setattr(billing, "get_account_id_for_vault",
+                        lambda _vault: "synthetic-account")
+    monkeypatch.setattr(billing, "bump_account_total_bytes", account_bump)
+    payload = main.DeleteFileRequest(
+        vault_name="synthetic", file_id=FILE_ID, pin="123456",
+    )
+    principal = {"vault_id": VAULT_ID}
+    assert asyncio.run(main.delete_file_endpoint(
+        mock.Mock(), payload, principal,
+    ))["status"] == "deleted"
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(main.delete_file_endpoint(mock.Mock(), payload, principal))
+    assert raised.value.status_code == 404
+    assert db.commits == 1
+    assert db.state["quota"] == 100
+    assert sum(q.startswith("update vaults") for q in db.queries) == 1
+    account_bump.assert_called_once_with("synthetic-account", -37)
 
 
 def test_manifest_persists_stage_marker_and_retry_cannot_change_it(monkeypatch):

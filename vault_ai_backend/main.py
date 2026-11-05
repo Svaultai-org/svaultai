@@ -12013,9 +12013,36 @@ async def delete_file_endpoint(
         if not deleted:
             conn.rollback()
             raise HTTPException(status_code=404, detail="File not found")
-        conn.commit()
+        deleted_size = int(deleted["file_size"] or 0)
+        try:
+            # Debit the vault quota in the same transaction that removes the
+            # legacy row and its unfinished V2 migration copy. A failed quota
+            # write rolls all three changes back together.
+            cursor.execute(
+                "UPDATE vaults SET total_bytes = "
+                "GREATEST(total_bytes - %s, 0) WHERE vault_id = %s",
+                (deleted_size, vault_id),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
-        bump_vault_total_bytes(vault_id, -int(deleted["file_size"] or 0))
+        # Keep the pre-existing account aggregate update best-effort and
+        # post-commit; the vault's authoritative quota is now atomic above.
+        if deleted_size != 0:
+            try:
+                from billing import bump_account_total_bytes, get_account_id_for_vault
+
+                account_id = get_account_id_for_vault(vault_id)
+                if account_id is not None:
+                    bump_account_total_bytes(account_id, -deleted_size)
+            except Exception:
+                logger.warning(
+                    "account_storage_totals bump failed vault=%s delta=%s "
+                    "— nightly reconciliation will catch this",
+                    vault_id, -deleted_size,
+                )
 
 
         try:
