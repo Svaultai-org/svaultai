@@ -87,6 +87,10 @@ class UploadJob {
   /// Stable encrypted upload across automatic retry of this job.
   PreparedNewFileV2? preparedNewV2;
 
+  /// Bind a retry to the vault session that prepared this encrypted upload.
+  final String? scopeSessionToken;
+  final String? scopeVaultId;
+
   UploadJob({
     required this.id,
     required this.name,
@@ -97,6 +101,8 @@ class UploadJob {
     this.mimeType,
     this.relativePath,
     this.importId,
+    this.scopeSessionToken,
+    this.scopeVaultId,
   })  : status = UploadJobStatus.pending,
         progress = 0,
         attempts = 0;
@@ -345,7 +351,11 @@ class UploadQueueController extends ChangeNotifier {
   void retry(String jobId) {
     final job = _findJob(jobId);
     if (job == null) return;
-    if (job.status != UploadJobStatus.failed) return;
+    if (job.status != UploadJobStatus.failed &&
+        job.status != UploadJobStatus.stoppedForStorage &&
+        job.status != UploadJobStatus.cancelled)
+      return;
+    _stoppedForStorage = false;
     job.status = UploadJobStatus.pending;
     job.attempts = 0;
     job.errorMessage = null;
@@ -354,7 +364,6 @@ class UploadQueueController extends ChangeNotifier {
     _pump();
   }
 
-  
   void retryAllFailed() {
     var changed = false;
     for (final j in _jobs) {

@@ -13180,7 +13180,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               ),
               if (failed > 0)
                 TextButton.icon(
-                  onPressed: _uploadQueue.retryAllFailed,
+                  onPressed: _retryFailedChatUploads,
                   icon: const Icon(Icons.refresh, size: 14),
                   label: Text(
                     AppLocalizations.of(context).cryptoRetryFailed,
@@ -13334,7 +13334,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               tooltip: 'Retry',
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-              onPressed: () => _uploadQueue.retry(j.id),
+              onPressed: () => _retryFailedChatUploads(jobId: j.id),
             ),
         ],
       ),
@@ -13377,6 +13377,34 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     input.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _retryFailedChatUploads({String? jobId}) {
+    if (_currentUploadContext != null) {
+      if (jobId == null) {
+        _uploadQueue.retryAllFailed();
+      } else {
+        _uploadQueue.retry(jobId);
+      }
+      return;
+    }
+    final app = context.read<AppState>();
+    if (kEnableZkPrivateChat &&
+        app.unlocked &&
+        app.vaultHandle?.isNotEmpty == true &&
+        attachments.any(
+          (attachment) => jobId == null || attachment.id == jobId,
+        )) {
+      // Re-enter the normal private send preflight. It reinstates the upload
+      // context and resumes each failed job with its original prepared V2 ID.
+      unawaited(_send());
+      return;
+    }
+    if (jobId == null) {
+      _uploadQueue.retryAllFailed();
+    } else {
+      _uploadQueue.retry(jobId);
+    }
   }
 
   void _onUploadQueueChanged() {
@@ -14846,10 +14874,23 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required String authToken,
     required List<_Attachment> pendingAttachments,
     String? accompanyingText,
+    bool showUploadMessages = true,
   }) async {
     final preUploadedIds = <String>[];
     final freshAttachments = <_Attachment>[];
     for (final a in pendingAttachments) {
+      final existing = _findQueueJob(a.id);
+      if (existing != null &&
+          (existing.scopeSessionToken != authToken ||
+              existing.scopeVaultId != context.read<AppState>().vaultId)) {
+        throw StateError('Vault session changed. Select the file again.');
+      }
+      if (!a.uploaded &&
+          existing?.status == UploadJobStatus.uploaded &&
+          existing?.uploadedFileId != null) {
+        a.uploaded = true;
+        a.uploadedFileId = existing!.uploadedFileId;
+      }
       if (a.uploaded && a.uploadedFileId != null) {
         preUploadedIds.add(a.uploadedFileId!);
       } else {
@@ -14865,19 +14906,23 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
 
     final app = context.read<AppState>();
-    if (kRequirePinFreeZkFiles && app.vaultHandle?.isNotEmpty == true &&
+    if (kRequirePinFreeZkFiles &&
+        app.vaultHandle?.isNotEmpty == true &&
         (!kEnableFileV2UiRead ||
             !kEnableNewFileV2Upload ||
             zk_mvk_store.ZkActiveMvk.current() == null)) {
       throw StateError('Private file upload requires an updated app.');
     }
-    if (kEnableNewFileV2Upload && !kEnableFileV2UiRead &&
+    if (kEnableNewFileV2Upload &&
+        !kEnableFileV2UiRead &&
         zk_mvk_store.ZkActiveMvk.current() != null) {
       throw StateError('Private file upload needs the V2 file reader');
     }
     final v2Mvk = kEnableNewFileV2Upload
-        ? zk_mvk_store.ZkActiveMvk.current() : null;
-    if (kEnableNewFileV2Upload && v2Mvk == null &&
+        ? zk_mvk_store.ZkActiveMvk.current()
+        : null;
+    if (kEnableNewFileV2Upload &&
+        v2Mvk == null &&
         app.vaultHandle?.isNotEmpty == true) {
       throw StateError('Vault encryption key changed. Unlock and try again.');
     }
@@ -14891,21 +14936,23 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final isMultiFileBatch = freshCount >= 2;
 
     List<int>? keyBytes;
-    final needsChunked = v2Mvk == null &&
+    final needsChunked =
+        v2Mvk == null &&
         freshAttachments.any((a) => a.size >= kChunkedUploadThresholdBytes);
     if (needsChunked) {
       keyBytes = await _VaultCrypto.currentKeyBytesOrThrow();
     }
 
-    final hasFolderContext =
-        freshAttachments.any((a) => a.relativePath != null);
-    final zkImportSessionOnly = kEnableZkImportSessionActions &&
-        app.vaultHandle?.isNotEmpty == true;
+    final hasFolderContext = freshAttachments.any(
+      (a) => a.relativePath != null,
+    );
+    final zkImportSessionOnly =
+        kEnableZkImportSessionActions && app.vaultHandle?.isNotEmpty == true;
     if (zkImportSessionOnly && hasFolderContext) {
       throw StateError('Private folder import is not available yet');
     }
-    final shouldCreateBatch = v2Mvk == null &&
-        (isMultiFileBatch || hasFolderContext);
+    final shouldCreateBatch =
+        v2Mvk == null && (isMultiFileBatch || hasFolderContext);
     String? importId;
     if (shouldCreateBatch) {
       String? rootFolderName;
@@ -14917,8 +14964,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           break;
         }
       }
-      final totalBytesPlanned =
-          freshAttachments.fold<int>(0, (acc, a) => acc + a.size);
+      final totalBytesPlanned = freshAttachments.fold<int>(
+        0,
+        (acc, a) => acc + a.size,
+      );
 
       try {
         final batch = await client.startImport(
@@ -14963,23 +15012,43 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       importId: importId,
     );
 
-    final jobs = [
-      for (final a in freshAttachments)
-        UploadJob(
-          id: a.id,
-          name: a.name,
-          displayName: a.displayName,
-          kind: a.kind,
-          size: a.size,
-          mimeType: a.mimeType,
-          relativePath: a.relativePath,
-          importId: a.importId,
-          readBytes: a.readBytes,
-        ),
-    ];
+    final jobs = <UploadJob>[];
+    final retryIds = <String>[];
+    for (final a in freshAttachments) {
+      final existing = _findQueueJob(a.id);
+      if (existing != null) {
+        if (existing.status != UploadJobStatus.failed &&
+            existing.status != UploadJobStatus.stoppedForStorage &&
+            existing.status != UploadJobStatus.cancelled) {
+          throw StateError('This upload is already in progress.');
+        }
+        // Keep the prepared V2 ciphertext and file ID on manual retry. A new
+        // queue job would publish a second file after an uncertain response.
+        retryIds.add(a.id);
+      } else {
+        jobs.add(
+          UploadJob(
+            id: a.id,
+            name: a.name,
+            displayName: a.displayName,
+            kind: a.kind,
+            size: a.size,
+            mimeType: a.mimeType,
+            relativePath: a.relativePath,
+            importId: a.importId,
+            readBytes: a.readBytes,
+            scopeSessionToken: authToken,
+            scopeVaultId: app.vaultId,
+          ),
+        );
+      }
+    }
 
     try {
       _uploadQueue.enqueueAll(jobs);
+      for (final id in retryIds) {
+        _uploadQueue.retry(id);
+      }
       await _uploadQueue.waitForIdle();
     } finally {
       _currentUploadContext = null;
@@ -15034,7 +15103,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       if (isMultiFileBatch) {
         multiFileSavedCount += 1;
-      } else if (message != null && message.isNotEmpty) {
+      } else if (showUploadMessages && message != null && message.isNotEmpty) {
         final shouldDisplay = autoNamed || !hasAccompanyingText;
         if (shouldDisplay) {
           _appendAssistantMessage(message);
@@ -15046,7 +15115,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
     }
 
-    if (isMultiFileBatch &&
+    if (showUploadMessages &&
+        isMultiFileBatch &&
         !hasAccompanyingText &&
         (multiFileSavedCount > 0 ||
             _uploadQueue.skippedDuplicateCount > 0 ||
@@ -15062,7 +15132,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
     }
 
-    if (!_uploadQueue.hasFailures) {
+    if (_uploadQueue.jobs.every((job) =>
+        job.status == UploadJobStatus.uploaded ||
+        job.status == UploadJobStatus.skippedDuplicate)) {
       _uploadQueue.clearTerminal();
     }
 
@@ -17883,22 +17955,27 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required SecretKey mvk,
     required String text,
   }) async {
-    if (attachments.isNotEmpty) {
-      _appendAssistantMessage(
-        'Attachments are not available in private chat yet. You can search '
-        'files already saved in your vault.',
-      );
-      return;
-    }
+    final vaultHandle = app.vaultHandle;
     bool currentAccess() =>
         mounted &&
         app.authed &&
         app.unlocked &&
         app.sessionToken == token &&
         app.vaultId == vaultId &&
+        app.vaultHandle == vaultHandle &&
         zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
         identical(zk_mvk_store.ZkActiveMvk.current(), mvk);
     if (!currentAccess()) return;
+    if (attachments.isNotEmpty) {
+      await _sendZkPrivateAttachments(
+        app: app,
+        token: token,
+        mvk: mvk,
+        text: text,
+        currentAccess: currentAccess,
+      );
+      return;
+    }
     final client = VaultAIClient(baseUrl: backendBaseUrl);
     if (_zkPrivateChatFlow == null ||
         _zkPrivateChatToken != token ||
@@ -17944,9 +18021,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       switch (local.disposition) {
         case zk_private_chat.ZkLocalChatDisposition.general:
           answer = _Msg(
-              'assistant',
-              turn.generalReply ??
-                  'I could not answer that question right now.');
+            'assistant',
+            turn.generalReply ?? 'I could not answer that question right now.',
+          );
         case zk_private_chat.ZkLocalChatDisposition.found:
           if (selected == null) {
             answer = _Msg('assistant', 'I could not find a match.');
@@ -17969,30 +18046,178 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             );
           }
         case zk_private_chat.ZkLocalChatDisposition.ambiguous:
-          final names =
-              local.matches.take(5).map((r) => '“${r.title}”').join(', ');
-          answer = _Msg('assistant',
-              'I found several matches: $names. Please describe the one you want.');
+          final names = local.matches
+              .take(5)
+              .map((r) => '“${r.title}”')
+              .join(', ');
+          answer = _Msg(
+            'assistant',
+            'I found several matches: $names. Please describe the one you want.',
+          );
         case zk_private_chat.ZkLocalChatDisposition.needsPrivateIndex:
           answer = _Msg(
-              'assistant',
-              'I could not find that media from its saved name or searchable text. '
-                  'Visual and spoken-content search is not available yet.');
+            'assistant',
+            'I could not find that media from its saved name or searchable text. '
+                'Visual and spoken-content search is not available yet.',
+          );
         case zk_private_chat.ZkLocalChatDisposition.notFound:
           answer = _Msg(
-              'assistant',
-              'I could not find a match in the searchable encrypted records.'
-                  '${turn.indexIncomplete ? ' Some records could not be searched.' : ''}');
+            'assistant',
+            'I could not find a match in the searchable encrypted records.'
+                '${turn.indexIncomplete ? ' Some records could not be searched.' : ''}',
+          );
         case zk_private_chat.ZkLocalChatDisposition.unsupportedAction:
-          answer = _Msg('assistant',
-              'That vault action is not available in private chat yet.');
+          answer = _Msg(
+            'assistant',
+            'That vault action is not available in private chat yet.',
+          );
       }
       setState(() => msgs.add(answer));
       _scrollToBottom();
     } catch (_) {
       if (currentAccess()) {
         _appendAssistantMessage(
-            'Private chat is temporarily unavailable. Please try again.');
+          'Private chat is temporarily unavailable. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          sending = false;
+          thinking = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _sendZkPrivateAttachments({
+    required AppState app,
+    required String token,
+    required SecretKey mvk,
+    required String text,
+    required bool Function() currentAccess,
+  }) async {
+    if (!kEnableFileV2UiRead || !kEnableNewFileV2Upload) {
+      _appendAssistantMessage(
+        'Private file upload is not available in this app version.',
+      );
+      return;
+    }
+    final vaultName = app.vaultName;
+    if (!currentAccess() ||
+        vaultName == null ||
+        vaultName.isEmpty ||
+        !identical(zk_mvk_store.ZkActiveMvk.current(), mvk)) {
+      _appendAssistantMessage('Unlock your vault and try the upload again.');
+      return;
+    }
+
+    final selected = List<_Attachment>.of(attachments);
+    final attachmentTitle = attachmentTitleFromComposerText(
+      text,
+      attachmentCount: selected.length,
+    );
+    final pending = <_Attachment>[
+      for (var i = 0; i < selected.length; i++)
+        i == 0 && attachmentTitle != null
+            ? selected[i].copy(displayName: attachmentTitle)
+            : selected[i],
+    ];
+    final plannedBytes = pending
+        .where((attachment) =>
+            !attachment.uploaded &&
+            _findQueueJob(attachment.id)?.preparedNewV2 == null)
+        .fold<int>(0, (total, attachment) => total + attachment.size);
+    final availableBytes =
+        (app.effectiveStorageLimitBytes - app.storageUsedBytes).clamp(
+          0,
+          app.effectiveStorageLimitBytes,
+        );
+    if (plannedBytes > availableBytes) {
+      final choice = await NotEnoughStorageDialog.show(
+        context,
+        plannedBytes: plannedBytes,
+        availableBytes: availableBytes,
+      );
+      if (!currentAccess()) return;
+      if (choice == StorageLimitDialogChoice.upgrade) {
+        Navigator.pushNamed(context, '/storage');
+      }
+      return;
+    }
+    if (!currentAccess()) return;
+    setState(() {
+      selectedSection = _DashboardSection.chat;
+      sending = true;
+    });
+    try {
+      // Private uploads use only the active MVK and a stable V2 queue job.
+      // The accompanying prompt remains local; general AI cannot analyze it.
+      await _uploadAttachments(
+        client: VaultAIClient(baseUrl: backendBaseUrl),
+        vaultName: vaultName,
+        pin: '',
+        authToken: token,
+        pendingAttachments: pending,
+        accompanyingText: text,
+        showUploadMessages: false,
+      );
+      if (!currentAccess()) return;
+
+      final saved = <_Attachment>[];
+      final failed = <_Attachment>[];
+      for (var i = 0; i < selected.length; i++) {
+        if (pending[i].uploaded && pending[i].uploadedFileId != null) {
+          selected[i].uploaded = true;
+          selected[i].uploadedFileId = pending[i].uploadedFileId;
+          saved.add(selected[i]);
+        } else {
+          failed.add(selected[i]);
+        }
+      }
+      if (saved.isNotEmpty) {
+        final summaries = <ChatAttachmentSummary>[
+          for (final attachment in saved)
+            ChatAttachmentSummary(
+              name: pending
+                      .firstWhere((candidate) => candidate.id == attachment.id)
+                      .displayName ??
+                  attachment.name,
+              kind: attachment.kind,
+              mimeType: attachment.mimeType,
+              size: attachment.size,
+            ),
+        ];
+        final savedCount = saved.length;
+        setState(() {
+          attachments.removeWhere(saved.contains);
+          msgs.add(_Msg('user', text, attachments: summaries));
+          msgs.add(
+            _Msg(
+              'assistant',
+              '$savedCount ${savedCount == 1 ? 'file' : 'files'} saved privately. '
+                  'Open Files to view ${savedCount == 1 ? 'it' : 'them'}. '
+                  'AI analysis of attached files is not available in private chat yet.'
+                  '${failed.isNotEmpty ? ' ${failed.length} could not be saved; retry from the attachment panel.' : ''}',
+            ),
+          );
+          input.clear();
+        });
+        _scrollToBottom();
+        unawaited(_loadVaultFiles());
+      } else {
+        _appendAssistantMessage(
+          _uploadQueue.stoppedForStorage
+              ? 'The file was not saved because your vault has too little storage. '
+                    'Free space or upgrade, then retry.'
+              : 'The file was not saved. Check the upload status and retry.',
+        );
+      }
+    } catch (_) {
+      if (currentAccess()) {
+        _appendAssistantMessage(
+          'The private file was not saved. Check the upload status and retry.',
+        );
       }
     } finally {
       if (mounted) {

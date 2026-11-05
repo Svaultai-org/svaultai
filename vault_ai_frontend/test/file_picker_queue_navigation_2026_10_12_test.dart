@@ -15,6 +15,7 @@ import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/main.dart';
 import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
+import 'package:vault_ai_frontend/ui/chat/storage_limit_dialog.dart';
 
 // All identities and file bytes are synthetic. HTTP is allowlisted in-process;
 // selecting a file must not upload it or dispatch chat before Send is pressed.
@@ -61,6 +62,13 @@ FilePickerResult _selected({bool readable = true}) => FilePickerResult([
         size: 4,
         bytes: readable ? Uint8List.fromList([1, 2, 3, 4]) : null,
       ),
+    ]);
+
+FilePickerResult _selectedTwo() => FilePickerResult([
+      PlatformFile(name: 'synthetic-a.txt', size: 4,
+          bytes: Uint8List.fromList([1, 2, 3, 4])),
+      PlatformFile(name: 'synthetic-b.txt', size: 4,
+          bytes: Uint8List.fromList([5, 6, 7, 8])),
     ]);
 
 Future<AppState> _fixture() async {
@@ -194,6 +202,101 @@ Future<void> _withDashboard(WidgetTester tester,
     VaultCryptoRegistry.clear(reason: 'picker-regression-cleanup');
     setApiClientDeviceId('');
     await tester.binding.setSurfaceSize(null);
+  }
+}
+
+class _PrivateV2Server {
+  Map<String, dynamic>? manifest;
+  final chunks = <int, String>{};
+  bool published = false;
+  bool denyFirstPublishForStorage = false;
+  int manifestPosts = 0;
+  int chunkPuts = 0;
+  int publishCalls = 0;
+  final publishedIds = <String>[];
+
+  Future<http.Response> respond(http.Request request) async {
+    final path = request.url.path;
+    final body = request.body;
+    expectSync(request.headers['x-svaultai-file-v2-reader'], '1');
+    expectSync(body, isNot(contains('123456')));
+    expectSync(body, isNot(contains('synthetic-file.txt')));
+    expectSync(body, isNot(contains('Please analyze my attachment')));
+    expectSync(body, isNot(contains('"pin"')));
+    if (request.method == 'GET' && path.endsWith('/manifest')) {
+      if (manifest == null) {
+        return http.Response('{"detail":"file_v2_not_found"}', 404);
+      }
+      return http.Response(jsonEncode(<String, dynamic>{
+        ...manifest!,
+        'lifecycle_state': published ? 'client_v2_ready' : 'file_v2_written',
+        'verification_state': published ? 'client_verified' : 'unverified',
+      }), 200);
+    }
+    if (request.method == 'POST' && path == '/vault/file-v2/manifest') {
+      manifestPosts++;
+      manifest = Map<String, dynamic>.from(jsonDecode(body) as Map);
+      return http.Response('{"created":true}', 200);
+    }
+    if (path.contains('/chunk/') && request.method == 'GET') {
+      final index = int.parse(path.split('/').last);
+      return chunks.containsKey(index)
+          ? http.Response(jsonEncode(<String, dynamic>{
+              'file_id': manifest!['file_id'],
+              'chunk_index': index,
+              'ciphertext': chunks[index],
+            }), 200)
+          : http.Response('{"detail":"file_v2_chunk_not_found"}', 404);
+    }
+    if (request.method == 'PUT' && path == '/vault/file-v2/chunk') {
+      chunkPuts++;
+      final decoded = Map<String, dynamic>.from(jsonDecode(body) as Map);
+      chunks[decoded['chunk_index'] as int] = decoded['ciphertext'] as String;
+      return http.Response('{"stored":true}', 200);
+    }
+    if (request.method == 'POST' && path.endsWith('/publish-new')) {
+      publishCalls++;
+      publishedIds.add(manifest!['file_id'] as String);
+      if (denyFirstPublishForStorage && publishCalls == 1) {
+        return http.Response(
+            '{"detail":{"message":"Synthetic storage cap reached"}}',
+            413);
+      }
+      published = true;
+      return http.Response(jsonEncode(<String, dynamic>{
+        'file_id': manifest!['file_id'],
+        'status': 'published',
+      }), 200);
+    }
+    if (request.method == 'GET' && path == '/vault/files/metadata') {
+      return http.Response(jsonEncode(<String, dynamic>{
+        'records': <Map<String, dynamic>>[
+          {
+            'file_id': manifest!['file_id'],
+            'file_size': 4,
+            'lifecycle_state': 'client_v2_ready',
+            'verification_state': 'client_verified',
+          },
+        ],
+        'has_more': false,
+        'next_after_file_id': manifest!['file_id'],
+      }), 200);
+    }
+    if (request.method == 'GET' && path == '/vault/file-v2') {
+      return http.Response(jsonEncode(<String, dynamic>{
+        'files': <Map<String, dynamic>>[
+          {
+            'file_id': manifest!['file_id'],
+            'lifecycle_state': 'client_v2_ready',
+            'verification_state': 'client_verified',
+          },
+        ],
+      }), 200);
+    }
+    if (request.method == 'GET' && path == '/folders') {
+      return http.Response('{"path":"","folders":[],"files":[]}', 200);
+    }
+    fail('Unexpected private request ${request.method} $path');
   }
 }
 
@@ -394,6 +497,110 @@ void main() {
     });
   },
       skip: !(kEnableFileV2UiRead && kEnableNewFileV2Upload),
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('private chat saves V2 attachment and never sends prompt to AI',
+      (tester) async {
+    final server = _PrivateV2Server();
+    await _withDashboard(tester, (app, picker, requests) async {
+      picker.action = () async => _selected();
+      await _createFile(tester);
+      await tester.enterText(find.byKey(const Key('chat_composer_field')),
+          'Please analyze my attachment');
+      final send = tester.widget<InkWell>(find.descendant(
+        of: find.byKey(const Key('composer_send_button')),
+        matching: find.byType(InkWell),
+      ));
+      send.onTap!();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('1 file saved privately'), findsWidgets);
+      expect(find.textContaining('AI analysis of attached files is not available'),
+          findsWidgets);
+      expect(find.text('1 attachment(s) ready'), findsNothing);
+      expect(server.manifestPosts, 1);
+      expect(server.chunkPuts, 1);
+      expect(server.publishCalls, 1);
+      expect(requests, contains('POST /vault/file-v2/manifest'));
+      expect(requests, isNot(contains('POST /chat')));
+      expect(requests, isNot(contains('POST /chat/general')));
+      expect(requests, isNot(contains('POST /upload-file')));
+      expect(requests, isNot(contains('POST /list-files')));
+      expect(requests, isNot(contains('POST /imports/start')));
+      expect(requests, isNot(contains('POST /vault/stats')));
+    }, respond: server.respond);
+  },
+      skip: !(kEnableZkPrivateChat &&
+          kEnableFileV2UiRead &&
+          kEnableNewFileV2Upload),
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('private chat storage failure retries same encrypted V2 file',
+      (tester) async {
+    final server = _PrivateV2Server()..denyFirstPublishForStorage = true;
+    await _withDashboard(tester, (app, picker, requests) async {
+      picker.action = () async => _selected();
+      await _createFile(tester);
+      await tester.enterText(find.byKey(const Key('chat_composer_field')),
+          'Please analyze my attachment');
+      Future<void> send() async {
+        final button = tester.widget<InkWell>(find.descendant(
+          of: find.byKey(const Key('composer_send_button')),
+          matching: find.byType(InkWell),
+        ));
+        button.onTap!();
+        await tester.pumpAndSettle();
+      }
+
+      await send();
+      expect(find.textContaining('too little storage'), findsWidgets);
+      expect(find.text('1 attachment(s) ready'), findsOneWidget);
+      expect(server.manifestPosts, 1);
+      expect(server.publishCalls, 1);
+      app.sessionToken = 'synthetic-replacement-session';
+      await send();
+      expect(server.publishCalls, 1,
+          reason: 'a changed session cannot resume the previous V2 job');
+      app.sessionToken = 'synthetic-picker-token';
+      await send();
+      expect(find.textContaining('1 file saved privately'), findsWidgets);
+      expect(find.text('1 attachment(s) ready'), findsNothing);
+      expect(server.manifestPosts, 1,
+          reason: 'retry must reuse staged manifest and prepared ID');
+      expect(server.chunkPuts, 1,
+          reason: 'retry must reuse the same encrypted chunk');
+      expect(server.publishCalls, 2);
+      expect(server.publishedIds.toSet(), hasLength(1));
+      expect(requests, isNot(contains('POST /chat')));
+      expect(requests, isNot(contains('POST /upload-file')));
+    }, respond: server.respond);
+  },
+      skip: !(kEnableZkPrivateChat &&
+          kEnableFileV2UiRead &&
+          kEnableNewFileV2Upload),
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('private chat blocks over-limit attachment before network',
+      (tester) async {
+    final server = _PrivateV2Server();
+    await _withDashboard(tester, (app, picker, requests) async {
+      app.billingEffectiveLimitBytes = 6;
+      picker.action = () async => _selectedTwo();
+      await _createFile(tester);
+      final send = tester.widget<InkWell>(find.descendant(
+        of: find.byKey(const Key('composer_send_button')),
+        matching: find.byType(InkWell),
+      ));
+      send.onTap!();
+      await tester.pumpAndSettle();
+      expect(find.byType(NotEnoughStorageDialog), findsOneWidget);
+      expect(server.manifestPosts, 0);
+      expect(requests, isNot(contains('POST /chat')));
+      expect(find.text('2 attachment(s) ready'), findsOneWidget);
+    }, respond: server.respond);
+  },
+      skip: !(kEnableZkPrivateChat &&
+          kEnableFileV2UiRead &&
+          kEnableNewFileV2Upload),
       variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
   testWidgets('cancel and unreadable selection leave the Files section intact',
