@@ -19,6 +19,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vault_ai_frontend/services/zk_auth_service.dart';
 
 String _readLib(String path) => File('lib/$path').readAsStringSync();
 
@@ -89,7 +90,7 @@ void main() {
     });
   });
 
-  group('ZK registration derives + sends the legacy PIN verifier', () {
+  group('ZK registration compatibility fields', () {
     File _svc() => File('lib/services/zk_auth_service.dart');
 
     test('the client derives pin_salt + pin_verifier locally', () {
@@ -111,18 +112,35 @@ void main() {
                   'constant vault_core.PIN_VERIFIER_PLAINTEXT');
     });
 
-    test('registerVault sends pin_salt + pin_verifier + kdf_iterations',
-        () {
-      final src = _svc().readAsStringSync();
-      final idx = src.indexOf('/auth/zk-register-finalize');
-      expect(idx, greaterThan(-1));
-      final window = src.substring(idx, (idx + 1200).clamp(0, src.length));
-      expect(window.contains("'pin_salt'"), isTrue,
-          reason: 'finalize body must carry pin_salt');
-      expect(window.contains("'pin_verifier'"), isTrue,
-          reason: 'finalize body must carry pin_verifier');
-      expect(window.contains("'kdf_iterations'"), isTrue,
-          reason: 'finalize body must carry kdf_iterations');
+    test('verifier-free fields contain fresh salt and no offline oracle',
+        () async {
+      final service = ZkAuthService(
+        (path, body, {bearerToken}) async => <String, dynamic>{},
+      );
+      final first = await service.registrationPinFields(
+        pin: '123456', verifierFree: true,
+      );
+      final second = await service.registrationPinFields(
+        pin: '123456', verifierFree: true,
+      );
+      expect(first.keys, containsAll(<String>['pin_salt', 'kdf_iterations']));
+      expect(first.containsKey('pin_verifier'), isFalse);
+      expect(first.containsKey('pin'), isFalse);
+      expect(first['pin_salt'], isNot(second['pin_salt']));
+      expect(_svc().readAsStringSync(), contains(
+        "'VAULTAI_ENABLE_VERIFIER_FREE_ZK_REGISTRATION'"));
+    });
+
+    test('legacy compatibility mode still carries the verifier', () async {
+      final service = ZkAuthService(
+        (path, body, {bearerToken}) async => <String, dynamic>{},
+      );
+      final fields = await service.registrationPinFields(
+        pin: '123456', verifierFree: false,
+      );
+      expect(fields['pin_verifier'], isA<String>());
+      expect(fields.containsKey('pin'), isFalse);
+      expect(fields['kdf_iterations'], 600000);
     });
 
     test('the plaintext PIN is NEVER placed in the finalize JSON body',

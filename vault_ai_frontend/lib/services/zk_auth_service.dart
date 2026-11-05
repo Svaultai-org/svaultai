@@ -51,6 +51,12 @@ const bool _authTimingDiagnosticsEnabled = bool.fromEnvironment(
   'VAULTAI_AUTH_TIMING_DIAGNOSTICS',
   defaultValue: false,
 );
+// Roll out only after every supported client feature can operate without the
+// server-side PIN verifier. The backend rejects a mismatched client mode.
+const bool kVerifierFreeZkRegistration = bool.fromEnvironment(
+  'VAULTAI_ENABLE_VERIFIER_FREE_ZK_REGISTRATION',
+  defaultValue: false,
+);
 
 /// Legacy PIN-verifier constants.
 ///
@@ -58,9 +64,9 @@ const bool _authTimingDiagnosticsEnabled = bool.fromEnvironment(
 /// ``pin_verifier`` with a PBKDF2-HMAC-SHA256 key derived from
 /// (pin, base64decode(pin_salt), kdfIterations) and expects the exact
 /// plaintext ``vaultai_pin_ok``. We derive both fields client-side
-/// during ZK registration so that endpoints which still cross-check
-/// the legacy PIN work for ZK-adopted accounts. The server never
-/// sees the plaintext PIN.
+/// only in the compatibility registration mode so that endpoints which still
+/// cross-check the legacy PIN work for existing builds. This verifier permits
+/// offline PIN guesses from a copied database and must be removed at cutover.
 const String _pinVerifierPlaintext = 'vaultai_pin_ok';
 const int _pinSaltBytes = 16;
 const int _pinKdfIterations = 600000;
@@ -586,6 +592,27 @@ class ZkAuthService {
     );
   }
 
+  /// Compatibility fields for ZK registration. A verifier-free registration
+  /// still carries a fresh salt for the existing vault metadata schema, but
+  /// performs no PIN KDF and sends no offline-testable verifier.
+  Future<Map<String, dynamic>> registrationPinFields({
+    required String pin,
+    required bool verifierFree,
+  }) async {
+    if (verifierFree) {
+      return <String, dynamic>{
+        'pin_salt': base64.encode(_randomBytes(_pinSaltBytes)),
+        'kdf_iterations': _pinKdfIterations,
+      };
+    }
+    final legacy = await _deriveLegacyPinVerifier(pin);
+    return <String, dynamic>{
+      'pin_salt': legacy.pinSalt,
+      'pin_verifier': legacy.pinVerifier,
+      'kdf_iterations': legacy.kdfIterations,
+    };
+  }
+
   Future<Uint8List> _x25519PublicFromSecret(Uint8List sk) async {
     final algo = X25519();
     // cryptography's X25519 requires KeyPair construction from a seed;
@@ -670,7 +697,10 @@ class ZkAuthService {
       Uint8List.fromList(utf8.encode(displayName)),
     );
 
-    final legacyPin = await _deriveLegacyPinVerifier(pin);
+    final registrationFields = await registrationPinFields(
+      pin: pin,
+      verifierFree: kVerifierFreeZkRegistration,
+    );
 
     // The user-typed vault name stays on the device. Registration sends only
     // opaque lookup identifiers plus encrypted account material.
@@ -684,9 +714,7 @@ class ZkAuthService {
         'pk_vault_public': _b64urlEncode(pkVaultPublic),
         'display_name_ciphertext': _b64urlEncode(displayNameCiphertext),
         'acknowledged_irrecoverable': true,
-        'pin_salt': legacyPin.pinSalt,
-        'pin_verifier': legacyPin.pinVerifier,
-        'kdf_iterations': legacyPin.kdfIterations,
+        ...registrationFields,
         'username_lookup': lookupV1B64,
       },
     );
