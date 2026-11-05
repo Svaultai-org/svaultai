@@ -3259,6 +3259,91 @@ class VaultAIClient {
     required String authToken,
   }) => _listZkVaultItems(authToken: authToken);
 
+  /// Read only an MVK-decrypted V2 row. A legacy metadata row or a corrupt
+  /// envelope cannot trigger the PIN-bearing detail route or legacy reader.
+  Future<Map<String, dynamic>> getZkVaultSecureItemOnly({
+    required String authToken,
+    required String service,
+    required String itemType,
+    String? itemId,
+  }) async {
+    if (!kEnableKeylessSavedItemRead) {
+      throw StateError('Private saved-item reading is unavailable');
+    }
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    final selectedId = itemId == null ? null : int.tryParse(itemId);
+    if (itemId != null && (selectedId == null || selectedId <= 0)) {
+      throw StateError('Saved-item identity is unavailable');
+    }
+    final listed = await _listZkVaultItems(authToken: authToken);
+    _requireSavedItemKey(mvk);
+    final matches = (listed['items'] as List? ?? const [])
+        .whereType<Map>()
+        .where((row) => selectedId != null
+            ? row['id'] == selectedId
+            : '${row['item_type']}'.toLowerCase() ==
+                    itemType.toLowerCase() &&
+                _savedItemTitleIdentity('${row['service']}') ==
+                    _savedItemTitleIdentity(service))
+        .toList();
+    if (matches.length != 1 ||
+        '${matches.single['item_type']}'.toLowerCase() !=
+            itemType.toLowerCase() ||
+        _savedItemTitleIdentity('${matches.single['service']}') !=
+            _savedItemTitleIdentity(service)) {
+      throw StateError('This saved item is unavailable or needs migration');
+    }
+    _requireSavedItemKey(mvk);
+    return Map<String, dynamic>.from(matches.single);
+  }
+
+  /// Delete only a selected V2 row after a fresh MVK-only identity check.
+  Future<Map<String, dynamic>> deleteZkVaultSecureItemOnly({
+    required String authToken,
+    required String service,
+    required String itemType,
+    String? itemId,
+  }) async {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    final selected = await getZkVaultSecureItemOnly(
+      authToken: authToken,
+      service: service,
+      itemType: itemType,
+      itemId: itemId,
+    );
+    _requireSavedItemKey(mvk);
+    final selectedId = selected['id'];
+    if (selectedId is! int || selectedId <= 0) {
+      throw const FormatException('Invalid private saved-item identity');
+    }
+    final response = await _sessionHttpWithGuard(
+      () => _requireSavedItemKey(mvk),
+    ).delete(
+      Uri.parse('$baseUrl/vault/ciphertext/vault-items/$selectedId'),
+      headers: _defaultHeaders(authToken: authToken),
+    );
+    _requireSavedItemKey(mvk);
+    if (response.statusCode != 200) {
+      throwIfSavedItemUpdateRequired(response.statusCode, response.body);
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Could not delete saved item',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic> ||
+        decoded['item_id'] != selectedId ||
+        decoded['status'] != 'deleted') {
+      throw const FormatException('Invalid private saved-item deletion result');
+    }
+    return decoded;
+  }
+
   /// Strict MVK-only create/edit path. Metadata covers every legacy and V2
   /// title so a new ciphertext item cannot silently duplicate an older item.
   /// An edit requires a selected V2 item ID; legacy rows remain untouched.

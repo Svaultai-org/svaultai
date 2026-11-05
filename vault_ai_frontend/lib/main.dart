@@ -5352,6 +5352,9 @@ VaultAIClient _savedItemClient(AppState app) => VaultAIClient(
           : null,
     );
 
+bool _privateZkSavedItemSession(AppState app) =>
+    kPrivateOnlyUnlockEnabled && app.vaultHandle?.isNotEmpty == true;
+
 Future<Map<String, dynamic>> _readLegacyZkSavedItem(
   AppState app,
   int itemId,
@@ -8248,20 +8251,29 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
 
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
+      final privateZk = _privateZkSavedItemSession(app);
+      final pin = privateZk ? null : await _VaultCrypto.currentPinOrThrow();
       if (!mounted || app.sessionToken != token || app.vaultName != vaultName ||
           !app.unlocked) {
         return;
       }
-      final client = _savedItemClient(app);
-      final fetched = await client.getVaultSecureItem(
-        vaultName: vaultName,
-        service: safeTitle,
-        itemId: itemId,
-        itemType: itemType,
-        pin: pin,
-        authToken: token,
-      );
+      final client = privateZk
+          ? VaultAIClient(baseUrl: backendBaseUrl) : _savedItemClient(app);
+      final fetched = privateZk
+          ? await client.getZkVaultSecureItemOnly(
+              authToken: token,
+              service: safeTitle,
+              itemType: itemType,
+              itemId: itemId,
+            )
+          : await client.getVaultSecureItem(
+              vaultName: vaultName,
+              service: safeTitle,
+              itemId: itemId,
+              itemType: itemType,
+              pin: pin!,
+              authToken: token,
+            );
       final rawFields = fetched['fields'];
       final fields = <String, String>{
         if (rawFields is Map)
@@ -8477,15 +8489,24 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           final pin = keylessZkWrite
               ? '' : await _VaultCrypto.currentPinOrThrow();
           if (!dialogIsCurrent()) return;
-          final client = _savedItemClient(app);
-          final fetched = await client.getVaultSecureItem(
-            vaultName: app.vaultName!,
-            service: service,
-            itemId: itemId,
-            itemType: itemType,
-            pin: pin,
-            authToken: token,
-          );
+          final privateZk = _privateZkSavedItemSession(app);
+          final client = privateZk
+              ? VaultAIClient(baseUrl: backendBaseUrl) : _savedItemClient(app);
+          final fetched = privateZk
+              ? await client.getZkVaultSecureItemOnly(
+                  authToken: token,
+                  service: service,
+                  itemType: itemType,
+                  itemId: itemId,
+                )
+              : await client.getVaultSecureItem(
+                  vaultName: app.vaultName!,
+                  service: service,
+                  itemId: itemId,
+                  itemType: itemType,
+                  pin: pin,
+                  authToken: token,
+                );
           if (keylessZkWrite &&
               fetched['storage_engine'] != 'ciphertext') {
             _showSnack('This saved item needs migration before editing.');
@@ -8727,8 +8748,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _showSnack('Your vault is locked. Please enter your PIN again.');
       return;
     }
+    final privateZk = _privateZkSavedItemSession(app);
     if (activeVaultId == null ||
-        !_VaultCrypto.hasKeyFor(vaultId: activeVaultId, vaultName: vaultName)) {
+        (privateZk
+            ? !kEnableKeylessSavedItemRead ||
+                zk_mvk_store.ZkActiveMvk.current() == null ||
+                zk_mvk_store.ZkActiveMvk.currentVaultId() != activeVaultId
+            : !_VaultCrypto.hasKeyFor(
+                vaultId: activeVaultId, vaultName: vaultName))) {
       app.handleApiException(const InvalidVaultUnlockException());
       return;
     }
@@ -9039,17 +9066,27 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _scrollToBottom();
 
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
+      final privateZk = _privateZkSavedItemSession(app);
+      final pin = privateZk ? null : await _VaultCrypto.currentPinOrThrow();
       if (!mounted || app.sessionToken != token || !app.unlocked) return true;
       final client = VaultAIClient(baseUrl: backendBaseUrl);
-      await client.deleteVaultSecureItem(
-        vaultName: vaultName,
-        service: service,
-        itemId: itemId,
-        itemType: itemType,
-        pin: pin,
-        authToken: token,
-      );
+      if (privateZk) {
+        await client.deleteZkVaultSecureItemOnly(
+          authToken: token,
+          service: service,
+          itemType: itemType,
+          itemId: itemId,
+        );
+      } else {
+        await client.deleteVaultSecureItem(
+          vaultName: vaultName,
+          service: service,
+          itemId: itemId,
+          itemType: itemType,
+          pin: pin!,
+          authToken: token,
+        );
+      }
       if (!mounted || app.sessionToken != token || !app.unlocked) return true;
       final isLogin = itemType == 'login' || itemType == 'credential';
       setState(() {
@@ -17387,7 +17424,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     try {
       switch (command.kind) {
         case VaultLocalContentKind.login:
-          final pin = await _VaultCrypto.currentPinOrThrow();
+          final privateZk = _privateZkSavedItemSession(app);
+          final pin = privateZk ? '' : await _VaultCrypto.currentPinOrThrow();
           final result = await client.listVaultSecureItems(
             vaultName: vaultName,
             pin: pin,
@@ -17420,6 +17458,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           final row = rows[matchIndex];
           final service = '${row['service'] ?? ''}'.trim();
           final itemType = '${row['item_type'] ?? 'login'}'.trim();
+          if (privateZk && row['storage_engine'] != 'ciphertext') {
+            _appendLocalVaultReply(text,
+                'This login needs a private upgrade before it can be opened or deleted.');
+            return true;
+          }
           if (command.action == VaultLocalContentAction.delete) {
             _pendingLocalDelete = _VaultLocalDeleteTarget(
               kind: VaultLocalContentKind.login,
@@ -17438,13 +17481,20 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           // both ids and credential fields. Fetch the one exact selected
           // service after matching so the detail card contains its real
           // client-decrypted fields instead of an empty shell.
-          final detail = await client.getVaultSecureItem(
-            vaultName: vaultName,
-            service: service,
-            itemType: itemType,
-            pin: pin,
-            authToken: token,
-          );
+          final detail = privateZk
+              ? await client.getZkVaultSecureItemOnly(
+                  authToken: token,
+                  service: service,
+                  itemType: itemType,
+                  itemId: '${row['id']}',
+                )
+              : await client.getVaultSecureItem(
+                  vaultName: vaultName,
+                  service: service,
+                  itemType: itemType,
+                  pin: pin,
+                  authToken: token,
+                );
           final rawFields = detail['fields'];
           final fields = <String, String>{
             if (rawFields is Map)
@@ -17618,13 +17668,22 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     try {
       switch (target.kind) {
         case VaultLocalContentKind.login:
-          await client.deleteVaultSecureItem(
-            vaultName: vaultName,
-            service: target.service ?? target.label,
-            itemType: target.itemType ?? 'login',
-            pin: await _VaultCrypto.currentPinOrThrow(),
-            authToken: token,
-          );
+          if (_privateZkSavedItemSession(app)) {
+            await client.deleteZkVaultSecureItemOnly(
+              authToken: token,
+              service: target.service ?? target.label,
+              itemType: target.itemType ?? 'login',
+              itemId: target.id,
+            );
+          } else {
+            await client.deleteVaultSecureItem(
+              vaultName: vaultName,
+              service: target.service ?? target.label,
+              itemType: target.itemType ?? 'login',
+              pin: await _VaultCrypto.currentPinOrThrow(),
+              authToken: token,
+            );
+          }
           await _reloadVaultLoginsAfterMutation();
           break;
         case VaultLocalContentKind.memory:
@@ -17981,6 +18040,22 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return;
     }
     if (zkRoute == zk_chat_flow.ZkChatEntryRoute.privateChat) {
+      // Explicit saved-login actions use the local MVK-only item flow. They
+      // must run before private chat dispatch, including a pending Delete
+      // confirmation from the Logins page or a local login card.
+      if (attachments.isEmpty &&
+          _pendingClientSecureItemDeleteService != null &&
+          await _tryResolveClientSecureItemDelete(text)) {
+        return;
+      }
+      final localCommand = attachments.isEmpty
+          ? parseVaultLocalContentCommand(text) : null;
+      if (attachments.isEmpty &&
+          (_pendingLocalDelete?.kind == VaultLocalContentKind.login ||
+              localCommand?.kind == VaultLocalContentKind.login) &&
+          await _tryLocalVaultContentCommand(text)) {
+        return;
+      }
       await _sendZkPrivateChat(
         app: app, token: authToken, vaultId: activeVaultId!,
         mvk: zkChatMvk!, text: text,
@@ -18853,8 +18928,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
             onSecureItemView: (itemId, title, itemType) {
               final safeTitle = title.trim();
-              _sendQuickPrompt(
-                  safeTitle.isEmpty ? 'show me' : 'show me $safeTitle');
+              if (_privateZkSavedItemSession(context.read<AppState>())) {
+                _openSecureItemView(safeTitle, itemType, itemId: itemId);
+              } else {
+                _sendQuickPrompt(
+                    safeTitle.isEmpty ? 'show me' : 'show me $safeTitle');
+              }
             },
 
             onSecureItemReveal: null,
