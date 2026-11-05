@@ -9,6 +9,9 @@ and this route verifies a complete, bounded ciphertext set.
 from __future__ import annotations
 
 import os
+import base64
+import binascii
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -56,12 +59,21 @@ def _new_upload_enabled() -> None:
 
 
 def _file_id(value: str) -> str:
+    if re.fullmatch(r"v2-[A-Za-z0-9_-]{27}", value):
+        encoded = value[3:]
+        try:
+            raw = base64.urlsafe_b64decode(encoded + "=")
+            if (len(raw) == 20 and
+                    base64.urlsafe_b64encode(raw).decode().rstrip("=") == encoded):
+                return value
+        except (ValueError, binascii.Error):
+            pass
     try:
         parsed = uuid.UUID(value)
     except (ValueError, TypeError, AttributeError):
-        raise HTTPException(400, detail="new_file_id_must_be_uuid") from None
+        raise HTTPException(400, detail="new_file_id_invalid") from None
     if str(parsed) != value.lower():
-        raise HTTPException(400, detail="new_file_id_must_be_uuid")
+        raise HTTPException(400, detail="new_file_id_invalid")
     return value
 
 

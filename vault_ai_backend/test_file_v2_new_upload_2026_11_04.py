@@ -18,7 +18,8 @@ from routes import file_v2_new_upload_routes as route
 
 VAULT = "11111111-1111-1111-1111-111111111111"
 OTHER = "22222222-2222-2222-2222-222222222222"
-FILE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+FILE = "v2-AAAAAAAAAAAAAAAAAAAAAAAAAAA"  # Canonical 20-byte writer ID.
+UUID_FILE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 PRINCIPAL = {"vault_id": VAULT, "token_id": "synthetic-session"}
 
 
@@ -255,6 +256,7 @@ def test_cross_vault_and_unconfirmed_requests_do_not_write(harness):
     with pytest.raises(HTTPException) as bad_id:
         route.publish_new_file("not-a-uuid", _publish(), PRINCIPAL)
     assert bad_id.value.status_code == 400
+    assert route._file_id(UUID_FILE) == UUID_FILE
     assert db.marker is None and db.vault_bytes == 100
 
 
