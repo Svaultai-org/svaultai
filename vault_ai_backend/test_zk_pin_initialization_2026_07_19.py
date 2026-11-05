@@ -52,11 +52,16 @@ OPAQUE primitive mocked (matching the existing pattern in
     linking keeps working for adopted accounts.
 
 No live Postgres or opaque wheel is required.
+
+2026-11-04 security cutover: this file also checks the staged verifier-free
+OPAQUE registration flag. The older assertions remain for the flag-off
+compatibility path; flag-on registration omits the offline PIN verifier.
 """
 
 from __future__ import annotations
 
 import base64
+import os
 import unittest
 from typing import Any, Dict, List, Optional
 from unittest import mock
@@ -148,6 +153,7 @@ def _base_payload() -> Dict[str, Any]:
         "pk_vault_public":           _b64url_no_pad(b"\x00" * 32),
         "display_name_ciphertext":   _b64url_no_pad(b"fake-display"),
         "acknowledged_irrecoverable": True,
+        "username_lookup": _b64url_no_pad(b"\x33" * 32),
         "pin_salt":     base64.b64encode(b"\x11" * 16).decode(),
         "pin_verifier": base64.b64encode(b"\x22" * 32).decode(),
         "kdf_iterations": 600000,
@@ -166,7 +172,7 @@ def _issued_session() -> Dict[str, Any]:
     }
 
 
-def _run_register(payload: Dict[str, Any]):
+def _run_register(payload: Dict[str, Any], *, verifier_free: bool = False):
     """Drive POST /auth/zk-register-finalize and return the response."""
     from fastapi.testclient import TestClient
     get_db, conn = _make_get_db([
@@ -174,6 +180,10 @@ def _run_register(payload: Dict[str, Any]):
         {"vault_id": _VAULT_ID, "vault_name": _VAULT_NAME},
     ])
     with (
+        mock.patch.dict(os.environ, {
+            "VAULTAI_ZK_VERIFIER_FREE_REGISTRATION_ENABLED":
+                "true" if verifier_free else "false",
+        }),
         mock.patch(
             "routes.auth_zk_routes.get_db",
             side_effect=get_db,
@@ -209,7 +219,7 @@ def _run_register(payload: Dict[str, Any]):
 
 
 class RequiredFieldTests(unittest.TestCase):
-    """The three new fields are REQUIRED. Missing → HTTP 422."""
+    """KDF metadata remains required; verifier rollout has a clear gate."""
 
     def test_missing_pin_salt_is_422(self) -> None:
         p = _base_payload()
@@ -218,12 +228,36 @@ class RequiredFieldTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 422, resp.text)
         self.assertIn("pin_salt", resp.text)
 
-    def test_missing_pin_verifier_is_422(self) -> None:
+    def test_missing_pin_verifier_is_503_when_rollout_disabled(self) -> None:
         p = _base_payload()
         p.pop("pin_verifier")
         resp, _ = _run_register(p)
-        self.assertEqual(resp.status_code, 422, resp.text)
-        self.assertIn("pin_verifier", resp.text)
+        self.assertEqual(resp.status_code, 503, resp.text)
+        self.assertEqual(resp.json()["detail"]["code"], "private_signup_not_ready")
+
+    def test_verifier_free_signup_stores_no_offline_oracle(self) -> None:
+        p = _base_payload()
+        p.pop("pin_verifier")
+        resp, conn = _run_register(p, verifier_free=True)
+        self.assertEqual(resp.status_code, 200, resp.text)
+        vault_insert = next(
+            (sql, params)
+            for cur in conn.cursors for sql, params in cur.calls
+            if "INSERT INTO vaults" in sql
+        )
+        _sql, params = vault_insert
+        self.assertEqual(params[1], p["pin_salt"])
+        self.assertEqual(params[2], "")
+        self.assertEqual(params[3], p["kdf_iterations"])
+
+    def test_old_client_verifier_rejected_before_insert_when_enabled(self) -> None:
+        resp, conn = _run_register(_base_payload(), verifier_free=True)
+        self.assertEqual(resp.status_code, 409, resp.text)
+        self.assertEqual(resp.json()["detail"]["code"], "client_update_required")
+        self.assertFalse(any(
+            "INSERT INTO vaults" in sql
+            for cur in conn.cursors for sql, _ in cur.calls
+        ))
 
     def test_missing_kdf_iterations_is_422(self) -> None:
         p = _base_payload()
@@ -290,13 +324,13 @@ class VaultsInsertTests(unittest.TestCase):
         )
         _sql, params = vault_insert
         # Positional order (see routes/auth_zk_routes.py finalize):
-        #   %s pin_salt, %s pin_verifier, %s kdf_iterations, ...
-        self.assertEqual(params[0], p["pin_salt"])
-        self.assertEqual(params[1], p["pin_verifier"])
-        self.assertEqual(params[2], p["kdf_iterations"])
+        #   %s vault_id, %s pin_salt, %s pin_verifier, %s kdf_iterations, ...
+        self.assertEqual(params[1], p["pin_salt"])
+        self.assertEqual(params[2], p["pin_verifier"])
+        self.assertEqual(params[3], p["kdf_iterations"])
         # And empty strings must NEVER be silently substituted.
-        self.assertNotEqual(params[0], "")
         self.assertNotEqual(params[1], "")
+        self.assertNotEqual(params[2], "")
 
     def test_no_empty_string_pin_state_falls_through(self) -> None:
         """Even if a caller sends an empty string (they can't; min_length=1
