@@ -53,6 +53,7 @@ import hashlib
 import hmac
 import logging
 import os
+from file_v2_client_capability import request_has_file_v2_reader
 import secrets
 import time
 import uuid
@@ -635,6 +636,7 @@ def _zk_register_finalize_sync(
         vault_name="",
         device_id=payload.device_id,
         client_label=normalize_client_label(request.headers.get("user-agent")),
+        file_v2_reader_capable=request_has_file_v2_reader(request),
     )
 
     # Session issuance and device takeover have already committed together.
@@ -1039,6 +1041,7 @@ def _zk_login_finalize_sync(
                 vault_name="",
                 device_id=payload.device_id,
                 client_label=normalize_client_label(request.headers.get("user-agent")),
+                file_v2_reader_capable=request_has_file_v2_reader(request),
                 include_vault_meta=True,
                 connection=conn,
             )

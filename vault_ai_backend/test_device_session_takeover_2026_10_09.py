@@ -105,7 +105,7 @@ def test_legacy_unbound_current_session_binds_once_under_lock():
 
 def test_issuer_device_failure_rolls_back_before_token_is_built():
     conn = mock.MagicMock()
-    conn.cursor.return_value.fetchone.return_value = {"vault_id": VAULT}
+    conn.cursor.return_value.fetchone.side_effect = [{"vault_id": VAULT}, None]
     conn.cursor.return_value.fetchall.return_value = []
     with mock.patch.object(auth_local, "get_db", return_value=conn), \
          mock.patch.object(device_monitor, "apply_login_device_takeover", side_effect=RuntimeError("fixture failure")), \
@@ -121,7 +121,7 @@ def test_issuer_device_failure_rolls_back_before_token_is_built():
 def test_issuer_device_and_session_share_cursor_and_commit_order():
     conn = mock.MagicMock()
     cursor = conn.cursor.return_value
-    cursor.fetchone.return_value = {"vault_id": VAULT}
+    cursor.fetchone.side_effect = [{"vault_id": VAULT}, None]
     cursor.fetchall.return_value = []
     timeline = []
     cursor.execute.side_effect = lambda sql, *_: timeline.append(sql.strip())
@@ -143,7 +143,7 @@ def test_issuer_device_and_session_share_cursor_and_commit_order():
 
 def test_issuer_commit_failure_never_returns_token():
     conn = mock.MagicMock()
-    conn.cursor.return_value.fetchone.return_value = {"vault_id": VAULT}
+    conn.cursor.return_value.fetchone.side_effect = [{"vault_id": VAULT}, None]
     conn.cursor.return_value.fetchall.return_value = []
     conn.commit.side_effect = RuntimeError("commit failed")
     with mock.patch.object(auth_local, "get_db", return_value=conn), \

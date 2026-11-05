@@ -79,6 +79,7 @@ def _mount_preflight_app(regex: str) -> TestClient:
             # The 2026-07-22 (3) production CORS regression traced
             # to this stub falling behind the real allowlist.
             "X-App-Release",
+            "X-SVaultAI-File-V2-Reader",
             # 2026-07-22 (4) Safari preflight adds Cache-Control and
             # Pragma to Access-Control-Request-Headers for GETs. Same
             # lock-step invariant: this stub must mirror the real
@@ -668,6 +669,24 @@ class ProdPreflightAcceptsXAppReleaseFromSvaultai(unittest.TestCase):
             "CORS_ALLOWED_ORIGIN_REGEX": self._PROD_REGEX,
         })
         return _mount_preflight_app(regex)
+
+    def test_file_v2_reader_capability_preflight_from_svaultai(self) -> None:
+        client = self._client()
+        resp = client.options(
+            "/auth/zk-login-finalize",
+            headers={
+                "Origin": self._ORIGIN,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers":
+                    "authorization,content-type,x-device-id,"
+                    "x-svaultai-file-v2-reader",
+            },
+        )
+        self.assertEqual(resp.status_code, 200, msg=resp.text)
+        self.assertEqual(resp.headers.get("access-control-allow-origin"),
+                         self._ORIGIN)
+        self.assertIn("x-svaultai-file-v2-reader",
+                      resp.headers.get("access-control-allow-headers", "").lower())
 
     def test_every_reported_endpoint_preflight_from_svaultai_returns_200(
         self,

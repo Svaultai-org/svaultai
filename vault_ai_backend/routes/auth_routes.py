@@ -22,6 +22,7 @@ from auth_local import (
     revoke_session_token,
     verify_session_token,
 )
+from file_v2_client_capability import request_has_file_v2_reader
 from rate_limit_auth import (
     enforce_login_credential_rate_limit,
     enforce_login_rate_limit,
@@ -362,6 +363,7 @@ def _login_impl(
             vault_name="",
             device_id=device_id,
             client_label=normalize_client_label(request.headers.get("user-agent")),
+            file_v2_reader_capable=request_has_file_v2_reader(request),
         )
     return _build_response(
         issued,

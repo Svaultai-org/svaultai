@@ -20,7 +20,8 @@ VAULT = "11111111-1111-1111-1111-111111111111"
 OTHER = "22222222-2222-2222-2222-222222222222"
 FILE = "v2-AAAAAAAAAAAAAAAAAAAAAAAAAAA"  # Canonical 20-byte writer ID.
 UUID_FILE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-PRINCIPAL = {"vault_id": VAULT, "token_id": "synthetic-session"}
+PRINCIPAL = {"vault_id": VAULT, "token_id": "synthetic-session",
+             "file_v2_reader_capable": True}
 
 
 class _Cursor:
@@ -227,6 +228,17 @@ def test_quota_failure_preserves_staged_ciphertext(harness, monkeypatch):
     assert db.vault_bytes == 100 and db.account_bytes == 100
 
 
+def test_old_client_session_cannot_publish_a_client_only_file(harness):
+    db, _ = harness
+    with pytest.raises(HTTPException) as raised:
+        route.publish_new_file(
+            FILE, _publish(), {**PRINCIPAL, "file_v2_reader_capable": False},
+        )
+    assert raised.value.status_code == 426
+    assert raised.value.detail["code"] == "client_update_required"
+    assert db.marker is None and db.vault_bytes == 100
+
+
 def test_zero_byte_file_has_no_chunks_or_quota_delta(harness):
     db, _ = harness
     db.record["total_bytes"] = 0
@@ -248,7 +260,8 @@ def test_publish_flag_is_off_by_default(monkeypatch):
 def test_cross_vault_and_unconfirmed_requests_do_not_write(harness):
     db, _ = harness
     with pytest.raises(HTTPException) as cross:
-        route.publish_new_file(FILE, _publish(), {"vault_id": OTHER})
+        route.publish_new_file(FILE, _publish(),
+                               {**PRINCIPAL, "vault_id": OTHER})
     assert cross.value.status_code == 404
     with pytest.raises(HTTPException) as unconfirmed:
         route.publish_new_file(FILE, route.PublishNewFile(confirm=False), PRINCIPAL)

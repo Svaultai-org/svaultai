@@ -76,6 +76,10 @@ class PlaybackConnection:
         self.queries.append((query, params))
 
     def fetchone(self):
+        if self.queries and "FROM file_v2_records" in self.queries[-1][0]:
+            # This fixture predates client-only uploads; the synthetic vault
+            # has no ready V2 files and remains eligible for old-client login.
+            return None
         return self.row
 
     def fetchall(self):
@@ -336,7 +340,7 @@ def test_optional_issuance_snapshot_does_not_change_token_or_session_transaction
     assert auth_local._parse_token(result["token"]) == token_bytes
     assert result["token_id"] == TOKEN_ID and result["vault_id"] == VAULT_ID
     assert conn.commits == 1 and conn.rollbacks == 0 and conn.closed
-    assert len(conn.queries) == 7  # lock, session revoke/insert, device read/upsert/revoke, audit
+    assert len(conn.queries) == 8  # lock, V2 guard, revoke/insert, device, audit
     lock_sql, lock_params = conn.queries[0]
     assert "FOR UPDATE" in lock_sql and lock_params == (VAULT_ID,)
     if include:
@@ -345,10 +349,11 @@ def test_optional_issuance_snapshot_does_not_change_token_or_session_transaction
     else:
         assert "vault_meta" not in result
         assert lock_sql == "SELECT vault_id FROM vaults WHERE vault_id = %s FOR UPDATE"
-    revoke_sql, revoke_params = conn.queries[1]
+    assert "FROM file_v2_records" in conn.queries[1][0]
+    revoke_sql, revoke_params = conn.queries[2]
     assert "superseded-by-new-login" in revoke_sql
     assert revoke_params == (VAULT_ID,)
-    insert_sql, insert_params = conn.queries[2]
+    insert_sql, insert_params = conn.queries[3]
     assert "INSERT INTO auth_sessions" in insert_sql
     assert insert_params[:5] == (TOKEN_ID, auth_local._hash_token_id(token_bytes),
                                VAULT_ID, DEVICE_ID, "Unknown device")

@@ -15,6 +15,7 @@ from fastapi import HTTPException, Request, status
 from psycopg2.extras import RealDictCursor
 
 from vault_core import KDF_LEGACY_ITERATIONS, get_db
+from file_v2_client_capability import require_file_v2_reader_for_login
 
 
 logger = logging.getLogger(__name__)
@@ -273,6 +274,7 @@ class SessionPrincipal(TypedDict):
     vault_name: str
     token_id: str
     device_id: Optional[str]
+    file_v2_reader_capable: NotRequired[bool]
 
 
 def issue_session_token(
@@ -280,6 +282,7 @@ def issue_session_token(
     vault_id: str,
     device_id: Optional[str] = None,
     client_label: str,
+    file_v2_reader_capable: bool = False,
     vault_name: str = "",
     ttl_hours: Optional[int] = None,
     include_vault_meta: bool = False,
@@ -367,6 +370,13 @@ def issue_session_token(
             raise ValueError("issue_session_token: vault_id not found")
         metadata = _vault_meta_snapshot(locked_vault) if include_vault_meta else None
 
+        # A legacy build must not revoke the active capable session and then
+        # discover it cannot open a client-only V2 file. This check runs under
+        # the same per-vault lock, before any session/device mutation.
+        require_file_v2_reader_for_login(
+            cur, vault_id, file_v2_reader_capable,
+        )
+
         # 2. Revoke every existing unrevoked session for this vault.
         #    Return the OLD client_label / issued_at so we can name the
         #    displaced session in the audit event (never token_id / hash).
@@ -399,13 +409,13 @@ def issue_session_token(
             """
             INSERT INTO auth_sessions (
                 token_id, token_id_hash, vault_id, device_id,
-                client_label, client_label_source,
+                client_label, client_label_source, file_v2_reader_capable,
                 expires_at
-            ) VALUES (%s, %s, %s, %s, %s, 1, %s)
+            ) VALUES (%s, %s, %s, %s, %s, 1, %s, %s)
             """,
             (
                 token_id, token_id_hash, vault_id, device_id,
-                client_label, expires_at,
+                client_label, file_v2_reader_capable, expires_at,
             ),
         )
 
@@ -618,7 +628,7 @@ def _load_principal(
             """
             SELECT s.token_id, s.vault_id, s.device_id, s.expires_at,
                    s.revoked_at, s.revoked_reason, s.token_id_hash,
-                   s.last_used_at
+                   s.last_used_at, s.file_v2_reader_capable
               FROM auth_sessions s
               JOIN vaults v ON v.vault_id = s.vault_id
              WHERE s.token_id = %s
@@ -673,6 +683,7 @@ def _load_principal(
             "vault_name": "",
             "token_id":   str(row["token_id"]),
             "device_id":  row["device_id"],
+            "file_v2_reader_capable": bool(row.get("file_v2_reader_capable", False)),
         }
         return principal, None
     finally:

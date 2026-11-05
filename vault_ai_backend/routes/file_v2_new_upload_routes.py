@@ -126,6 +126,11 @@ def publish_new_file(
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     _new_upload_enabled()
+    if not principal.get("file_v2_reader_capable", False):
+        raise HTTPException(status_code=426, detail={
+            "code": "client_update_required",
+            "message": "Update SVaultAI before creating client-only files.",
+        })
     require_content_write(principal)
     _file_id(file_id)
     if not payload.confirm:

@@ -680,6 +680,7 @@ CORS_ALLOWED_HEADERS = [
     # See test_cors_preflight_login_2026_07_09.py for the
     # regression tests.
     "X-App-Release",
+    "X-SVaultAI-File-V2-Reader",
     "X-Chat-Request-Id",
     # 2026-07-22 (4) Safari-specific CORS regression follow-up.
     # After the (3) fix landed, the Safari production frontend still
