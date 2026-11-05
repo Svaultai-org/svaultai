@@ -66,7 +66,8 @@ class _Cursor:
             if self.db.marker is not None:
                 raise AssertionError("duplicate marker insert")
             self.db.marker = {"file_size": size, "has_legacy": False,
-                              "file_name": None, "upload_status": "complete"}
+                              "file_name": None, "content_type": None,
+                              "storage_mode": "inline", "upload_status": "complete"}
             return
         if statement.startswith("update file_v2_records set lifecycle_state"):
             if self.db.record is not None and self.db.record["lifecycle_state"] == "file_v2_written":
@@ -178,7 +179,8 @@ def test_publishes_exact_ciphertext_once_and_retries_without_double_charge(harne
     assert first == {"file_id": FILE, "status": "published"}
     assert second == {"file_id": FILE, "status": "already_published"}
     assert db.marker == {"file_size": 5, "has_legacy": False,
-                         "file_name": None, "upload_status": "complete"}
+                         "file_name": None, "content_type": None,
+                         "storage_mode": "inline", "upload_status": "complete"}
     assert db.record["lifecycle_state"] == "client_v2_ready"
     assert db.record["verification_state"] == "client_verified"
     assert db.vault_bytes == 105 and db.account_bytes == 105
@@ -203,7 +205,8 @@ def test_incomplete_oversized_or_migration_file_cannot_publish(harness, change, 
     db, _ = harness
     if detail == "file_v2_not_new":
         db.marker = {"file_size": 5, "has_legacy": True,
-                     "file_name": "legacy", "upload_status": "complete"}
+                     "file_name": "legacy", "content_type": None,
+                     "storage_mode": "inline", "upload_status": "complete"}
     change(db)
     with pytest.raises(HTTPException) as raised:
         route.publish_new_file(FILE, _publish(), PRINCIPAL)

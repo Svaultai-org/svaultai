@@ -131,7 +131,7 @@ def publish_new_file(
             raise HTTPException(404, detail="file_v2_not_found")
         cur.execute(
             "SELECT file_size, encrypted_file_data IS NOT NULL AS has_legacy, "
-            "file_name, upload_status FROM uploaded_files "
+            "file_name, content_type, storage_mode, upload_status FROM uploaded_files "
             "WHERE id=%s AND vault_id=%s FOR UPDATE",
             (file_id, vault_id),
         )
@@ -139,7 +139,9 @@ def publish_new_file(
         if (record["lifecycle_state"] == "client_v2_ready" and
                 record["verification_state"] == "client_verified"):
             if (marker is None or marker["has_legacy"] or
-                    marker["file_name"] not in (None, "") or
+                    marker["file_name"] is not None or
+                    marker["content_type"] is not None or
+                    marker["storage_mode"] != "inline" or
                     marker["upload_status"] != "complete" or
                     int(marker["file_size"]) != int(record["total_bytes"])):
                 raise HTTPException(409, detail="file_v2_published_state_inconsistent")
@@ -255,13 +257,16 @@ def delete_new_file(
             raise HTTPException(409, detail="file_v2_not_new_ready")
         cur.execute(
             "SELECT file_size, encrypted_file_data IS NOT NULL AS has_legacy, "
-            "file_name FROM uploaded_files WHERE id=%s AND vault_id=%s "
+            "file_name, content_type, storage_mode FROM uploaded_files "
+            "WHERE id=%s AND vault_id=%s "
             "FOR UPDATE", (file_id, vault_id),
         )
         marker = cur.fetchone()
         total = int(record["total_bytes"])
         if (marker is None or marker["has_legacy"] or
-                marker["file_name"] not in (None, "") or
+                marker["file_name"] is not None or
+                marker["content_type"] is not None or
+                marker["storage_mode"] != "inline" or
                 int(marker["file_size"]) != total):
             raise HTTPException(409, detail="file_v2_marker_inconsistent")
         cur.execute("SELECT account_id FROM vaults WHERE vault_id=%s FOR UPDATE",
