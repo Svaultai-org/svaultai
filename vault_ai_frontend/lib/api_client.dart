@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show kReleaseMode;
+import 'package:cryptography/cryptography.dart' show SecretKey;
 import 'package:http/http.dart' as http;
 
 import 'services/asset_catalog.dart' show parseAssetBaseUnits;
@@ -19,6 +20,13 @@ import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/zk_private_chat.dart' as zk_private_chat;
 import 'services/file_v2_reader.dart';
+
+// Coordinated rollout with VAULTAI_ZK_METADATA_INVENTORY_ENABLED on the API.
+// A missing keyless route must fail closed instead of sending a ZK PIN.
+const bool kEnableKeylessSavedItemRead = bool.fromEnvironment(
+  'VAULTAI_ENABLE_KEYLESS_SAVED_ITEM_READ',
+  defaultValue: false,
+);
 
 void _vlog(String tag, [Map<String, Object?>? data]) {
   if (kReleaseMode) return;
@@ -436,8 +444,10 @@ void _checkSessionResponse(
 /// Each invocation captures its own token/epoch and rejects stale responses,
 /// including successes, before existing endpoint-specific decoding runs.
 class _SessionBoundHttp {
-  const _SessionBoundHttp({http.Client? client, void Function()? beforeResponse})
-      : _client = client, _beforeResponse = beforeResponse;
+  const _SessionBoundHttp(
+      {http.Client? client, void Function()? beforeResponse})
+      : _client = client,
+        _beforeResponse = beforeResponse;
 
   final http.Client? _client;
   final void Function()? _beforeResponse;
@@ -731,6 +741,7 @@ String? apiClientDeviceId() => _apiClientDeviceId;
 class VaultAIClient {
   final String baseUrl;
   final http.Client? _httpClient;
+  final Future<Map<String, dynamic>> Function(int itemId)? legacyZkItemReader;
 
   /// Captured key/session lease used only by the new registered-asset client.
   /// Existing clients omit this and retain their normal request behavior.
@@ -743,6 +754,7 @@ class VaultAIClient {
     required this.baseUrl,
     this.walletResponseIsCurrent,
     this.authMeTimeout = const Duration(seconds: 12),
+    this.legacyZkItemReader,
     http.Client? httpClient,
   }) : _httpClient = httpClient;
 
@@ -1059,7 +1071,8 @@ class VaultAIClient {
     required String confirmationPhrase,
   }) async {
     if ((pin == null) == (zkProofToken == null)) {
-      throw ArgumentError('Exactly one delete verification method is required.');
+      throw ArgumentError(
+          'Exactly one delete verification method is required.');
     }
     final uri = Uri.parse('$baseUrl/vault/delete/confirm');
     final body = jsonEncode({
@@ -2836,12 +2849,14 @@ class VaultAIClient {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk != null) {
       final ciphertext = await _listZkVaultItems(authToken: authToken);
-      final legacy = await _listLegacyVaultSecureItems(
-        vaultName: vaultName,
-        pin: pin,
-        authToken: authToken,
-        beforeResponse: () => _requireSavedItemKey(mvk),
-      );
+      final legacy = kEnableKeylessSavedItemRead
+          ? await _listZkItemMetadata(authToken: authToken, mvk: mvk)
+          : await _listLegacyVaultSecureItems(
+              vaultName: vaultName,
+              pin: pin,
+              authToken: authToken,
+              beforeResponse: () => _requireSavedItemKey(mvk),
+            );
       final combined = <Map<String, dynamic>>[];
       final seen = <String>{};
       for (final raw in (ciphertext['items'] as List? ?? const [])) {
@@ -2875,6 +2890,104 @@ class VaultAIClient {
       pin: pin,
       authToken: authToken,
     );
+  }
+
+  Future<Map<String, dynamic>> _listZkItemMetadata({
+    required String authToken,
+    required SecretKey mvk,
+  }) async {
+    final metadataKey =
+        await vault_key_hierarchy.VaultKeyHierarchy(mvk).metadataKey();
+    final items = <Map<String, dynamic>>[];
+    final records = await listZkItemMetadataRaw(authToken: authToken);
+    _requireSavedItemKey(mvk);
+    for (final raw in records) {
+      if (raw['is_legacy'] != true) continue;
+      Future<String> label(String cipherField, String plainField) async {
+        final encrypted = raw[cipherField];
+        if (encrypted is String && encrypted.isNotEmpty) {
+          return utf8.decode(await vault_key_hierarchy.aesGcmUnwrap(
+            metadataKey,
+            vault_key_hierarchy.b64urlDecode(encrypted),
+          ));
+        }
+        final plain = raw[plainField];
+        if (plain is String && plain.isNotEmpty) return plain;
+        throw const FormatException('Saved-item label is unavailable');
+      }
+
+      final type = await label('item_type_ciphertext', 'item_type');
+      final service = await label('service_ciphertext', 'service');
+      if (type.trim().isEmpty || service.trim().isEmpty) {
+        throw const FormatException('Empty saved-item metadata');
+      }
+      items.add(<String, dynamic>{
+        'id': raw['item_id'],
+        'item_type': type,
+        'service': service,
+        'created_at': raw['created_at'],
+        'storage_engine': 'legacy_compatibility',
+      });
+    }
+    _requireSavedItemKey(mvk);
+    return <String, dynamic>{'items': items, 'engine': 'zk_metadata'};
+  }
+
+  /// Strict trusted-session inventory for completeness checks. No PIN or
+  /// saved-item value ciphertext is sent or returned by this route.
+  Future<List<Map<String, dynamic>>> listZkItemMetadataRaw({
+    required String authToken,
+  }) async {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    final records = <Map<String, dynamic>>[];
+    var afterId = 0;
+    for (var page = 0; page < 1000; page++) {
+      _requireSavedItemKey(mvk);
+      final uri = Uri.parse('$baseUrl/vault/items/metadata').replace(
+        queryParameters: <String, String>{
+          'after_item_id': '$afterId',
+          'limit': '100',
+        },
+      );
+      final response = await _sessionHttpWithGuard(
+        () => _requireSavedItemKey(mvk),
+      ).get(uri, headers: _defaultHeaders(authToken: authToken));
+      _requireSavedItemKey(mvk);
+      if (response.statusCode != 200) {
+        _throwIfAuthExpired(response.statusCode, response.body);
+        _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        throw Exception(_formatBackendError(
+          prefix: 'List saved-item metadata failed',
+          statusCode: response.statusCode,
+          responseBody: response.body,
+        ));
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic> ||
+          decoded['records'] is! List ||
+          decoded['has_more'] is! bool) {
+        throw const FormatException('Invalid saved-item metadata inventory');
+      }
+      for (final raw in decoded['records'] as List) {
+        if (raw is! Map<String, dynamic> || raw['item_id'] is! int) {
+          throw const FormatException('Invalid saved-item metadata record');
+        }
+        records.add(raw);
+      }
+      final hasMore = decoded['has_more'] as bool;
+      if (!hasMore) {
+        _requireSavedItemKey(mvk);
+        return records;
+      }
+      final next = decoded['next_after_item_id'];
+      if (next is! int || next <= afterId) {
+        throw const FormatException(
+            'Saved-item metadata cursor did not advance');
+      }
+      afterId = next;
+    }
+    throw StateError('Saved-item inventory exceeded page limit');
   }
 
   Future<Map<String, dynamic>> _listLegacyVaultSecureItems({
@@ -2919,7 +3032,8 @@ class VaultAIClient {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) throw StateError('Vault encryption key is unavailable');
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items');
-    final response = await _sessionHttpWithGuard(() => _requireSavedItemKey(mvk)).get(
+    final response =
+        await _sessionHttpWithGuard(() => _requireSavedItemKey(mvk)).get(
       uri,
       headers: _defaultHeaders(authToken: authToken),
     );
@@ -2982,6 +3096,11 @@ class VaultAIClient {
     return <String, dynamic>{'items': items, 'engine': 'ciphertext'};
   }
 
+  /// Strict MVK-only saved-item reader. Never calls the legacy PIN routes.
+  Future<Map<String, dynamic>> listZkVaultItemsOnly({
+    required String authToken,
+  }) => _listZkVaultItems(authToken: authToken);
+
   Future<Map<String, dynamic>> getVaultSecureItem({
     required String vaultName,
     required String service,
@@ -2993,12 +3112,31 @@ class VaultAIClient {
     if (zk_mvk_store.ZkActiveMvk.current() != null) {
       final mvk = zk_mvk_store.ZkActiveMvk.current();
       final item = await _resolveSavedItem(
-        vaultName: vaultName, pin: pin, authToken: authToken,
-        service: service, itemType: itemType, itemId: itemId,
+        vaultName: vaultName,
+        pin: pin,
+        authToken: authToken,
+        service: service,
+        itemType: itemType,
+        itemId: itemId,
       );
       _requireSavedItemKey(mvk);
       if (item?['storage_engine'] == 'ciphertext') return item!;
       itemId = item?['id']?.toString() ?? itemId;
+      if (kEnableKeylessSavedItemRead) {
+        final exactId = int.tryParse(itemId ?? '');
+        final reader = legacyZkItemReader;
+        if (exactId == null || exactId <= 0 || reader == null) {
+          throw StateError('Private saved-item reader is unavailable');
+        }
+        final detail = await reader(exactId);
+        _requireSavedItemKey(mvk);
+        if (detail['id'] != exactId ||
+            detail['item_type'] != item?['item_type'] ||
+            detail['service'] != item?['service']) {
+          throw const FormatException('Saved-item identity changed');
+        }
+        return detail;
+      }
       // Older builds and the previous chat-confirmation path wrote to the
       // legacy encrypted table. Fall through so those records stay usable;
       // all new dashboard and chat-card writes remain client-encrypted.
@@ -3048,7 +3186,9 @@ class VaultAIClient {
   }) async {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     final listed = await listVaultSecureItems(
-      vaultName: vaultName, pin: pin, authToken: authToken,
+      vaultName: vaultName,
+      pin: pin,
+      authToken: authToken,
     );
     _requireSavedItemKey(mvk);
     final matches = (listed['items'] as List? ?? const [])
@@ -3056,11 +3196,14 @@ class VaultAIClient {
         .where((row) => itemId != null
             ? '${row['id']}' == itemId && '${row['item_type']}' == itemType
             : '${row['item_type']}'.toLowerCase() == itemType.toLowerCase() &&
-                _savedItemTitleIdentity('${row['service']}') == _savedItemTitleIdentity(service))
+                _savedItemTitleIdentity('${row['service']}') ==
+                    _savedItemTitleIdentity(service))
         .map((row) => Map<String, dynamic>.from(row))
         .toList();
-    if (matches.length > 1) throw SavedItemConflictException(duplicate: creating);
-    if (itemId != null && matches.isEmpty) throw StateError('Saved item not found');
+    if (matches.length > 1)
+      throw SavedItemConflictException(duplicate: creating);
+    if (itemId != null && matches.isEmpty)
+      throw StateError('Saved item not found');
     return matches.isEmpty ? null : matches.single;
   }
 
@@ -3441,8 +3584,8 @@ class VaultAIClient {
       final metaKey = await hierarchy.metadataKey();
       final savedNameCt = await vault_key_hierarchy.aesGcmWrap(
         metaKey,
-        utf8.encode(requireCiphertext
-            ? normalizeSavedFileName(savedName) : savedName),
+        utf8.encode(
+            requireCiphertext ? normalizeSavedFileName(savedName) : savedName),
       );
       checkAccess();
       final zkUri = Uri.parse('$baseUrl/vault/ciphertext/uploaded-files');
@@ -3581,7 +3724,8 @@ class VaultAIClient {
       if (response.statusCode != 200) {
         _throwIfAuthExpired(response.statusCode, response.body);
         _throwIfDeviceNotTrusted(response.statusCode, response.body);
-        throw StateError('ZK file inventory unavailable (${response.statusCode})');
+        throw StateError(
+            'ZK file inventory unavailable (${response.statusCode})');
       }
       final decoded = jsonDecode(response.body);
       if (decoded is! Map<String, dynamic> ||
@@ -3736,6 +3880,7 @@ class VaultAIClient {
         throw StateError('File deletion access changed. Select it again.');
       }
     }
+
     checkAccess();
     final uri = Uri.parse(
       '$baseUrl/vault/file-v2/${Uri.encodeComponent(fileId)}/delete-confirm',
@@ -4195,41 +4340,48 @@ class VaultAIClient {
       final mvk = zk_mvk_store.ZkActiveMvk.current();
       int? existingItemId;
       final existing = await _resolveSavedItem(
-        vaultName: vaultName, pin: pin, authToken: authToken,
+        vaultName: vaultName,
+        pin: pin,
+        authToken: authToken,
         service: createOnly ? (newService ?? oldService) : oldService,
-        itemType: itemType, itemId: createOnly ? null : itemId,
+        itemType: itemType,
+        itemId: createOnly ? null : itemId,
         creating: createOnly,
       );
       _requireSavedItemKey(mvk);
       if (createOnly && existing != null) {
         throw const SavedItemConflictException(duplicate: true);
       }
-      final useCiphertext = createOnly || existing == null ||
+      final useCiphertext = createOnly ||
+          existing == null ||
           existing['storage_engine'] == 'ciphertext';
       if (!createOnly) itemId = existing?['id']?.toString() ?? itemId;
       if (useCiphertext) {
-      existingItemId = createOnly ? null : int.tryParse(itemId ?? '');
-      final zkResp = await tryZkVaultItemCiphertextUpsert(
-        baseUrl: baseUrl,
-        authToken: authToken,
-        existingItemId: existingItemId,
-        itemType: itemType,
-        service: (newService != null && newService.trim().isNotEmpty)
-            ? newService.trim()
-            : oldService,
-        payload: <String, dynamic>{
-          'old_service': oldService,
-          if (!createOnly && existing?['draft_id'] is String)
-            'draft_id': existing!['draft_id'],
-          if (newService != null && newService.trim().isNotEmpty)
-            'new_service': newService.trim(),
-          if (fields != null) 'fields': fields,
-        },
-      );
-      if (zkResp != null) {
-        return zkResp;
+        existingItemId = createOnly ? null : int.tryParse(itemId ?? '');
+        final zkResp = await tryZkVaultItemCiphertextUpsert(
+          baseUrl: baseUrl,
+          authToken: authToken,
+          existingItemId: existingItemId,
+          itemType: itemType,
+          service: (newService != null && newService.trim().isNotEmpty)
+              ? newService.trim()
+              : oldService,
+          payload: <String, dynamic>{
+            'old_service': oldService,
+            if (!createOnly && existing?['draft_id'] is String)
+              'draft_id': existing!['draft_id'],
+            if (newService != null && newService.trim().isNotEmpty)
+              'new_service': newService.trim(),
+            if (fields != null) 'fields': fields,
+          },
+        );
+        if (zkResp != null) return zkResp;
+        // The MVK vanished during the request. Never send the supplied PIN to
+        // the legacy route as a fallback from a ZK operation.
+        throw StateError('Vault encryption key changed. Unlock and try again.');
       }
-      }
+      throw StateError(
+          'Legacy saved-item editing is unavailable until migration.');
     }
 
     final uri = Uri.parse('$baseUrl/update-secure-item');
@@ -4367,7 +4519,7 @@ class VaultAIClient {
     final memoryGeneration = st.SessionTermination.instance.generation;
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
     final response = await _sessionHttpWithGuard(
-        () => _assertMemoryAccessCurrent(mvk, memoryGeneration))
+            () => _assertMemoryAccessCurrent(mvk, memoryGeneration))
         .get(
           uri,
           headers: _defaultHeaders(authToken: authToken),
@@ -4459,7 +4611,8 @@ class VaultAIClient {
     if (!identical(zk_mvk_store.ZkActiveMvk.current(), mvk) ||
         st.SessionTermination.instance.generation != generation ||
         st.SessionTermination.instance.isTerminated) {
-      throw StateError('Vault memory access changed. Unlock again to continue.');
+      throw StateError(
+          'Vault memory access changed. Unlock again to continue.');
     }
   }
 
@@ -4707,17 +4860,23 @@ class VaultAIClient {
       }
     }
     if (existingItemId == null) {
-      final legacy = await _listLegacyVaultSecureItems(
-        vaultName: '', pin: pin, authToken: authToken,
-        beforeResponse: () => _requireSavedItemKey(mvk),
-      );
+      final legacy = kEnableKeylessSavedItemRead
+          ? await _listZkItemMetadata(authToken: authToken, mvk: mvk)
+          : await _listLegacyVaultSecureItems(
+              vaultName: '',
+              pin: pin,
+              authToken: authToken,
+              beforeResponse: () => _requireSavedItemKey(mvk),
+            );
       final rows = [
         ...(current['items'] as List? ?? const []),
         ...(legacy['items'] as List? ?? const []),
       ];
       if (rows.whereType<Map>().any((row) =>
-          const {'login', 'credential'}.contains('${row['item_type']}'.toLowerCase()) &&
-          _savedItemTitleIdentity('${row['service']}') == _savedItemTitleIdentity(safeService))) {
+          const {'login', 'credential'}
+              .contains('${row['item_type']}'.toLowerCase()) &&
+          _savedItemTitleIdentity('${row['service']}') ==
+              _savedItemTitleIdentity(safeService))) {
         throw const SavedItemConflictException(duplicate: true);
       }
     }
@@ -4726,17 +4885,17 @@ class VaultAIClient {
     final saved = existingItemId != null
         ? <String, dynamic>{'item_id': existingItemId, 'created': false}
         : await tryZkVaultItemCiphertextUpsert(
-      baseUrl: baseUrl,
-      authToken: authToken,
-      existingItemId: existingItemId,
-      itemType: 'login',
-      service: safeService,
-      payload: <String, dynamic>{
-        'fields': Map<String, dynamic>.from(fields),
-        'source': 'generated_login_draft',
-        'draft_id': safeDraftId,
-      },
-    );
+            baseUrl: baseUrl,
+            authToken: authToken,
+            existingItemId: existingItemId,
+            itemType: 'login',
+            service: safeService,
+            payload: <String, dynamic>{
+              'fields': Map<String, dynamic>.from(fields),
+              'source': 'generated_login_draft',
+              'draft_id': safeDraftId,
+            },
+          );
     final itemId = (saved?['item_id'] as num?)?.toInt();
     if (itemId == null) {
       throw StateError('Generated login could not be encrypted');
@@ -4781,8 +4940,12 @@ class VaultAIClient {
     if (zk_mvk_store.ZkActiveMvk.current() != null) {
       final mvk = zk_mvk_store.ZkActiveMvk.current();
       final existing = await _resolveSavedItem(
-        vaultName: vaultName, pin: pin, authToken: authToken,
-        service: service, itemType: itemType, itemId: itemId,
+        vaultName: vaultName,
+        pin: pin,
+        authToken: authToken,
+        service: service,
+        itemType: itemType,
+        itemId: itemId,
       );
       _requireSavedItemKey(mvk);
       itemId = existing?['id']?.toString() ?? itemId;
@@ -4805,7 +4968,10 @@ class VaultAIClient {
         }
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
-      // No ciphertext row matched: continue into the legacy delete endpoint.
+      // No ciphertext row matched. A ZK operation must not fall through to
+      // the legacy PIN-bearing delete endpoint.
+      throw StateError(
+          'Legacy saved-item deletion is unavailable until migration.');
     }
     final uri = Uri.parse('$baseUrl/delete-secure-item');
 
@@ -4845,9 +5011,11 @@ class VaultAIClient {
   }) async {
     void checkAccess() {
       if (responseIsCurrent?.call() == false) {
-        throw StateError('File deletion access changed. Select the file again.');
+        throw StateError(
+            'File deletion access changed. Select the file again.');
       }
     }
+
     checkAccess();
     final uri = Uri.parse('$baseUrl/manage/file/delete');
 
@@ -5105,11 +5273,13 @@ class VaultAIClient {
     required String network,
     required String signatureLookupHash,
     required String outcomePayloadCiphertext,
-  }) => _postCryptoOutgoingHistoryCiphertext(
-    authToken: authToken, network: network,
-    signatureLookupHash: signatureLookupHash,
-    outcomePayloadCiphertext: outcomePayloadCiphertext,
-  );
+  }) =>
+      _postCryptoOutgoingHistoryCiphertext(
+        authToken: authToken,
+        network: network,
+        signatureLookupHash: signatureLookupHash,
+        outcomePayloadCiphertext: outcomePayloadCiphertext,
+      );
 
   /// Only the new PAXG flow opts into the captured wallet-response lease.
   /// Legacy history persistence keeps its existing dispatch semantics.
@@ -5117,24 +5287,28 @@ class VaultAIClient {
     required String authToken,
     required String signatureLookupHash,
     required String outcomePayloadCiphertext,
-  }) => _postCryptoOutgoingHistoryCiphertext(
-    authToken: authToken, network: 'mainnet',
-    signatureLookupHash: signatureLookupHash,
-    outcomePayloadCiphertext: outcomePayloadCiphertext,
-    scopedPaxg: true,
-  );
+  }) =>
+      _postCryptoOutgoingHistoryCiphertext(
+        authToken: authToken,
+        network: 'mainnet',
+        signatureLookupHash: signatureLookupHash,
+        outcomePayloadCiphertext: outcomePayloadCiphertext,
+        scopedPaxg: true,
+      );
 
   /// KAG uses the same captured private-operation lease as PAXG.
   Future<Map<String, dynamic>> postCryptoWalletKagOutgoingHistoryCiphertext({
     required String authToken,
     required String signatureLookupHash,
     required String outcomePayloadCiphertext,
-  }) => _postCryptoOutgoingHistoryCiphertext(
-    authToken: authToken, network: 'mainnet',
-    signatureLookupHash: signatureLookupHash,
-    outcomePayloadCiphertext: outcomePayloadCiphertext,
-    scopedPaxg: true,
-  );
+  }) =>
+      _postCryptoOutgoingHistoryCiphertext(
+        authToken: authToken,
+        network: 'mainnet',
+        signatureLookupHash: signatureLookupHash,
+        outcomePayloadCiphertext: outcomePayloadCiphertext,
+        scopedPaxg: true,
+      );
 
   Future<Map<String, dynamic>> _postCryptoOutgoingHistoryCiphertext({
     required String authToken,
@@ -5607,7 +5781,8 @@ class VaultAIClient {
     );
     final headers = _defaultHeaders(authToken: authToken, json: false);
     headers['Cache-Control'] = 'no-cache, no-store';
-    final response = await _sessionHttpWithGuard(checkAccess).get(uri, headers: headers);
+    final response =
+        await _sessionHttpWithGuard(checkAccess).get(uri, headers: headers);
     if (responseIsCurrent != null && !responseIsCurrent()) {
       throw StateError('Asset catalog access changed');
     }

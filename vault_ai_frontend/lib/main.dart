@@ -5154,6 +5154,106 @@ Future<void> _stageLegacyContentBestEffort({
   }
 }
 
+VaultAIClient _savedItemClient(AppState app) => VaultAIClient(
+      baseUrl: backendBaseUrl,
+      legacyZkItemReader: kEnableKeylessSavedItemRead
+          ? (itemId) => _readLegacyZkSavedItem(app, itemId)
+          : null,
+    );
+
+Future<Map<String, dynamic>> _readLegacyZkSavedItem(
+  AppState app,
+  int itemId,
+) async {
+  final token = app.sessionToken;
+  final vaultId = app.vaultId;
+  final vaultName = app.vaultName;
+  final handle = app.vaultHandle;
+  final mvk = zk_mvk_store.ZkActiveMvk.current();
+  if (token == null || vaultId == null || vaultName == null ||
+      handle == null || mvk == null || itemId <= 0) {
+    throw StateError('Private saved-item reader is unavailable');
+  }
+  final legacyKey = _VaultCrypto._keyCache[
+    _VaultCrypto._ck(vaultId, vaultName)
+  ];
+  if (legacyKey == null) {
+    throw StateError('Private saved-item reader is unavailable');
+  }
+  final pin = await _VaultCrypto.currentPinOrThrow();
+  final generation = st.SessionTermination.instance.generation;
+  void checkSession() {
+    if (!app.unlocked || app.sessionToken != token ||
+        app.vaultId != vaultId ||
+        !identical(zk_mvk_store.ZkActiveMvk.current(), mvk) ||
+        st.SessionTermination.instance.generation != generation ||
+        st.SessionTermination.instance.isTerminated) {
+      throw StateError('Vault session changed during saved-item read');
+    }
+  }
+  final export = legacy_export.LegacyCiphertextExportClient(
+    proofProvider: () async {
+      checkSession();
+      final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
+        vaultHandle: handle, pin: pin, sessionToken: token,
+      );
+      checkSession();
+      return proof.token;
+    },
+    post: (path, body) async {
+      checkSession();
+      final result = await _zkHttpPost(path, body, bearerToken: token);
+      checkSession();
+      return result;
+    },
+  );
+  try {
+    final records = await export.listItems();
+    final matches = records.where((row) => row['item_id'] == itemId).toList();
+    if (matches.length != 1) {
+      throw StateError('Saved item is unavailable');
+    }
+    final record = matches.single;
+    final chars = record['ciphertext_chars'];
+    if (chars is! int) throw const FormatException('Invalid saved-item size');
+    final key = await vk_hier.VaultKeyHierarchy(mvk).metadataKey();
+    Future<String> label(String plainField, String cipherField) async {
+      final encrypted = record[cipherField];
+      if (encrypted is String && encrypted.isNotEmpty) {
+        return utf8.decode(await vk_hier.aesGcmUnwrap(
+          key, vk_hier.b64urlDecode(encrypted),
+        ));
+      }
+      final plain = record[plainField];
+      if (plain is String && plain.isNotEmpty) return plain;
+      throw const FormatException('Saved-item label is unavailable');
+    }
+    final itemType = await label('item_type', 'item_type_ciphertext');
+    final service = await label('service', 'service_ciphertext');
+    final ciphertext = await export.readItemCiphertext(
+      itemId: itemId, ciphertextChars: chars,
+    );
+    final raw = await legacy_codec.LegacyCiphertextMigrationCodec(
+      legacyKey: legacyKey, mvk: mvk,
+    ).decodeLegacyItem(ciphertext);
+    checkSession();
+    final hasEnvelope = const {'category', 'title', 'fields', 'item_id'}
+        .any(raw.containsKey);
+    final fields = hasEnvelope ? raw['fields'] : raw;
+    if (fields is! Map) throw const FormatException('Invalid saved-item fields');
+    return <String, dynamic>{
+      'id': itemId,
+      'item_type': itemType,
+      'service': service,
+      'fields': Map<String, dynamic>.from(fields),
+      'notes': hasEnvelope ? raw['notes'] : null,
+      'storage_engine': 'legacy_compatibility',
+    };
+  } finally {
+    export.clearGrant();
+  }
+}
+
 /// Best-effort transparent adoption after successful legacy unlock.
 /// A failure never breaks the user's session. Returns true if the
 /// widget already navigated to the save screen (caller must skip its
@@ -7877,7 +7977,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           !app.unlocked) {
         return;
       }
-      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final client = _savedItemClient(app);
       final fetched = await client.getVaultSecureItem(
         vaultName: vaultName,
         service: safeTitle,
@@ -8063,7 +8163,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         try {
           final pin = await _VaultCrypto.currentPinOrThrow();
           if (!dialogIsCurrent()) return;
-          final client = VaultAIClient(baseUrl: backendBaseUrl);
+          final client = _savedItemClient(app);
           final fetched = await client.getVaultSecureItem(
             vaultName: app.vaultName!,
             service: service,
@@ -8203,7 +8303,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     try {
       final pin = await _VaultCrypto.currentPinOrThrow();
-      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final client = _savedItemClient(app);
       final fetched = await client.getVaultSecureItem(
         vaultName: vaultName,
         service: service,
@@ -8242,7 +8342,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     try {
       final pin = await _VaultCrypto.currentPinOrThrow();
-      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final client = _savedItemClient(app);
       final fetched = await client.getVaultSecureItem(
         vaultName: vaultName,
         service: service,
@@ -13810,7 +13910,25 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       assetType: file.assetType,
       relativePath: file.relativePath,
       sizeBytes: file.fileSize,
-    );
+    ).map((message) {
+      if (!file.v2Retired || message.kind != ChatMessage.kVaultFile) {
+        return message;
+      }
+      return _Msg(
+        message.role,
+        message.text,
+        kind: message.kind,
+        fileId: message.fileId,
+        fileName: message.fileName,
+        mimeType: message.mimeType,
+        payload: <String, dynamic>{
+          ...?message.payload,
+          'zk_private_chat_v2': true,
+        },
+        attachments: message.attachments,
+        createdAt: message.createdAt,
+      );
+    }).toList();
 
     setState(() {
       selectedSection = _DashboardSection.chat;
@@ -14922,10 +15040,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required String fileId,
     required String fallbackFileName,
     required String? fallbackMime,
+    bool requireRetiredV2 = false,
   }) async {
-    if (kEnableFileV2UiRead &&
+    if (requireRetiredV2 &&
+        (!kEnableFileV2UiRead || zk_mvk_store.ZkActiveMvk.current() == null)) {
+      throw StateError('Private file access is unavailable.');
+    }
+    final retiredV2 = kEnableFileV2UiRead &&
         zk_mvk_store.ZkActiveMvk.current() != null &&
-        await client.isRetiredV2File(authToken: authToken, fileId: fileId)) {
+        await client.isRetiredV2File(authToken: authToken, fileId: fileId);
+    if (requireRetiredV2 && !retiredV2) {
+      throw StateError('Private file changed. Refresh and try again.');
+    }
+    if (retiredV2) {
       final v2 = await client.downloadRetiredV2File(
         authToken: authToken,
         fileId: fileId,
@@ -15365,6 +15492,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         fileId: msg.fileId!,
         fallbackFileName: msg.fileName!,
         fallbackMime: msg.mimeType,
+        requireRetiredV2: msg.payload?['zk_private_chat_v2'] == true,
       );
 
       if (!mounted) return;
@@ -15554,6 +15682,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         fileId: msg.fileId!,
         fallbackFileName: msg.fileName!,
         fallbackMime: msg.mimeType,
+        requireRetiredV2: msg.payload?['zk_private_chat_v2'] == true,
       );
       if (!mounted) return;
       final ok = FileDownloader().downloadBytes(
@@ -16679,7 +16808,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final token = app.sessionToken;
     final vaultName = app.vaultName;
     if (token == null || vaultName == null || vaultName.isEmpty) return false;
-    final client = VaultAIClient(baseUrl: backendBaseUrl);
+    final client = _savedItemClient(app);
 
     try {
       switch (command.kind) {

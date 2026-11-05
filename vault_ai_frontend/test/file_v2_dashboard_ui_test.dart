@@ -87,6 +87,7 @@ void main() {
         },
       );
       final paths = <String>[];
+      var retiredState = true;
       final mock = MockClient((request) async {
         expect(request.url.host, '127.0.0.1');
         expect(request.url.port, 1);
@@ -99,8 +100,10 @@ void main() {
                     'file_id': v2.fileId,
                     'file_size': fileBytes.length,
                     'file_name_ciphertext': nameCt,
-                    'lifecycle_state': 'legacy_migration_retired',
-                    'verification_state': 'client_verified',
+                    'lifecycle_state': retiredState
+                        ? 'legacy_migration_retired' : 'file_v2_written',
+                    'verification_state': retiredState
+                        ? 'client_verified' : 'unverified',
                   },
                 ],
                 'has_more': false,
@@ -114,8 +117,10 @@ void main() {
                 'files': <Map<String, dynamic>>[
                   <String, dynamic>{
                     'file_id': v2.fileId,
-                    'lifecycle_state': 'legacy_migration_retired',
-                    'verification_state': 'client_verified',
+                    'lifecycle_state': retiredState
+                        ? 'legacy_migration_retired' : 'file_v2_written',
+                    'verification_state': retiredState
+                        ? 'client_verified' : 'unverified',
                   },
                 ],
               }),
@@ -209,6 +214,19 @@ void main() {
           expect(paths, contains('GET /vault/files/metadata'));
           expect(paths, isNot(contains('POST /list-files')));
           expect(paths, isNot(contains('POST /download-file')));
+          // The chat card was created while this file was retired V2. If its
+          // server state changes before a later tap, no legacy PIN download
+          // may be attempted from that trusted V2 card.
+          retiredState = false;
+          await tester.tap(find.byKey(const Key('vault_file_card_view_btn')));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const Key('vault_file_card_download_btn')));
+          await tester.pumpAndSettle();
+          expect(paths, isNot(contains('POST /download-file')));
+          expect(paths, isNot(contains('POST /download-file/manifest')));
+          expect(paths, isNot(contains('POST /list-files')));
+          expect(paths.where((path) => path ==
+              'GET /vault/file-v2/synthetic-v2-file/chunk/0').length, 2);
         }, () => mock);
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());

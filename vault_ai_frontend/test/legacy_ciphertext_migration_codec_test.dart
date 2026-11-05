@@ -38,6 +38,14 @@ void main() {
         legacyKey: _legacyKey,
         mvk: _mvk,
       );
+      expect(
+        await codec.decodeLegacyItem(legacy),
+        <String, dynamic>{
+          'username': 'synthetic-user',
+          'note': marker,
+          'flags': <Object>[1, true, 'sample'],
+        },
+      );
       final staged = await codec.stageItem(
         itemId: 12,
         itemType: 'login',

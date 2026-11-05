@@ -261,6 +261,11 @@ class LegacyCiphertextMigrationCodec {
     return Map<String, dynamic>.from(decoded);
   }
 
+  /// Read one exported legacy item on the client. The caller must obtain the
+  /// ciphertext through a recent, session-bound OPAQUE export grant.
+  Future<Map<String, dynamic>> decodeLegacyItem(String encoded) =>
+      _legacyItemFields(encoded);
+
   Future<Uint8List> _legacyBytes(String encoded) async {
     final combined = base64.decode(encoded);
     if (combined.length < 28) {

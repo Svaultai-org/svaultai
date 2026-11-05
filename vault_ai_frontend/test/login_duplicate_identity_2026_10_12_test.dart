@@ -193,19 +193,15 @@ void main() {
     expect(f.rows.first['item_id'], 11);
   });
 
-  test('ID-selected legacy operations never create a shadow ciphertext item', () async {
+  test('ID-selected legacy edits and deletes fail closed in an active ZK vault', () async {
     final f = Fixture()..unlock();
     f.legacy.addAll([
       {'id': 21, 'service': 'Duplicate', 'item_type': 'login'},
       {'id': 22, 'service': 'Duplicate', 'item_type': 'login'},
     ]);
-    await f.run(() async {
-      await read(id: '21');
-      await edit(id: '21');
-      await remove(id: '21');
-    });
-    expect(f.writes.map((r) => r.url.path), ['/get-secure-item', '/update-secure-item', '/delete-secure-item']);
-    expect(f.writes.every((r) => jsonDecode(r.body)['item_id'] == '21'), isTrue);
+    await expectLater(f.run(() => edit(id: '21')), throwsStateError);
+    await expectLater(f.run(() => remove(id: '21')), throwsStateError);
+    expect(f.writes, isEmpty);
   });
 
   test('unknown explicit ID cannot fall back to a title match', () async {
