@@ -12,10 +12,9 @@ gate (via verify_trusted_device dependency in main.py's include).
                                   * the challenge token from /request
                                   * the exact confirmation phrase
                                     "DELETE MY VAULT"
-                                  * the correct PIN (verified via
-                                    PBKDF2 → AES-GCM decrypt of the
-                                    vault's pin_verifier, same path
-                                    as /auth/login)
+                                  * legacy: the correct PIN
+                                  * ZK cutover: a one-time, session-bound
+                                    recent OPAQUE verification proof
                                 Then invokes vault_deletion_service.
 
 Rules:
@@ -35,6 +34,7 @@ from __future__ import annotations
 import base64
 import hmac
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -50,6 +50,7 @@ from auth_local import (
 )
 from device_gate import verify_trusted_device
 from rate_limit_sensitive import enforce_delete_vault_rate_limit
+from routes.auth_zk_routes import consume_recent_zk_proof
 import security_event_log as sec_log
 from vault_core import (
     KDF_LEGACY_ITERATIONS,
@@ -75,6 +76,7 @@ _CHALLENGE_TTL_SECONDS: int = 10 * 60
 class DeleteStatusResponse(BaseModel):
     confirmation_phrase:      str
     requires_pin:             bool
+    requires_opaque_verification: bool = False
     requires_trusted_device:  bool
     has_active_subscription:  bool
     subscription_status:      str
@@ -91,7 +93,8 @@ class DeleteRequestResponse(BaseModel):
 
 class DeleteConfirmRequest(BaseModel):
     request_token:        str = Field(..., min_length=1)
-    pin:                  str = Field(..., min_length=1, max_length=64)
+    pin:                  Optional[str] = Field(default=None, min_length=1, max_length=64)
+    zk_proof_token:       Optional[str] = Field(default=None, min_length=1, max_length=128)
     confirmation_phrase:  str = Field(..., min_length=1, max_length=64)
 
 
@@ -351,7 +354,7 @@ def _load_pin_material(vault_id: str) -> tuple[str, str, int]:
     return (row["pin_salt"], row["pin_verifier"], iters)
 
 
-def _verify_pin(vault_id: str, pin: str) -> bool:
+def _verify_pin(vault_id: str, pin: Optional[str]) -> bool:
 
     if not isinstance(pin, str) or not pin:
         return False
@@ -369,6 +372,30 @@ def _verify_pin(vault_id: str, pin: str) -> bool:
         return decrypt_message(pin_verifier, key) == PIN_VERIFIER_PLAINTEXT
     except Exception:
         return False
+
+
+def _zk_delete_proof_enabled() -> bool:
+    return os.getenv(
+        "VAULTAI_ZK_DELETE_PROOF_ENABLED", "false",
+    ).strip().lower() == "true"
+
+
+def _vault_has_zk_registration(vault_id: str) -> bool:
+    """Read the authoritative account mode; fail closed on DB errors."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT vault_handle IS NOT NULL FROM vaults "
+            "WHERE vault_id = %s LIMIT 1",
+            (vault_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=401, detail="Invalid session")
+        return bool(row[0])
+    finally:
+        conn.close()
 
 
 @router.get(
@@ -399,9 +426,14 @@ def get_delete_status(
             "apple_subscription_state": "temporarily_unavailable",
             "retryable": True,
         }
+    zk_proof_required = (
+        _zk_delete_proof_enabled()
+        and _vault_has_zk_registration(principal["vault_id"])
+    )
     return DeleteStatusResponse(
         confirmation_phrase=CONFIRMATION_PHRASE,
-        requires_pin=True,
+        requires_pin=not zk_proof_required,
+        requires_opaque_verification=zk_proof_required,
         requires_trusted_device=True,
         has_active_subscription=bool(decision["has_active_subscription"]),
         subscription_status=str(decision["subscription_status"]),
@@ -491,7 +523,17 @@ def confirm_delete(
             },
         )
 
-    if not _verify_pin(vault_id, payload.pin):
+    if _zk_delete_proof_enabled() and _vault_has_zk_registration(vault_id):
+        if payload.pin is not None or not payload.zk_proof_token:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "code": "opaque_verification_required",
+                    "message": "Verify your PIN in the app to continue.",
+                },
+            )
+        consume_recent_zk_proof(payload.zk_proof_token, principal)
+    elif not _verify_pin(vault_id, payload.pin):
         raise HTTPException(
             status_code=401,
             detail={

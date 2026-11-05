@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+import os
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -270,6 +271,17 @@ def _login_impl(
             raise HTTPException(status_code=401, detail=GENERIC_LOGIN_ERROR)
 
         vault_id = str(row["vault_id"])
+        # The legacy endpoint accepts a plaintext PIN. During the coordinated
+        # OPAQUE-only cutover, never authenticate a ZK row through this path.
+        # Pre-ZK vaults remain eligible so they can sign in and adopt ZK.
+        if (
+            row.get("vault_handle") is not None
+            and os.getenv("VAULTAI_ZK_LEGACY_LOGIN_DISABLED", "false")
+            .strip().lower() == "true"
+        ):
+            with _login_phase(timings, "kdf"):
+                _do_dummy_derive(payload.pin)
+            raise HTTPException(status_code=401, detail=GENERIC_LOGIN_ERROR)
         pin_salt = row["pin_salt"]
         pin_verifier = row["pin_verifier"]
         iterations = int(row.get("kdf_iterations") or KDF_LEGACY_ITERATIONS)

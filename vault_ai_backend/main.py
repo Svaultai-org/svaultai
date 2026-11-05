@@ -9974,7 +9974,7 @@ async def get_or_create_vault_meta_endpoint(
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(
             """
-            SELECT vault_id, pin_salt, pin_verifier,
+            SELECT vault_id, pin_salt, pin_verifier, vault_handle,
                    total_bytes, created_at, kdf_iterations
             FROM vaults
             WHERE vault_id = %s
@@ -10000,7 +10000,11 @@ async def get_or_create_vault_meta_endpoint(
             len(payload.pin or ""),
         )
 
-        if not row.get("pin_verifier"):
+        # A ZK vault authenticates with OPAQUE. Never recreate the legacy
+        # offline PIN oracle from a later metadata request, including for a
+        # newly registered verifier-free ZK row whose NOT NULL placeholder is
+        # the empty string. Legacy rows still need one-time initialization.
+        if not row.get("pin_verifier") and row.get("vault_handle") is None:
                                                                       
                                                                            
             if not payload.pin:

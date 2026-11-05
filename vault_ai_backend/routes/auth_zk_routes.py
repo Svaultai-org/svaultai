@@ -22,12 +22,16 @@ Endpoints:
     consumes the slot (single-use), issues a session token, returns
     wrapped MVK / wrapped_sk_vault / display_name_ciphertext for
     the client to decrypt locally.
+* ``POST /auth/zk-verify-init/finalize`` — current trusted session completes
+    a fresh OPAQUE exchange. Finalize returns a short-lived, one-time
+    session-bound proof for a sensitive action without issuing a new session.
 * ``POST /auth/zk-adopt``              — authenticated LEGACY user
     (session issued via the old ``/auth/login`` path) supplies their
     freshly-constructed ZK state (vault_handle, opaque_registration
     upload path already run, wrapped_mvk under new KEK, ...). Server
-    writes the ZK columns and atomically nulls the legacy
-    ``pin_salt`` / ``pin_verifier`` / ``kdf_iterations`` / vault_name.
+    writes the ZK columns. Legacy PIN material is retained until its
+    encrypted content is migrated; adoption is disabled during the private
+    PIN cutover to avoid falsely treating that material as safe.
     Idempotent: a second call for a vault that already has a
     vault_handle returns 409 Conflict.
 
@@ -46,6 +50,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import hmac
 import logging
 import os
 import secrets
@@ -184,6 +189,7 @@ from psycopg2.extras import RealDictCursor
 
 from auth_local import (
     SessionPrincipal,
+    _get_secret,
     issue_session_token,
     _vault_meta_snapshot,
     normalize_client_label,
@@ -220,6 +226,11 @@ router = APIRouter()
 
 
 LOGIN_SLOT_TTL_SECONDS = 90
+VERIFY_SLOT_VERSION = "v1"
+VERIFY_SLOT_DOMAIN = b"zk-pin-reverify-slot/v1\x00"
+RECENT_PROOF_VERSION = "p1"
+RECENT_PROOF_DOMAIN = b"zk-recent-opaque-proof/v1\x00"
+RECENT_PROOF_TTL_SECONDS = 5 * 60
 
 MAX_OPAQUE_MESSAGE_BYTES = 8 * 1024
 MAX_WRAPPED_BLOB_BYTES = 64 * 1024
@@ -233,6 +244,18 @@ DUPLICATE_USERNAME_ERROR = (
 
 ZK_REPAIR_BRANCH_PRESERVE = "preserve_existing_key"
 ZK_REPAIR_BRANCH_ROTATE = "rotate_new_key"
+
+
+def _verifier_free_registration_enabled() -> bool:
+    """Permit a new ZK row only after the keyless client rollout is ready.
+
+    The old client still depends on server PIN verification for chat and
+    several legacy routes. Enabling this flag before those paths are migrated
+    would create a vault that authenticates but cannot use those features.
+    """
+    return os.getenv(
+        "VAULTAI_ZK_VERIFIER_FREE_REGISTRATION_ENABLED", "false",
+    ).strip().lower() == "true"
 
 
 def _b64url_decode(value: str, *, name: str, max_bytes: int) -> bytes:
@@ -385,12 +408,11 @@ class ZkRegisterFinalizeRequest(BaseModel):
     display_name_ciphertext: str = Field(..., min_length=1)
     acknowledged_irrecoverable: bool
     device_id: Optional[str] = Field(default=None, max_length=128)
-    # Legacy PIN verifier (PBKDF2-derived, base64) supplied by the
-    # client so that endpoints which still cross-check the PIN
-    # (currently only /beneficiary/link) work for ZK-registered
-    # accounts. Server never sees the plaintext PIN.
+    # Transitional compatibility only. New ZK clients omit this field once
+    # the verifier-free registration rollout is enabled. Existing clients
+    # that still send it are rejected then, before a partial vault is made.
     pin_salt: str = Field(..., min_length=1, max_length=200)
-    pin_verifier: str = Field(..., min_length=1, max_length=400)
+    pin_verifier: Optional[str] = Field(default=None, min_length=1, max_length=400)
     kdf_iterations: int = Field(..., ge=100_000, le=2_000_000)
     # Same as ZkRegisterInitRequest.username_lookup — required 32-byte
     # one-way lookup derived client-side from the canonical username.
@@ -425,6 +447,27 @@ def _zk_register_finalize_sync(
     payload: ZkRegisterFinalizeRequest, request: Request,
 ) -> ZkRegisterFinalizeResponse:
     enforce_signup_rate_limit(request)
+
+    verifier_free = _verifier_free_registration_enabled()
+    if verifier_free and payload.pin_verifier is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "client_update_required",
+                "message": "Update SVaultAI before creating a new vault.",
+            },
+        )
+    if not verifier_free and payload.pin_verifier is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "private_signup_not_ready",
+                "message": "Private vault creation is temporarily unavailable.",
+            },
+        )
+    # The schema retains a NOT NULL text column for legacy rows. An empty
+    # string is deliberately not a verifier and cannot test PIN guesses.
+    stored_pin_verifier = "" if verifier_free else payload.pin_verifier
 
     handle_bytes = _decode_handle_or_400(payload.vault_handle)
     ke3 = _b64url_decode(
@@ -522,7 +565,7 @@ def _zk_register_finalize_sync(
                 """,
                 (
                     vault_id,
-                    payload.pin_salt, payload.pin_verifier,
+                    payload.pin_salt, stored_pin_verifier,
                     payload.kdf_iterations,
                     handle_bytes, record,
                     wrapped_mvk, wrapped_sk_vault, pk_vault_public,
@@ -910,6 +953,12 @@ def _zk_login_finalize_sync(
     with _zk_login_phase("limiter"):
         enforce_login_finalize_rate_limit(request)
     with _zk_login_phase("validation"):
+        # A re-verification slot must never be exchangeable for a fresh login
+        # session through the older finalize endpoint.
+        if payload.slot_id.startswith(
+            (f"{VERIFY_SLOT_VERSION}.", f"{RECENT_PROOF_VERSION}.")
+        ):
+            raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
         ke3 = _b64url_decode(
             payload.ke3, name="ke3", max_bytes=MAX_OPAQUE_MESSAGE_BYTES,
         )
@@ -1021,6 +1070,325 @@ def _zk_login_finalize_sync(
             device_trust_complete=device_trust_complete,
             vault_meta=metadata,
         )
+
+
+def _verify_slot_tag(
+    nonce: bytes, *, vault_id: str, token_id: str,
+) -> bytes:
+    """Bind a disposable OPAQUE slot to one authenticated session.
+
+    Login slots already live in Postgres and are consumed once. A separate
+    verifier table is unnecessary: the slot id authenticates the vault and
+    session with a domain-separated HMAC under the session signing secret.
+    Neither identifier nor the secret appears in the slot id or logs.
+    """
+    binding = (
+        VERIFY_SLOT_DOMAIN
+        + uuid.UUID(str(vault_id)).bytes
+        + uuid.UUID(str(token_id)).bytes
+        + nonce
+    )
+    return hmac.new(_get_secret(), binding, hashlib.sha256).digest()
+
+
+def _new_verify_slot_id(principal: SessionPrincipal) -> str:
+    nonce = secrets.token_bytes(24)
+    tag = _verify_slot_tag(
+        nonce,
+        vault_id=principal["vault_id"],
+        token_id=principal["token_id"],
+    )
+    return (
+        f"{VERIFY_SLOT_VERSION}."
+        f"{_b64url_encode(nonce)}.{_b64url_encode(tag)}"
+    )
+
+
+def _verify_slot_belongs_to_session(
+    slot_id: str, principal: SessionPrincipal,
+) -> bool:
+    try:
+        version, nonce_text, tag_text = slot_id.split(".")
+        if version != VERIFY_SLOT_VERSION:
+            return False
+        nonce = _b64url_decode(
+            nonce_text, name="slot_id", max_bytes=24,
+        )
+        tag = _b64url_decode(
+            tag_text, name="slot_id", max_bytes=32,
+        )
+        if len(nonce) != 24 or len(tag) != 32:
+            return False
+        expected = _verify_slot_tag(
+            nonce,
+            vault_id=principal["vault_id"],
+            token_id=principal["token_id"],
+        )
+        return hmac.compare_digest(tag, expected)
+    except (ValueError, KeyError, HTTPException):
+        return False
+
+
+class ZkVerifyInitRequest(BaseModel):
+    vault_handle: str = Field(..., min_length=1, max_length=200)
+    ke1: str = Field(..., min_length=1)
+
+
+class ZkVerifyInitResponse(BaseModel):
+    slot_id: str
+    ke2: str
+
+
+@router.post("/auth/zk-verify-init", response_model=ZkVerifyInitResponse)
+async def zk_verify_init(
+    payload: ZkVerifyInitRequest,
+    request: Request,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> ZkVerifyInitResponse:
+    """Start an OPAQUE recheck for the currently trusted ZK session."""
+    return await run_in_threadpool(
+        _zk_verify_init_sync, payload, request, principal,
+    )
+
+
+@_timed_zk_login("verify_init")
+def _zk_verify_init_sync(
+    payload: ZkVerifyInitRequest,
+    request: Request,
+    principal: SessionPrincipal,
+) -> ZkVerifyInitResponse:
+    try:
+        with _zk_login_phase("validation"):
+            handle_bytes = _decode_handle_or_400(payload.vault_handle)
+            ke1 = _b64url_decode(
+                payload.ke1, name="ke1", max_bytes=MAX_OPAQUE_MESSAGE_BYTES,
+            )
+    except HTTPException as exc:
+        if exc.status_code in (400, 413):
+            with _zk_login_phase("limiter"):
+                enforce_login_rate_limit(request)
+        raise
+    with _zk_login_phase("limiter"):
+        enforce_login_init_rate_limits(
+            request, handle_bytes=handle_bytes, lookup_bytes=None,
+        )
+    with _zk_login_connection() as conn:
+        with _zk_login_phase("db"):
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(
+                """
+                SELECT vault_handle, opaque_registration_record
+                FROM vaults
+                WHERE vault_id = %s AND vault_handle = %s
+                  AND opaque_registration_record IS NOT NULL
+                """,
+                (principal["vault_id"], handle_bytes),
+            )
+            row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
+        try:
+            with _zk_login_phase("opaque"):
+                ke2, server_state = opaque_login_start(
+                    bytes(row["opaque_registration_record"]),
+                    ke1,
+                    _opaque_credential_id(bytes(row["vault_handle"])),
+                )
+        except OpaqueWheelMissing:
+            raise HTTPException(status_code=503, detail="zk auth not available")
+        except OpaqueError:
+            raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
+
+        slot_id = _new_verify_slot_id(principal)
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            seconds=LOGIN_SLOT_TTL_SECONDS,
+        )
+        with _zk_login_phase("db"):
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO vault_zk_login_slots
+                  (slot_id, vault_id, server_state, expires_at)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (slot_id, principal["vault_id"], server_state, expires_at),
+            )
+            conn.commit()
+        return ZkVerifyInitResponse(slot_id=slot_id, ke2=_b64url_encode(ke2))
+
+
+class ZkVerifyFinalizeRequest(BaseModel):
+    slot_id: str = Field(..., min_length=1, max_length=128)
+    ke3: str = Field(..., min_length=1)
+
+
+class ZkVerifyFinalizeResponse(BaseModel):
+    verified: bool
+    proof_token: str
+    proof_expires_at: datetime
+
+
+def _recent_proof_tag(
+    nonce: bytes, expires_at_ts: int, *, vault_id: str, token_id: str,
+) -> bytes:
+    binding = (
+        RECENT_PROOF_DOMAIN
+        + uuid.UUID(str(vault_id)).bytes
+        + uuid.UUID(str(token_id)).bytes
+        + expires_at_ts.to_bytes(8, "big")
+        + nonce
+    )
+    return hmac.new(_get_secret(), binding, hashlib.sha256).digest()
+
+
+def _new_recent_proof(
+    principal: SessionPrincipal,
+) -> tuple[str, datetime]:
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        seconds=RECENT_PROOF_TTL_SECONDS,
+    )
+    expires_at_ts = int(expires_at.timestamp())
+    nonce = secrets.token_bytes(24)
+    tag = _recent_proof_tag(
+        nonce, expires_at_ts,
+        vault_id=principal["vault_id"],
+        token_id=principal["token_id"],
+    )
+    return (
+        f"{RECENT_PROOF_VERSION}.{expires_at_ts}."
+        f"{_b64url_encode(nonce)}.{_b64url_encode(tag)}",
+        expires_at,
+    )
+
+
+def _recent_proof_belongs_to_session(
+    proof_token: str,
+    principal: SessionPrincipal,
+    *,
+    now_ts: Optional[int] = None,
+) -> bool:
+    try:
+        version, expiry_text, nonce_text, tag_text = proof_token.split(".")
+        if version != RECENT_PROOF_VERSION:
+            return False
+        expires_at_ts = int(expiry_text)
+        now = int(time.time()) if now_ts is None else now_ts
+        if expires_at_ts <= now or expires_at_ts > now + RECENT_PROOF_TTL_SECONDS:
+            return False
+        nonce = _b64url_decode(
+            nonce_text, name="proof_token", max_bytes=24,
+        )
+        tag = _b64url_decode(
+            tag_text, name="proof_token", max_bytes=32,
+        )
+        if len(nonce) != 24 or len(tag) != 32:
+            return False
+        expected = _recent_proof_tag(
+            nonce, expires_at_ts,
+            vault_id=principal["vault_id"],
+            token_id=principal["token_id"],
+        )
+        return hmac.compare_digest(tag, expected)
+    except (ValueError, OverflowError, KeyError, HTTPException):
+        return False
+
+
+def consume_recent_zk_proof(
+    proof_token: str,
+    principal: SessionPrincipal,
+) -> None:
+    """Atomically consume one recent OPAQUE proof for a sensitive action.
+
+    The caller must first enforce a trusted session. A copied proof cannot be
+    used from another session or vault, and DELETE ... RETURNING makes replay
+    fail even when two workers race. This is a credential check, not an
+    authorization decision for the requested action.
+    """
+    if not _recent_proof_belongs_to_session(proof_token, principal):
+        raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
+    with _zk_login_connection() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            DELETE FROM vault_zk_login_slots
+            WHERE slot_id = %s AND vault_id = %s
+              AND expires_at > NOW()
+            RETURNING slot_id
+            """,
+            (proof_token, principal["vault_id"]),
+        )
+        consumed = cur.fetchone()
+        conn.commit()
+    if consumed is None:
+        raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
+
+
+@router.post("/auth/zk-verify-finalize", response_model=ZkVerifyFinalizeResponse)
+async def zk_verify_finalize(
+    payload: ZkVerifyFinalizeRequest,
+    request: Request,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> ZkVerifyFinalizeResponse:
+    """Consume a session-bound OPAQUE slot without issuing a new session."""
+    return await run_in_threadpool(
+        _zk_verify_finalize_sync, payload, request, principal,
+    )
+
+
+@_timed_zk_login("verify_finalize")
+def _zk_verify_finalize_sync(
+    payload: ZkVerifyFinalizeRequest,
+    request: Request,
+    principal: SessionPrincipal,
+) -> ZkVerifyFinalizeResponse:
+    with _zk_login_phase("limiter"):
+        enforce_login_finalize_rate_limit(request)
+    with _zk_login_phase("validation"):
+        ke3 = _b64url_decode(
+            payload.ke3, name="ke3", max_bytes=MAX_OPAQUE_MESSAGE_BYTES,
+        )
+        if not _verify_slot_belongs_to_session(payload.slot_id, principal):
+            raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
+    with _zk_login_connection() as conn:
+        with _zk_login_phase("db"):
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(
+                """
+                DELETE FROM vault_zk_login_slots
+                WHERE slot_id = %s AND vault_id = %s
+                  AND expires_at > NOW()
+                RETURNING server_state
+                """,
+                (payload.slot_id, principal["vault_id"]),
+            )
+            row = cur.fetchone()
+            conn.commit()
+        if row is None:
+            raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
+        try:
+            with _zk_login_phase("opaque"):
+                opaque_login_finish(bytes(row["server_state"]), ke3)
+        except OpaqueWheelMissing:
+            raise HTTPException(status_code=503, detail="zk auth not available")
+        except OpaqueError:
+            raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
+        proof_token, proof_expires_at = _new_recent_proof(principal)
+        with _zk_login_phase("db"):
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO vault_zk_login_slots
+                  (slot_id, vault_id, server_state, expires_at)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (proof_token, principal["vault_id"], b"", proof_expires_at),
+            )
+            conn.commit()
+    return ZkVerifyFinalizeResponse(
+        verified=True,
+        proof_token=proof_token,
+        proof_expires_at=proof_expires_at,
+    )
 
 
 class ZkRepairInitRequest(BaseModel):
@@ -1389,6 +1757,17 @@ async def zk_adopt(
 def _zk_adopt_sync(
     payload: ZkAdoptRequest, principal: SessionPrincipal,
 ) -> ZkAdoptResponse:
+    if _verifier_free_registration_enabled():
+        # Legacy content can itself act as an offline PIN oracle until it is
+        # re-encrypted under a random vault key. Do not label a legacy row ZK
+        # while preserving its verifier during the private-PIN cutover.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "private_adoption_requires_migration",
+                "message": "Update SVaultAI before moving this vault to private sign-in.",
+            },
+        )
     handle_bytes = _decode_handle_or_400(payload.vault_handle)
     record = _b64url_decode(
         payload.opaque_registration_record,
