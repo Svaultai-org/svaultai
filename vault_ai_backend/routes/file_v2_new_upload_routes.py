@@ -17,18 +17,25 @@ from psycopg2.extras import RealDictCursor
 
 from auth_local import SessionPrincipal
 from device_gate import verify_trusted_device
-from routes.file_v2_routes import _enabled
+from routes.file_v2_routes import (
+    _enabled,
+    MAX_FILE_BYTES as STAGING_MAX_FILE_BYTES,
+    MAX_CHUNK_BYTES as STAGING_MAX_CHUNK_BYTES,
+    MAX_CHUNKS as STAGING_MAX_CHUNKS,
+    MAX_MANIFEST_CIPHERTEXT_BYTES as STAGING_MAX_MANIFEST_BYTES,
+    GCM_FRAMING_BYTES as STAGING_GCM_OVERHEAD,
+)
 from subscription_entitlement import require_content_write
 from vault_core import MAX_VAULT_BYTES, get_db, is_vault_zk_adopted
 from routes.auth_zk_routes import consume_recent_zk_proof
 
 
 router = APIRouter()
-MAX_NEW_FILE_BYTES = 64 * 1024 * 1024  # FileV2Reader's current bound.
-MAX_CHUNK_BYTES = 16 * 1024 * 1024
-MAX_CHUNKS = 4096
-MAX_MANIFEST_CIPHERTEXT = 64 * 1024
-AES_GCM_FRAME_OVERHEAD = 28  # 12-byte nonce + 16-byte tag.
+MAX_NEW_FILE_BYTES = STAGING_MAX_FILE_BYTES  # Also FileV2Reader's bound.
+MAX_CHUNK_BYTES = STAGING_MAX_CHUNK_BYTES
+MAX_CHUNKS = STAGING_MAX_CHUNKS
+MAX_MANIFEST_CIPHERTEXT = STAGING_MAX_MANIFEST_BYTES
+AES_GCM_FRAME_OVERHEAD = STAGING_GCM_OVERHEAD
 
 
 class PublishNewFile(BaseModel):
@@ -44,7 +51,7 @@ class DeleteNewFile(BaseModel):
 
 def _new_upload_enabled() -> None:
     _enabled(True)
-    if os.getenv("VAULTAI_ZK_NEW_FILE_V2_ENABLED", "false").lower() != "true":
+    if os.getenv("VAULTAI_ZK_NEW_FILE_V2_ENABLED", "false").strip().lower() != "true":
         raise HTTPException(404, detail="new_file_v2_disabled")
 
 
