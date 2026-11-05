@@ -47,12 +47,14 @@ class LegacyStageResult {
 
 class LegacyContentMigrationStager {
   final bool enabled;
+  final bool recoveryEnabled;
   final LegacyCiphertextExportClient export;
   final LegacyCiphertextMigrationCodec codec;
   final MigrationRequest request;
 
   const LegacyContentMigrationStager({
     this.enabled = false,
+    this.recoveryEnabled = false,
     required this.export,
     required this.codec,
     required this.request,
@@ -67,8 +69,7 @@ class LegacyContentMigrationStager {
     try {
       final items = await export.listItems();
       for (final item in items) {
-        await _stageItem(item);
-        itemsVerified++;
+        if (await _stageItem(item)) itemsVerified++;
       }
       final files = await export.listFiles();
       for (final file in files) {
@@ -84,7 +85,19 @@ class LegacyContentMigrationStager {
     }
   }
 
-  Future<void> _stageItem(Map<String, dynamic> record) async {
+  Future<bool> _stageItem(Map<String, dynamic> record) async {
+    try {
+      return await _stageItemOnce(record);
+    } on _StageConflict {
+      if (!recoveryEnabled) rethrow;
+      final id = record['item_id'];
+      if (id is! int || id <= 0) rethrow;
+      await _resetItemStageAfterFreshExport(id);
+      return _stageItemOnce(await _freshItemRecord(id));
+    }
+  }
+
+  Future<bool> _stageItemOnce(Map<String, dynamic> record) async {
     final id = record['item_id'];
     final chars = record['ciphertext_chars'];
     if (id is! int || id <= 0 || chars is! int) {
@@ -98,6 +111,9 @@ class LegacyContentMigrationStager {
     final itemType = await _itemLabel(
       metadata['item_type'], metadata['item_type_ciphertext'],
     );
+    // Wallet-engine accounts have a dedicated migration and reader contract.
+    // Generic saved-item V2 staging would obstruct that cutover.
+    if (itemType == 'crypto_wallet_account') return false;
     final service = await _itemLabel(
       metadata['service'], metadata['service_ciphertext'],
     );
@@ -121,6 +137,10 @@ class LegacyContentMigrationStager {
           'source_snapshot': source.sourceSnapshot,
         },
       );
+      if (response.statusCode == 409 &&
+          _detailCode(response) == 'staged_item_conflict') {
+        throw const _StageConflict();
+      }
       _require200(response);
       if ((response.data as Map?)?['item_id'] != id ||
           (response.data as Map?)?['staged'] != true ||
@@ -136,8 +156,10 @@ class LegacyContentMigrationStager {
         body['source_snapshot'] != expectedSnapshot ||
         body['item_type_ciphertext'] is! String ||
         body['service_ciphertext'] is! String ||
-        body['payload_ciphertext'] is! String ||
-        !await codec.verifyStagedItem(
+        body['payload_ciphertext'] is! String) {
+      throw const FormatException('Invalid staged item readback');
+    }
+    if (!await codec.verifyStagedItem(
           itemType: itemType,
           service: service,
           legacyCiphertext: legacy,
@@ -145,8 +167,44 @@ class LegacyContentMigrationStager {
           serviceCiphertext: body['service_ciphertext'] as String,
           payloadCiphertext: body['payload_ciphertext'] as String,
         )) {
-      throw const FormatException('Item readback did not match legacy');
+      throw const _StageConflict();
     }
+    return true;
+  }
+
+  Future<Map<String, dynamic>> _freshItemRecord(int itemId) async {
+    export.clearGrant();
+    final matches = (await export.listItems())
+        .where((record) => record['item_id'] == itemId)
+        .toList();
+    if (matches.length != 1 || matches.single['ciphertext_chars'] is! int) {
+      throw const FormatException('Legacy item is unavailable for recovery');
+    }
+    return matches.single;
+  }
+
+  Future<void> _resetItemStageAfterFreshExport(int itemId) async {
+    final record = await _freshItemRecord(itemId);
+    final source = await export.readItemSource(
+      itemId: itemId,
+      ciphertextChars: record['ciphertext_chars'] as int,
+    );
+    final proof = await export.proofProvider();
+    if (proof.isEmpty) throw StateError('PIN proof is unavailable');
+    final response = await request(
+      'POST', '/vault/legacy-ciphertext/migrate/item-reset-stage',
+      <String, dynamic>{
+        'item_id': itemId,
+        'source_snapshot': source.sourceSnapshot,
+        'zk_proof_token': proof,
+      },
+    );
+    _require200(response);
+    final body = _requireMap(response);
+    if (body['item_id'] != itemId || body['stage_reset'] != true) {
+      throw const FormatException('Invalid item stage reset acknowledgement');
+    }
+    export.clearGrant();
   }
 
   Future<String> _itemLabel(Object? plain, Object? encrypted) async {
@@ -167,6 +225,53 @@ class LegacyContentMigrationStager {
   }
 
   Future<void> _stageFile(Map<String, dynamic> record) async {
+    try {
+      await _stageFileOnce(record);
+    } on _StageConflict {
+      if (!recoveryEnabled) rethrow;
+      final id = record['file_id'];
+      if (id is! String || id.isEmpty) rethrow;
+      await _resetFileStageAfterFreshExport(id);
+      await _stageFileOnce(await _freshFileRecord(id));
+    }
+  }
+
+  Future<Map<String, dynamic>> _freshFileRecord(String fileId) async {
+    export.clearGrant();
+    final matches = (await export.listFiles())
+        .where((record) => record['file_id'] == fileId)
+        .toList();
+    if (matches.length != 1 || matches.single['ciphertext_chars'] is! int) {
+      throw const FormatException('Legacy file is unavailable for recovery');
+    }
+    return matches.single;
+  }
+
+  Future<void> _resetFileStageAfterFreshExport(String fileId) async {
+    final record = await _freshFileRecord(fileId);
+    final source = await export.readFileSource(
+      fileId: fileId,
+      ciphertextChars: record['ciphertext_chars'] as int,
+    );
+    final proof = await export.proofProvider();
+    if (proof.isEmpty) throw StateError('PIN proof is unavailable');
+    final response = await request(
+      'POST', '/vault/legacy-ciphertext/migrate/file-reset-stage',
+      <String, dynamic>{
+        'file_id': fileId,
+        'source_snapshot': source.sourceSnapshot,
+        'zk_proof_token': proof,
+      },
+    );
+    _require200(response);
+    final body = _requireMap(response);
+    if (body['file_id'] != fileId || body['stage_reset'] != true) {
+      throw const FormatException('Invalid file stage reset acknowledgement');
+    }
+    export.clearGrant();
+  }
+
+  Future<void> _stageFileOnce(Map<String, dynamic> record) async {
     final id = record['file_id'];
     final chars = record['ciphertext_chars'];
     if (id is! String ||
@@ -217,15 +322,24 @@ class LegacyContentMigrationStager {
             'source_snapshot': source.sourceSnapshot,
           },
         );
+        if (ack.statusCode == 409 &&
+            _detailCode(ack) == 'file_v2_manifest_conflict') {
+          throw const _StageConflict();
+        }
         _require200(ack);
       } else {
         _require200(manifest);
         final body = _requireMap(manifest);
         if (body['file_id'] != id ||
-            body['total_bytes'] != size ||
+            body['total_bytes'] is! int ||
+            body['chunk_size'] is! int ||
+            body['chunk_count'] is! int ||
+            body['manifest_ciphertext'] is! String) {
+          throw const FormatException('Invalid existing file manifest');
+        }
+        if (body['total_bytes'] != size ||
             body['chunk_size'] != prepared.chunkSize ||
             body['chunk_count'] != prepared.chunkCiphertexts.length ||
-            body['manifest_ciphertext'] is! String ||
             !await codec.verifyStagedFileManifest(
               fileId: id,
               declaredFileSize: size,
@@ -235,7 +349,7 @@ class LegacyContentMigrationStager {
               chunkCount: prepared.chunkCiphertexts.length,
               manifestCiphertext: body['manifest_ciphertext'] as String,
             )) {
-          throw const FormatException('Existing file manifest mismatch');
+          throw const _StageConflict();
         }
       }
       for (var i = 0; i < prepared.chunkCiphertexts.length; i++) {
@@ -259,10 +373,14 @@ class LegacyContentMigrationStager {
     final readback = _requireMap(staged);
     if (readback['file_id'] != id ||
         readback['source_snapshot'] != source.sourceSnapshot ||
-        readback['total_bytes'] != size ||
-        readback['chunk_count'] != prepared.chunkCiphertexts.length ||
+        readback['total_bytes'] is! int ||
+        readback['chunk_count'] is! int ||
         readback['manifest_ciphertext'] is! String) {
       throw const FormatException('Invalid staged file readback');
+    }
+    if (readback['total_bytes'] != size ||
+        readback['chunk_count'] != prepared.chunkCiphertexts.length) {
+      throw const _StageConflict();
     }
     final chunks = <String>[];
     for (var i = 0; i < prepared.chunkCiphertexts.length; i++) {
@@ -290,7 +408,7 @@ class LegacyContentMigrationStager {
       manifestCiphertext: readback['manifest_ciphertext'] as String,
       chunkCiphertexts: chunks,
     )) {
-      throw const FormatException('File readback did not match legacy');
+      throw const _StageConflict();
     }
     final finalSource = await request('GET', stagePath);
     _require200(finalSource);
@@ -330,6 +448,12 @@ class LegacyContentMigrationStager {
     }
     return result;
   }
+}
+
+/// Only an exact, well-formed stale V2 sidecar may enter one owner-approved
+/// reset attempt. Missing source data and unexpected responses fail closed.
+class _StageConflict implements Exception {
+  const _StageConflict();
 }
 
 bool _validSnapshot(Object? value) =>

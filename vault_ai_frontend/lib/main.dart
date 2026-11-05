@@ -835,6 +835,13 @@ const bool kEnableLegacyContentStage = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// Requires backend VAULTAI_ZK_LEGACY_STAGE_RECOVERY_ENABLED. A fresh OPAQUE
+// proof resets only a stale, unfinished stage; old ciphertext is retained.
+const bool kEnableLegacyStageRecovery = bool.fromEnvironment(
+  'VAULTAI_ENABLE_LEGACY_STAGE_RECOVERY',
+  defaultValue: false,
+) && kEnableLegacyContentStage;
+
 const bool kEnableFileV2UiRead = bool.fromEnvironment(
   'VAULTAI_ENABLE_FILE_V2_UI_READ',
   defaultValue: false,
@@ -5329,6 +5336,7 @@ Future<void> _stageLegacyContentBestEffort({
     );
     await legacy_stage.LegacyContentMigrationStager(
       enabled: true,
+      recoveryEnabled: kEnableLegacyStageRecovery,
       export: export,
       codec: legacy_codec.LegacyCiphertextMigrationCodec(
         legacyKey: legacyKey,

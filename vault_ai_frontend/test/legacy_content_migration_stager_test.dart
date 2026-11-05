@@ -35,11 +35,12 @@ LegacyCiphertextExportClient _export({
   Map<String, String>? fileSnapshots,
   Map<int, Map<String, dynamic>>? itemSourceMetadata,
   Map<String, Map<String, dynamic>>? fileSourceMetadata,
+  LegacyProofProvider? proofProvider,
 }) {
   var nextSequence = 0;
   var grants = 0;
   return LegacyCiphertextExportClient(
-    proofProvider: () async => 'synthetic-opaque-proof',
+    proofProvider: proofProvider ?? () async => 'synthetic-opaque-proof',
     post: (path, body) async {
       calls.add(path);
       if (path.endsWith('/start')) {
@@ -171,6 +172,39 @@ void main() {
     expect(result.itemsVerified, 0);
     expect(result.filesVerified, 0);
     expect(called, isFalse);
+  });
+
+  test('wallet-engine row is not generically staged or counted', () async {
+    final legacy = await _legacyEncrypt(utf8.encode('{"wallet":"synthetic"}'));
+    final key = await VaultKeyHierarchy(_mvk).metadataKey();
+    final encryptedType = b64urlEncode(await aesGcmWrap(
+      key, utf8.encode('crypto_wallet_account'),
+    ));
+    final calls = <String>[];
+    final result = await LegacyContentMigrationStager(
+      enabled: true,
+      recoveryEnabled: true,
+      export: _export(
+        itemRows: <Map<String, dynamic>>[{
+          'item_id': 21, 'ciphertext_chars': legacy.length,
+          'item_type': null, 'service': 'ETH',
+          'item_type_ciphertext': encryptedType,
+        }],
+        fileRows: const [],
+        itemCiphertexts: {21: legacy},
+        fileCiphertexts: const {},
+        calls: calls,
+      ),
+      codec: LegacyCiphertextMigrationCodec(
+        legacyKey: _legacyKey, mvk: _mvk,
+      ),
+      request: (_, __, [___]) async {
+        fail('Wallet row must not use generic item migration routes');
+      },
+    ).stageAndVerify();
+    expect(result.itemsVerified, 0);
+    expect(calls.any((call) => call.contains('reset-stage') ||
+        call.contains('item-stage')), isFalse);
   });
 
   test('stages item, reads it back, and resumes without a second write',
@@ -441,6 +475,7 @@ void main() {
     var stageWrites = 0;
     final stager = LegacyContentMigrationStager(
       enabled: true,
+      recoveryEnabled: true,
       export: _export(
         itemRows: <Map<String, dynamic>>[
           <String, dynamic>{
@@ -480,8 +515,242 @@ void main() {
     );
     await expectLater(stager.stageAndVerify(), throwsStateError);
     expect(stageWrites, 1);
+    expect(calls.any((call) => call.contains('reset-stage')), isFalse,
+        reason: 'a source changing during the request is not a stale sidecar');
     expect(calls.any((call) => call.contains('retire') ||
         call.startsWith('DELETE ')), isFalse);
     expect(legacy, isNotEmpty);
+  });
+
+  test('stale item stage resets once with fresh proof and restages', () async {
+    final oldLegacy = await _legacyEncrypt(utf8.encode('{"value":"old"}'));
+    final currentLegacy = await _legacyEncrypt(utf8.encode('{"value":"new"}'));
+    final codec = LegacyCiphertextMigrationCodec(
+      legacyKey: _legacyKey, mvk: _mvk,
+    );
+    final oldStage = await codec.stageItem(
+      itemId: 9, itemType: 'note', service: 'Synthetic title',
+      legacyCiphertext: oldLegacy,
+    );
+    Map<String, dynamic>? staged = Map<String, dynamic>.from(oldStage.toStageBody());
+    final sourceSnapshots = <int, String>{9: _snapshotA};
+    final calls = <String>[];
+    var proofs = 0;
+    var resets = 0;
+    var writes = 0;
+    final export = _export(
+      itemRows: <Map<String, dynamic>>[
+        {'item_id': 9, 'ciphertext_chars': currentLegacy.length,
+         'item_type': 'note', 'service': 'Synthetic title'},
+      ],
+      fileRows: const [],
+      itemCiphertexts: {9: currentLegacy},
+      fileCiphertexts: const {},
+      itemSnapshots: sourceSnapshots,
+      calls: calls,
+      proofProvider: () async => 'synthetic-proof-${++proofs}',
+    );
+    Future<MigrationReply> request(String method, String path,
+        [Map<String, dynamic>? body]) async {
+      calls.add('$method $path');
+      if (method == 'GET' && path.endsWith('/item-staged/9')) {
+        return staged == null
+            ? const MigrationReply(409, {'detail': 'item_not_staged'})
+            : MigrationReply(200, {
+                'item_id': 9,
+                ...staged!,
+                'source_snapshot': writes == 0 ? _snapshotA : List.filled(43, 'C').join(),
+              });
+      }
+      if (method == 'POST' && path.endsWith('/item-reset-stage')) {
+        resets++;
+        expect(body!.keys.toSet(), {'item_id', 'source_snapshot', 'zk_proof_token'});
+        expect(body['source_snapshot'], _snapshotA);
+        expect(body['zk_proof_token'], startsWith('synthetic-proof-'));
+        staged = null;
+        sourceSnapshots[9] = _snapshotB;
+        return const MigrationReply(200, {'item_id': 9, 'stage_reset': true});
+      }
+      if (method == 'POST' && path.endsWith('/item-stage')) {
+        writes++;
+        expect(body!['source_snapshot'], _snapshotB);
+        expect(body.containsKey('pin'), isFalse);
+        staged = Map<String, dynamic>.from(body);
+        return MigrationReply(200, {
+          'item_id': 9, 'staged': true,
+          'source_snapshot': List.filled(43, 'C').join(),
+        });
+      }
+      fail('Unexpected item recovery request $method $path');
+    }
+    await expectLater(
+      LegacyContentMigrationStager(enabled: true, export: export,
+          codec: codec, request: request).stageAndVerify(),
+      throwsA(isA<Exception>()),
+    );
+    expect(resets, 0, reason: 'recovery is off unless explicitly enabled');
+    final result = await LegacyContentMigrationStager(
+      enabled: true, recoveryEnabled: true, export: export,
+      codec: codec, request: request,
+    ).stageAndVerify();
+    expect(result.itemsVerified, 1);
+    expect(resets, 1);
+    expect(writes, 1);
+    expect(proofs, greaterThanOrEqualTo(3),
+        reason: 'export, reset, and restage require fresh proofs');
+    expect(calls.any((call) => call.contains('retire') ||
+        call.startsWith('DELETE ')), isFalse);
+  });
+
+  test('stale file stage resets once and verifies current bytes', () async {
+    final oldBytes = List<int>.filled(32, 1);
+    final currentBytes = List<int>.filled(32, 2);
+    final oldLegacy = await _legacyEncrypt(oldBytes);
+    final currentLegacy = await _legacyEncrypt(currentBytes);
+    final codec = LegacyCiphertextMigrationCodec(
+      legacyKey: _legacyKey, mvk: _mvk,
+    );
+    final metadataKey = await VaultKeyHierarchy(_mvk).metadataKey();
+    final oldName = b64urlEncode(
+      await aesGcmWrap(metadataKey, utf8.encode('Old name.txt')),
+    );
+    final oldPrepared = await codec.stageFile(
+      fileId: 'synthetic-file', legacyCiphertext: oldLegacy,
+      declaredFileSize: oldBytes.length, contentType: 'text/plain',
+      encryptedMetadata: {'file_name_ciphertext': oldName},
+    );
+    Map<String, dynamic>? manifest = Map<String, dynamic>.from(oldPrepared.toManifestBody());
+    final chunks = <int, String>{
+      for (var i = 0; i < oldPrepared.chunkCiphertexts.length; i++)
+        i: oldPrepared.chunkCiphertexts[i],
+    };
+    final fileSnapshots = <String, String>{'synthetic-file': _snapshotA};
+    final calls = <String>[];
+    var proofs = 0;
+    var resets = 0;
+    var writes = 0;
+    final export = _export(
+      itemRows: const [],
+      fileRows: <Map<String, dynamic>>[{
+        'file_id': 'synthetic-file',
+        'ciphertext_chars': currentLegacy.length,
+        'file_size': currentBytes.length,
+        'file_name': 'Current name.txt',
+        'content_type': 'text/plain',
+      }],
+      itemCiphertexts: const {},
+      fileCiphertexts: {'synthetic-file': currentLegacy},
+      fileSnapshots: fileSnapshots,
+      calls: calls,
+      proofProvider: () async => 'synthetic-proof-${++proofs}',
+    );
+    Future<MigrationReply> request(String method, String path,
+        [Map<String, dynamic>? body]) async {
+      calls.add('$method $path');
+      if (method == 'GET' && path.endsWith('/file-staged/synthetic-file')) {
+        return manifest == null
+            ? const MigrationReply(409, {'detail': 'file_v2_not_staged'})
+            : MigrationReply(200, {
+                'file_id': 'synthetic-file',
+                'source_snapshot': fileSnapshots['synthetic-file'],
+                'total_bytes': currentBytes.length,
+                'chunk_count': manifest!['chunk_count'],
+                'manifest_ciphertext': manifest!['manifest_ciphertext'],
+              });
+      }
+      if (method == 'GET' && path.endsWith('/manifest')) {
+        return manifest == null
+            ? const MigrationReply(404, {'detail': 'file_v2_not_found'})
+            : MigrationReply(200, manifest!);
+      }
+      if (method == 'GET' && path.contains('/chunk/')) {
+        final index = int.parse(path.split('/').last);
+        return chunks[index] == null
+            ? const MigrationReply(404, {'detail': 'file_v2_chunk_not_found'})
+            : MigrationReply(200, {
+                'file_id': 'synthetic-file', 'chunk_index': index,
+                'ciphertext': chunks[index],
+              });
+      }
+      if (method == 'POST' && path.endsWith('/file-reset-stage')) {
+        resets++;
+        expect(body!.keys.toSet(), {'file_id', 'source_snapshot', 'zk_proof_token'});
+        expect(body['source_snapshot'], _snapshotA);
+        manifest = null;
+        chunks.clear();
+        fileSnapshots['synthetic-file'] = _snapshotB;
+        return const MigrationReply(200,
+            {'file_id': 'synthetic-file', 'stage_reset': true});
+      }
+      if (method == 'POST' && path == '/vault/file-v2/manifest') {
+        writes++;
+        expect(body!['source_snapshot'], _snapshotB);
+        expect(body.containsKey('pin'), isFalse);
+        manifest = body;
+        return const MigrationReply(200, {'file_id': 'synthetic-file'});
+      }
+      if (method == 'PUT' && path == '/vault/file-v2/chunk') {
+        chunks[body!['chunk_index'] as int] = body['ciphertext'] as String;
+        return const MigrationReply(200, {'file_id': 'synthetic-file'});
+      }
+      fail('Unexpected file recovery request $method $path');
+    }
+    final result = await LegacyContentMigrationStager(
+      enabled: true, recoveryEnabled: true, export: export,
+      codec: codec, request: request,
+    ).stageAndVerify();
+    expect(result.filesVerified, 1);
+    expect(resets, 1);
+    expect(writes, 1);
+    expect(proofs, greaterThanOrEqualTo(3));
+    expect(calls.any((call) => call.contains('retire') ||
+        call.startsWith('DELETE ')), isFalse);
+  });
+
+  test('second stale stage fails closed without a second reset', () async {
+    final oldLegacy = await _legacyEncrypt(utf8.encode('{"value":"old"}'));
+    final currentLegacy = await _legacyEncrypt(utf8.encode('{"value":"new"}'));
+    final codec = LegacyCiphertextMigrationCodec(
+      legacyKey: _legacyKey, mvk: _mvk,
+    );
+    final oldStage = await codec.stageItem(
+      itemId: 11, itemType: 'note', service: 'Synthetic title',
+      legacyCiphertext: oldLegacy,
+    );
+    final calls = <String>[];
+    var resets = 0;
+    final stager = LegacyContentMigrationStager(
+      enabled: true, recoveryEnabled: true,
+      export: _export(
+        itemRows: <Map<String, dynamic>>[{
+          'item_id': 11, 'ciphertext_chars': currentLegacy.length,
+          'item_type': 'note', 'service': 'Synthetic title',
+        }],
+        fileRows: const [],
+        itemCiphertexts: {11: currentLegacy},
+        fileCiphertexts: const {},
+        calls: calls,
+      ),
+      codec: codec,
+      request: (method, path, [body]) async {
+        calls.add('$method $path');
+        if (method == 'GET' && path.endsWith('/item-staged/11')) {
+          return MigrationReply(200, {
+            'item_id': 11, ...oldStage.toStageBody(),
+            'source_snapshot': _snapshotA,
+          });
+        }
+        if (method == 'POST' && path.endsWith('/item-reset-stage')) {
+          resets++;
+          return const MigrationReply(200,
+              {'item_id': 11, 'stage_reset': true});
+        }
+        fail('Unexpected second-conflict request');
+      },
+    );
+    await expectLater(stager.stageAndVerify(), throwsA(isA<Exception>()));
+    expect(resets, 1);
+    expect(calls.any((call) => call.contains('retire') ||
+        call.startsWith('DELETE ')), isFalse);
   });
 }
