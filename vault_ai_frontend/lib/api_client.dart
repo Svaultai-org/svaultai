@@ -1491,7 +1491,7 @@ class VaultAIClient {
     return decoded;
   }
 
-  Map<String, dynamic> _selfApprovalBody({
+  Map<String, dynamic> _pinOrZkProofBody({
     String? pin,
     String? zkProofToken,
   }) {
@@ -1515,7 +1515,7 @@ class VaultAIClient {
     final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode(_selfApprovalBody(
+      body: jsonEncode(_pinOrZkProofBody(
         pin: pin,
         zkProofToken: zkProofToken,
       )),
@@ -1547,7 +1547,7 @@ class VaultAIClient {
     final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode(_selfApprovalBody(
+      body: jsonEncode(_pinOrZkProofBody(
         pin: pin,
         zkProofToken: zkProofToken,
       )),
@@ -2015,7 +2015,8 @@ class VaultAIClient {
 
   Future<Map<String, dynamic>> listBeneficiaries({
     required String vaultName,
-    required String pin,
+    String? pin,
+    String? zkProofToken,
     required String authToken,
     // 2026-07-22: optional client-generated request id. When set,
     // sent as X-Client-Request-Id so the ClientException-vs-200
@@ -2034,7 +2035,10 @@ class VaultAIClient {
     final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/list-mine'),
       headers: headers,
-      body: jsonEncode({'vault_name': '', 'pin': pin}),
+      body: jsonEncode(_pinOrZkProofBody(
+        pin: pin,
+        zkProofToken: zkProofToken,
+      )),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -2079,13 +2083,17 @@ class VaultAIClient {
 
   Future<Map<String, dynamic>> listInheritances({
     required String vaultName,
-    required String pin,
+    String? pin,
+    String? zkProofToken,
     required String authToken,
   }) async {
     final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/list-inheritances'),
       headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode({'vault_name': '', 'pin': pin}),
+      body: jsonEncode(_pinOrZkProofBody(
+        pin: pin,
+        zkProofToken: zkProofToken,
+      )),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -2159,7 +2167,8 @@ class VaultAIClient {
   Future<Map<String, dynamic>> requestTransfer({
     required int linkId,
     required String vaultName,
-    required String pin,
+    String? pin,
+    String? zkProofToken,
     required String authToken,
   }) async {
     final response = await _sessionHttp.post(
@@ -2167,8 +2176,7 @@ class VaultAIClient {
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
         'link_id': linkId,
-        'vault_name': '',
-        'pin': pin,
+        ..._pinOrZkProofBody(pin: pin, zkProofToken: zkProofToken),
       }),
     );
     if (response.statusCode != 200) {
@@ -2187,7 +2195,8 @@ class VaultAIClient {
   Future<Map<String, dynamic>> cancelTransfer({
     required int linkId,
     required String vaultName,
-    required String pin,
+    String? pin,
+    String? zkProofToken,
     required String authToken,
   }) async {
     final response = await _sessionHttp.post(
@@ -2195,8 +2204,7 @@ class VaultAIClient {
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
         'link_id': linkId,
-        'vault_name': '',
-        'pin': pin,
+        ..._pinOrZkProofBody(pin: pin, zkProofToken: zkProofToken),
       }),
     );
     if (response.statusCode != 200) {

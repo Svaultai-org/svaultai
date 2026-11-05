@@ -831,6 +831,37 @@ const bool kZkChatFileCardsEnabled = bool.fromEnvironment(
   defaultValue: false,
 );
 
+const bool kEnableZkBeneficiaryProof = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_BENEFICIARY_PROOF',
+  defaultValue: false,
+);
+
+Future<({String? pin, String? zkProofToken})> _beneficiaryCredential(
+  AppState app,
+  String token,
+) async {
+  final handle = app.vaultHandle;
+  if (kEnableZkBeneficiaryProof && handle != null && handle.isNotEmpty) {
+    final pin = await _VaultCrypto.currentPinOrThrow();
+    final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
+      vaultHandle: handle,
+      pin: pin,
+      sessionToken: token,
+    );
+    if (app.sessionToken != token || app.vaultHandle != handle) {
+      throw StateError('Vault access changed.');
+    }
+    return (pin: null, zkProofToken: proof.token);
+  }
+  if (kEnableZkBeneficiaryProof && !kEnableLegacyAuthFallback) {
+    throw StateError('Sign in again to verify beneficiary access.');
+  }
+  return (
+    pin: await _VaultCrypto.currentPinOrThrow(),
+    zkProofToken: null,
+  );
+}
+
 bool legacyAuthFallbackPermitted({
   required bool opaqueLookupMissed,
   required bool isHandle,
@@ -8751,11 +8782,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         'lm-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}-'
         '${myGen.toRadixString(36)}';
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
+      final credential = await _beneficiaryCredential(app, token);
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final result = await client.listBeneficiaries(
         vaultName: app.vaultName!,
-        pin: pin,
+        pin: credential.pin,
+        zkProofToken: credential.zkProofToken,
         authToken: token,
         clientRequestId: clientRequestId,
       );
@@ -8863,11 +8895,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     setState(() => loadingInheritances = true);
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
+      final credential = await _beneficiaryCredential(app, token);
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final result = await client.listInheritances(
         vaultName: app.vaultName!,
-        pin: pin,
+        pin: credential.pin,
+        zkProofToken: credential.zkProofToken,
         authToken: token,
       );
       final raw = result['inheritances'];
@@ -9285,12 +9318,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (token == null || app.vaultName == null) return;
 
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
+      final credential = await _beneficiaryCredential(app, token);
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       await client.cancelTransfer(
         linkId: linkId,
         vaultName: app.vaultName!,
-        pin: pin,
+        pin: credential.pin,
+        zkProofToken: credential.zkProofToken,
         authToken: token,
       );
       _showSnack('Transfer cancelled');
@@ -9457,12 +9491,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (token == null || app.vaultName == null) return;
 
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
+      final credential = await _beneficiaryCredential(app, token);
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       await client.requestTransfer(
         linkId: linkId,
         vaultName: app.vaultName!,
-        pin: pin,
+        pin: credential.pin,
+        zkProofToken: credential.zkProofToken,
         authToken: token,
       );
       _showSnack('Transfer requested — owner has been notified');
