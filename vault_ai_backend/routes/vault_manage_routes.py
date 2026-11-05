@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from psycopg2.extras import RealDictCursor
 
 
@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 from auth_local import verify_session_token
 from device_gate import verify_trusted_device
+from pin_only_action_gate import authorize_pin_only_action
 from subscription_entitlement import require_content_write
 from vault_core import (
     get_db,
@@ -63,7 +64,8 @@ class FileRenameRequest(BaseModel):
 class FileDeleteRequest(BaseModel):
     vault_name: str
     file_id: str
-    pin: str
+    pin: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    zk_proof_token: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
 
 def _normalize(value: str) -> str:
@@ -432,10 +434,16 @@ async def rename_file(
         conn.close()
 
 
-def _delete_file_impl(payload: FileDeleteRequest, vault_id: str):
+def _delete_file_impl(payload: FileDeleteRequest, vault_id: str,
+                      principal: Optional[dict] = None):
 
 
-    verify_vault_pin(vault_id, payload.pin)
+    authorize_pin_only_action(
+        principal or {"vault_id": vault_id},
+        pin=payload.pin, zk_proof_token=payload.zk_proof_token,
+        flag_name="VAULTAI_ZK_FILE_DELETE_PROOF_ENABLED",
+        verify_pin=verify_vault_pin,
+    )
 
     conn = get_db()
     try:
@@ -528,7 +536,7 @@ async def delete_file(
     principal=Depends(verify_trusted_device),
 ):
     vault_id = principal["vault_id"]
-    return _delete_file_impl(payload, vault_id)
+    return _delete_file_impl(payload, vault_id, principal)
 
 
 @router.post("/file/delete")
@@ -537,4 +545,4 @@ async def delete_file_post(
     principal=Depends(verify_trusted_device),
 ):
     vault_id = principal["vault_id"]
-    return _delete_file_impl(payload, vault_id)
+    return _delete_file_impl(payload, vault_id, principal)

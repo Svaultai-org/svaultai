@@ -1156,7 +1156,8 @@ class BeneficiaryListRequest(BaseModel):
 class DeleteBeneficiaryRequest(BaseModel):
     link_id: int
     vault_name: str                      
-    pin: str
+    pin: Optional[str] = None
+    zk_proof_token: Optional[str] = None
 
 
 class TransferActionRequest(BaseModel):
@@ -1220,7 +1221,8 @@ class DownloadFileRequest(BaseModel):
 class DeleteFileRequest(BaseModel):
     vault_name: str
     file_id: str
-    pin: str
+    pin: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    zk_proof_token: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
 
 def create_pin_verifier(pin: str, pin_salt: str, iterations: int) -> str:
@@ -11422,7 +11424,9 @@ async def beneficiary_delete_endpoint(
 ):
 
     vault_id = principal["vault_id"]
-    verify_vault_pin(vault_id, payload.pin)
+    _verify_beneficiary_action(
+        principal, pin=payload.pin, proof_token=payload.zk_proof_token,
+    )
 
     conn = get_db()
     try:
@@ -11934,7 +11938,12 @@ async def delete_file_endpoint(
 ):
     vault_id = principal["vault_id"]
 
-    verify_vault_pin(vault_id, payload.pin)
+    from pin_only_action_gate import authorize_pin_only_action
+    authorize_pin_only_action(
+        principal, pin=payload.pin, zk_proof_token=payload.zk_proof_token,
+        flag_name="VAULTAI_ZK_FILE_DELETE_PROOF_ENABLED",
+        verify_pin=verify_vault_pin,
+    )
 
     conn = get_db()
     try:

@@ -101,6 +101,60 @@ def test_transfer_request_model_accepts_proof_without_pin():
     assert request.link_id == 7
 
 
+def test_beneficiary_delete_uses_opaque_proof_and_owner_scoped_delete(
+    monkeypatch, gates,
+):
+    verify_pin, consume, _ = gates
+    monkeypatch.setenv("VAULTAI_ZK_BENEFICIARY_PROOF_ENABLED", "true")
+    seen = []
+
+    class Cursor:
+        rowcount = 1
+
+        def execute(self, sql, params):
+            seen.append((sql, params))
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def commit(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(main, "get_db", lambda: Connection())
+    payload = main.DeleteBeneficiaryRequest(
+        link_id=7, vault_name="", zk_proof_token="synthetic-proof",
+    )
+    assert payload.pin is None
+    result = asyncio.run(inspect.unwrap(main.beneficiary_delete_endpoint)(
+        None, payload, PRINCIPAL,
+    ))
+    assert result == {"deleted": True}
+    consume.assert_called_once_with("synthetic-proof", PRINCIPAL)
+    verify_pin.assert_not_called()
+    assert len(seen) == 1
+    assert seen[0][1] == (7, PRINCIPAL["vault_id"])
+
+
+def test_beneficiary_delete_rejects_zk_raw_pin_before_db(monkeypatch, gates):
+    verify_pin, consume, _ = gates
+    monkeypatch.setenv("VAULTAI_ZK_BENEFICIARY_PROOF_ENABLED", "true")
+    monkeypatch.setattr(main, "get_db", lambda: pytest.fail("DB reached"))
+    payload = main.DeleteBeneficiaryRequest(
+        link_id=7, vault_name="", pin="synthetic-pin",
+    )
+    with pytest.raises(HTTPException) as denied:
+        asyncio.run(inspect.unwrap(main.beneficiary_delete_endpoint)(
+            None, payload, PRINCIPAL,
+        ))
+    assert denied.value.status_code == 409
+    verify_pin.assert_not_called()
+    consume.assert_not_called()
+
+
 def test_all_four_pin_only_beneficiary_routes_use_shared_proof_gate(monkeypatch):
     checked = mock.Mock()
     monkeypatch.setattr(main, "_verify_beneficiary_action", checked)
