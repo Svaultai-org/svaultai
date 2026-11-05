@@ -128,17 +128,30 @@ class _LegacyDeleteCursor:
     def __init__(self):
         self.queries = []
         self.rowcount = 0
+        self.result = None
 
     def execute(self, sql, params):
         normalized = " ".join(sql.lower().split())
         self.queries.append(normalized)
         if normalized.startswith("select pg_advisory_xact_lock"):
+            self.result = None
             return
-        if "from file_v2_records" not in normalized:
-            raise AssertionError("legacy route attempted to mutate a file with V2 copy")
+        if "from uploaded_files" in normalized:
+            self.result = {"has_legacy_inline": True}
+            return
+        if "from file_v2_records" in normalized:
+            # An unmarked V2 record may be a new upload, so legacy delete
+            # must leave it alone even if an inline row shares the ID.
+            self.result = {
+                "migrating_legacy": False,
+                "lifecycle_state": "file_v2_written",
+                "verification_state": "not_verified",
+            }
+            return
+        raise AssertionError("legacy route attempted to mutate a file with V2 copy")
 
     def fetchone(self):
-        return (1,)  # Synthetic V2 record already exists for this file.
+        return self.result
 
 
 class _LegacyDeleteDb:
@@ -160,14 +173,16 @@ class _LegacyDeleteDb:
 
 
 def _assert_legacy_delete_refused(db):
-    assert len(db.cur.queries) == 2
+    assert len(db.cur.queries) == 3
     assert "pg_advisory_xact_lock" in db.cur.queries[0]
-    assert "from file_v2_records" in db.cur.queries[1]
+    assert "from uploaded_files" in db.cur.queries[1]
     assert "for update" in db.cur.queries[1]
+    assert "from file_v2_records" in db.cur.queries[2]
+    assert "for update" in db.cur.queries[2]
     assert db.commits == 0
 
 
-def test_vault_manage_legacy_delete_refuses_staged_file(monkeypatch):
+def test_vault_manage_legacy_delete_refuses_unmarked_v2_file(monkeypatch):
     from routes import vault_manage_routes as route
 
     db = _LegacyDeleteDb()
@@ -182,7 +197,7 @@ def test_vault_manage_legacy_delete_refuses_staged_file(monkeypatch):
     _assert_legacy_delete_refused(db)
 
 
-def test_primary_legacy_delete_refuses_staged_file(monkeypatch):
+def test_primary_legacy_delete_refuses_unmarked_v2_file(monkeypatch):
     import main
 
     db = _LegacyDeleteDb()

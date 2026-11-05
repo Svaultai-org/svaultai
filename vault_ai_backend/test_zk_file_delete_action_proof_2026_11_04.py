@@ -24,12 +24,24 @@ PRINCIPAL = {
 class _StagedFileCursor:
     def __init__(self):
         self.sql = []
+        self.result = None
 
     def execute(self, sql, params):
         self.sql.append((sql, params))
+        normalized = " ".join(sql.lower().split())
+        if "from uploaded_files" in normalized:
+            self.result = {"has_legacy_inline": True}
+        elif "from file_v2_records" in normalized:
+            self.result = {
+                "migrating_legacy": False,
+                "lifecycle_state": "file_v2_written",
+                "verification_state": "not_verified",
+            }
+        else:
+            self.result = None
 
     def fetchone(self):
-        return (1,)
+        return self.result
 
 
 class _StagedFileDb:
@@ -73,13 +85,14 @@ def test_primary_delete_uses_proof_without_pin_and_preserves_v2_guard(
     assert payload.pin is None
     with pytest.raises(HTTPException) as raised:
         asyncio.run(main.delete_file_endpoint(mock.Mock(), payload, PRINCIPAL))
-    assert raised.value.status_code == 409  # staged V2 file cannot be orphaned
+    assert raised.value.status_code == 409  # unmarked V2 file cannot be orphaned
     assert raised.value.detail == "file_v2_migration_requires_confirmed_delete"
     proof_gate.assert_called_once_with("synthetic-proof", PRINCIPAL)
     verify_pin.assert_not_called()
-    assert len(db.cur.sql) == 2
+    assert len(db.cur.sql) == 3
     assert "pg_advisory_xact_lock" in db.cur.sql[0][0]
-    assert "file_v2_records" in db.cur.sql[1][0]
+    assert "uploaded_files" in db.cur.sql[1][0]
+    assert "file_v2_records" in db.cur.sql[2][0]
     assert db.commits == 0
 
 

@@ -95,6 +95,26 @@ LegacyCiphertextExportClient _export({
 }
 
 void main() {
+  test('migration transport binds bearer to the trusted device', () {
+    final headers = legacyContentMigrationHeaders(
+      sessionToken: 'synthetic-session',
+      deviceId: 'synthetic-device',
+    );
+    expect(headers, <String, String>{
+      'Authorization': 'Bearer synthetic-session',
+      'X-Device-Id': 'synthetic-device',
+      'Content-Type': 'application/json',
+    });
+    expect(headers.values.join(' '), isNot(contains('synthetic-pin')));
+    expect(
+      () => legacyContentMigrationHeaders(
+        sessionToken: 'synthetic-session',
+        deviceId: null,
+      ),
+      throwsStateError,
+    );
+  });
+
   test('default-off staging performs no proof or request', () async {
     var called = false;
     final stager = LegacyContentMigrationStager(

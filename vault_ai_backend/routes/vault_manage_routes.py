@@ -456,20 +456,15 @@ def _delete_file_impl(payload: FileDeleteRequest, vault_id: str,
             (vault_id, payload.file_id),
         )
 
-        # A staged or retired V2 file must be handled through the explicit
-        # migration/confirmed-delete path. Deleting only the legacy row here
-        # would orphan the separate V2 manifest and chunks.
-        cur.execute(
-            "SELECT 1 FROM file_v2_records "
-            "WHERE file_id = %s AND vault_id = %s FOR UPDATE",
-            (payload.file_id, vault_id),
+        from routes.file_v2_routes import (
+            remove_unverified_legacy_stage_for_file_delete,
         )
-        if cur.fetchone() is not None:
-            conn.rollback()
-            raise HTTPException(
-                status_code=409,
-                detail="file_v2_migration_requires_confirmed_delete",
-            )
+        # The explicit legacy delete also removes its own unfinished V2
+        # migration copy in this transaction. Verified or unrelated V2 files
+        # still require a separate confirmed delete.
+        remove_unverified_legacy_stage_for_file_delete(
+            cur, vault_id, payload.file_id,
+        )
 
         cur.execute(
             """
@@ -483,7 +478,7 @@ def _delete_file_impl(payload: FileDeleteRequest, vault_id: str,
         row = cur.fetchone()
 
         if not row:
-            conn.commit()
+            conn.rollback()
             raise HTTPException(status_code=404, detail="File not found")
 
         cur.execute(

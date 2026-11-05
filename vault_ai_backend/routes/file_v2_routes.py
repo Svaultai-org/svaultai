@@ -38,6 +38,51 @@ def reject_legacy_zk_file_rename(principal: SessionPrincipal) -> None:
     if _v2_rename_enabled() and is_vault_zk_adopted(principal['vault_id']):
         raise HTTPException(409, detail='zk_v2_rename_required')
 
+
+def remove_unverified_legacy_stage_for_file_delete(
+    cur, vault_id: str, file_id: str,
+) -> bool:
+    """Remove only an unfinished copy of the file being explicitly deleted.
+
+    The caller holds the per-file advisory lock and commits this deletion in
+    the same transaction as `uploaded_files`. A failed legacy delete must
+    roll back this V2 removal too. Published/retired V2 and unmarked new-file
+    uploads always require their separate confirmed delete routes.
+    """
+    cur.execute(
+        "SELECT storage_mode = 'inline' AND encrypted_file_data IS NOT NULL "
+        "AS has_legacy_inline FROM uploaded_files "
+        "WHERE id = %s AND vault_id = %s FOR UPDATE",
+        (file_id, vault_id),
+    )
+    legacy = cur.fetchone()
+    cur.execute(
+        "SELECT migrating_legacy, lifecycle_state, verification_state "
+        "FROM file_v2_records WHERE file_id = %s AND vault_id = %s FOR UPDATE",
+        (file_id, vault_id),
+    )
+    v2 = cur.fetchone()
+    if v2 is None:
+        return False
+    if (not legacy or not legacy["has_legacy_inline"] or
+            v2["migrating_legacy"] is not True or
+            v2["lifecycle_state"] != "file_v2_written" or
+            v2["verification_state"] != "not_verified"):
+        raise HTTPException(
+            status_code=409,
+            detail="file_v2_migration_requires_confirmed_delete",
+        )
+    cur.execute(
+        "DELETE FROM file_v2_records WHERE file_id = %s AND vault_id = %s "
+        "AND migrating_legacy = TRUE "
+        "AND lifecycle_state = 'file_v2_written' "
+        "AND verification_state = 'not_verified' RETURNING file_id",
+        (file_id, vault_id),
+    )
+    if cur.fetchone() is None:
+        raise HTTPException(status_code=409, detail="file_v2_stage_changed")
+    return True
+
 def _decode(v: str) -> bytes:
     try: return base64.b64decode(v + '=' * (-len(v) % 4), altchars=b'-_', validate=True)
     except (binascii.Error, ValueError) as e: raise HTTPException(400, detail='invalid_base64url') from e
@@ -107,10 +152,10 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
             if cur.fetchone() is None:
                 conn.rollback()
                 raise HTTPException(409, detail='legacy_file_source_missing')
-        cur.execute('''INSERT INTO file_v2_records(file_id,vault_id,crypto_version,manifest_ciphertext,total_bytes,chunk_size,chunk_count)
-                       VALUES(%s,%s,%s,%s,%s,%s,%s)
+        cur.execute('''INSERT INTO file_v2_records(file_id,vault_id,crypto_version,manifest_ciphertext,total_bytes,chunk_size,chunk_count,migrating_legacy)
+                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
                        ON CONFLICT (file_id) DO NOTHING
-                       RETURNING file_id''', (payload.file_id, principal['vault_id'], payload.crypto_version, ct, payload.total_bytes, payload.chunk_size, payload.chunk_count))
+                       RETURNING file_id''', (payload.file_id, principal['vault_id'], payload.crypto_version, ct, payload.total_bytes, payload.chunk_size, payload.chunk_count, payload.migrating_legacy))
         inserted = cur.fetchone()
         if inserted is None:
             # Idempotent retry is allowed only for the exact same logical
@@ -120,10 +165,12 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
                            WHERE file_id=%s AND vault_id=%s
                              AND crypto_version=%s AND total_bytes=%s
                              AND chunk_size=%s AND chunk_count=%s
+                             AND migrating_legacy=%s
                              AND manifest_ciphertext=%s''',
                         (payload.file_id, principal['vault_id'],
                          payload.crypto_version, payload.total_bytes,
-                         payload.chunk_size, payload.chunk_count, ct))
+                         payload.chunk_size, payload.chunk_count,
+                         payload.migrating_legacy, ct))
             if cur.fetchone() is None:
                 conn.rollback()
                 raise HTTPException(409, detail='file_v2_manifest_conflict')

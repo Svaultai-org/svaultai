@@ -8,6 +8,20 @@ import 'legacy_ciphertext_export_client.dart';
 import 'legacy_ciphertext_migration_codec.dart';
 import 'vault_key_hierarchy.dart';
 
+Map<String, String> legacyContentMigrationHeaders({
+  required String sessionToken,
+  required String? deviceId,
+}) {
+  if (sessionToken.isEmpty || deviceId == null || deviceId.isEmpty) {
+    throw StateError('Trusted vault session is unavailable for migration');
+  }
+  return <String, String>{
+    'Authorization': 'Bearer $sessionToken',
+    'X-Device-Id': deviceId,
+    'Content-Type': 'application/json',
+  };
+}
+
 class MigrationReply {
   final int statusCode;
   final Object? data;

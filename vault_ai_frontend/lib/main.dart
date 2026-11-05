@@ -5273,10 +5273,10 @@ Future<void> _stageLegacyContentBestEffort({
   ]) async {
     checkSession();
     final uri = Uri.parse('$backendBaseUrl$path');
-    final headers = <String, String>{
-      'Authorization': 'Bearer $token',
-      'Content-Type': 'application/json',
-    };
+    final headers = legacy_stage.legacyContentMigrationHeaders(
+      sessionToken: token,
+      deviceId: apiClientDeviceId(),
+    );
     late http.Response response;
     switch (method) {
       case 'GET':

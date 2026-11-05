@@ -11990,19 +11990,15 @@ async def delete_file_endpoint(
             (vault_id, payload.file_id),
         )
 
-        # Legacy deletion removes only uploaded_files. A matching V2 record
-        # must be handled by the explicit verified-file delete flow so its
-        # manifest/chunks are not orphaned or lost without confirmation.
-        cursor.execute(
-            "SELECT 1 FROM file_v2_records "
-            "WHERE file_id = %s AND vault_id = %s FOR UPDATE",
-            (payload.file_id, vault_id),
+        from routes.file_v2_routes import (
+            remove_unverified_legacy_stage_for_file_delete,
         )
-        if cursor.fetchone() is not None:
-            raise HTTPException(
-                status_code=409,
-                detail="file_v2_migration_requires_confirmed_delete",
-            )
+        # Removing the old file also removes only its unfinished, marked V2
+        # migration copy in this same transaction. Ready/new V2 files retain
+        # the confirmed-delete requirement.
+        remove_unverified_legacy_stage_for_file_delete(
+            cursor, vault_id, payload.file_id,
+        )
 
         cursor.execute(
             """
@@ -12014,10 +12010,10 @@ async def delete_file_endpoint(
         )
 
         deleted = cursor.fetchone()
-        conn.commit()
-
         if not deleted:
+            conn.rollback()
             raise HTTPException(status_code=404, detail="File not found")
+        conn.commit()
 
         bump_vault_total_bytes(vault_id, -int(deleted["file_size"] or 0))
 
