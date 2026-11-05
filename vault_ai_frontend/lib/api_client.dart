@@ -38,6 +38,22 @@ const bool kRequirePinFreeZkFiles = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// The private-only unlock build cannot use inheritance routes that require
+// the server to derive a content key from a raw PIN. The OPAQUE-proof
+// beneficiary actions use separate methods and remain available.
+const bool kEnableZkPrivateOnlyUnlock = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_PRIVATE_ONLY_UNLOCK',
+  defaultValue: false,
+);
+
+void requireLegacyBeneficiaryPinActionAllowed({String? vaultHandle}) {
+  if (kEnableZkPrivateOnlyUnlock &&
+      (vaultHandle?.isNotEmpty == true ||
+          zk_mvk_store.ZkActiveMvk.current() != null)) {
+    throw StateError('Private inheritance setup is not available yet.');
+  }
+}
+
 void _rejectLegacyFilePinForActiveZk() {
   if (kRequirePinFreeZkFiles && zk_mvk_store.ZkActiveMvk.current() != null) {
     throw StateError('Private file needs migration before this action.');
@@ -2010,6 +2026,7 @@ class VaultAIClient {
     required String label,
     required String authToken,
   }) async {
+    requireLegacyBeneficiaryPinActionAllowed();
     final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/create'),
       headers: _defaultHeaders(authToken: authToken, json: true),
@@ -2038,6 +2055,7 @@ class VaultAIClient {
     required String pairingCode,
     required String authToken,
   }) async {
+    requireLegacyBeneficiaryPinActionAllowed();
     final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/link'),
       headers: _defaultHeaders(authToken: authToken, json: true),
@@ -2162,6 +2180,7 @@ class VaultAIClient {
     String? inheritedVaultName,
     required String authToken,
   }) async {
+    requireLegacyBeneficiaryPinActionAllowed();
     final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/claim-transfer'),
       headers: _defaultHeaders(authToken: authToken, json: true),

@@ -9276,6 +9276,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                   createErr = null;
                                 });
                                 try {
+                                  requireLegacyBeneficiaryPinActionAllowed(
+                                      vaultHandle: app.vaultHandle);
                                   final pin =
                                       await _VaultCrypto.currentPinOrThrow();
                                   final client =
@@ -9474,6 +9476,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                   linkErr = null;
                                 });
                                 try {
+                                  requireLegacyBeneficiaryPinActionAllowed(
+                                      vaultHandle: app.vaultHandle);
                                   final pin =
                                       await _VaultCrypto.currentPinOrThrow();
                                   final client =
@@ -9644,6 +9648,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                             err = null;
                           });
                           try {
+                            requireLegacyBeneficiaryPinActionAllowed(
+                                vaultHandle: app.vaultHandle);
                             final pin = await _VaultCrypto.currentPinOrThrow();
                             final client =
                                 VaultAIClient(baseUrl: backendBaseUrl);
