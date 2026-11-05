@@ -14469,16 +14469,25 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final vaultName = app.vaultName;
     final cryptoContext = VaultCryptoRegistry.current;
     final mvk = zk_mvk_store.ZkActiveMvk.current();
+    final privateV2 = kPrivateOnlyUnlockEnabled &&
+        kEnableZkFileV2Rename && isV2 && mvk != null;
     final generation = st.SessionTermination.instance.generation;
     final deviceId = apiClientDeviceId();
     bool current() => mounted && app.authed && app.unlocked &&
         token != null && vaultId != null && vaultName != null &&
         app.sessionToken == token && app.vaultId == vaultId &&
         app.vaultName == vaultName && apiClientDeviceId() == deviceId &&
-        cryptoContext != null && mvk != null &&
+        mvk != null &&
         zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
-        cryptoContext.vaultId == vaultId && cryptoContext.vaultName == vaultName &&
-        identical(VaultCryptoRegistry.current, cryptoContext) &&
+        (privateV2
+            ? cryptoContext == null &&
+                VaultCryptoRegistry.current == null &&
+                PrivateZkPinTransportSession.active &&
+                zk_mvk_store.ZkActiveMvk.currentVaultHandle() == app.vaultHandle
+            : cryptoContext != null &&
+                cryptoContext.vaultId == vaultId &&
+                cryptoContext.vaultName == vaultName &&
+                identical(VaultCryptoRegistry.current, cryptoContext)) &&
         identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
         st.SessionTermination.instance.generation == generation &&
         !st.SessionTermination.instance.isTerminated;
@@ -14643,17 +14652,20 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
-  Future<bool> _trySavedFileRenameCommand(String text) async {
+  Future<bool> _trySavedFileRenameCommand(
+    String text, {bool Function()? accessIsCurrent,
+  }) async {
     if (attachments.isNotEmpty) return false;
     final command = parseSavedFileRenameCommand(text);
     if (command == null) return false;
+    if (accessIsCurrent?.call() == false) return true;
     final error = savedFileNameValidationError(command.name);
     if (error != null) {
       _appendLocalVaultReply(text, '$error Nothing was changed.');
       return true;
     }
     if (vaultFiles.isEmpty && !loadingFiles) await _loadVaultFiles();
-    if (!mounted) return true;
+    if (!mounted || accessIsCurrent?.call() == false) return true;
     final result = resolveLocalVaultFileLookupResult(
       query: command.target,
       files: vaultFiles.map((file) => VaultLocalFileLookupEntry(
@@ -14664,10 +14676,20 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     );
     final match = result.match;
     if (result.isAmbiguous || match == null) {
+      if (accessIsCurrent?.call() == false) return true;
       _appendLocalVaultReply(text, result.isAmbiguous
           ? 'Several files match "${command.target}". Open Files and use '
               'Rename on the exact file. Nothing was changed.'
           : 'No saved file matches "${command.target}". Nothing was changed.');
+      return true;
+    }
+    final currentFile = vaultFiles.firstWhere(
+      (file) => file.id == match.entry.id,
+    );
+    final currentName = currentFile.savedName?.trim().isNotEmpty == true
+        ? currentFile.savedName!.trim() : currentFile.fileName.trim();
+    if (normalizeSavedFileName(command.name) == currentName) {
+      _appendLocalVaultReply(text, 'The file already has that name. Nothing was changed.');
       return true;
     }
     final controller = _captureSavedFileRename(match.entry.id);
@@ -14678,7 +14700,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _appendLocalVaultReply(text,
           retired && !kEnableZkFileV2Rename
               ? 'Renaming this file is not available yet.'
-              : kEnableZkFileV2Rename &&
+              : (kEnableZkFileV2Rename || kPrivateOnlyUnlockEnabled) &&
                       zk_mvk_store.ZkActiveMvk.current() != null && !retired
                   ? 'This file needs a private file upgrade before renaming.'
                   : 'Unlock your vault before renaming a file.');
@@ -14686,14 +14708,20 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     try {
       final outcome = await _commitSavedFileRename(controller, command.name);
-      if (!controller.accessIsCurrent()) return true;
+      if (!controller.accessIsCurrent() ||
+          accessIsCurrent?.call() == false) {
+        return true;
+      }
       _appendLocalVaultReply(text, outcome == SavedFileRenameOutcome.saved
           ? 'Renamed the file to "${normalizeSavedFileName(command.name)}".'
           : outcome == SavedFileRenameOutcome.cancelled
               ? 'File rename cancelled. Nothing was changed.'
-          : 'This file is already being renamed. Nothing else was changed.');
+          : outcome == SavedFileRenameOutcome.stale
+              ? 'Vault access changed. Nothing was changed.'
+              : 'This file is already being renamed. Nothing else was changed.');
     } catch (_) {
-      if (controller.accessIsCurrent()) {
+      if (controller.accessIsCurrent() &&
+          accessIsCurrent?.call() != false) {
         _appendLocalVaultReply(text, 'Could not rename the file. Please try again.');
       }
     }
@@ -17392,11 +17420,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _scrollToBottom();
   }
 
-  Future<bool> _tryLocalMemorySaveCommand(String text) async {
+  Future<bool> _tryLocalMemorySaveCommand(
+    String text, {bool Function()? accessIsCurrent,
+  }) async {
     if (attachments.isNotEmpty) return false;
     if (_pendingLocalDelete != null) return false;
     final command = parseVaultLocalMemorySaveCommand(text);
     if (command == null) return false;
+    if (accessIsCurrent?.call() == false) return true;
 
     if (command.validationError != null) {
       _appendLocalVaultReply(text, command.validationError!);
@@ -17419,10 +17450,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     try {
       await _requireMemoryWriteAccess(app, token);
+      if (accessIsCurrent?.call() == false) return true;
 
       // A Save command is a create request, not permission to overwrite a
       // title-matched record. Only the selected memory's Edit flow has its ID.
       final existing = await client.listZkMemories(authToken: token, limit: 0);
+      if (accessIsCurrent?.call() == false) return true;
       if (memoryTitleConflicts(
         title: command.title,
         memories: ((existing['items'] as List?) ?? const [])
@@ -17437,6 +17470,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         authToken: token,
         data: command.toMemoryData(),
       );
+      if (accessIsCurrent?.call() == false) return true;
       if (mounted) setState(() => _memoryRefreshGeneration++);
       unawaited(app.refreshVaultStats());
       _appendLocalVaultReply(
@@ -17446,17 +17480,21 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _showSnack('Memory saved');
       return true;
     } on MemoryTitleConflictException {
+      if (accessIsCurrent?.call() == false) return true;
       _appendLocalVaultReply(text, kMemoryTitleConflictMessage);
       return true;
     } on MemorySaveReadbackException catch (e) {
+      if (accessIsCurrent?.call() == false) return true;
       _appendLocalVaultReply(text, e.toString());
       return true;
     } on InvalidVaultUnlockException {
+      if (accessIsCurrent?.call() == false) return true;
       _showSnack(kPrivateOnlyUnlockEnabled
           ? 'Your vault is locked. Unlock it and try again.'
           : 'Your vault is locked. Please enter your PIN again.');
       return true;
     } catch (e) {
+      if (accessIsCurrent?.call() == false) return true;
       if (app.handleApiException(e)) return true;
       _appendLocalVaultReply(
         text,
@@ -17982,6 +18020,26 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         text: text,
         currentAccess: currentAccess,
       );
+      return;
+    }
+    if (parseVaultLocalMemorySaveCommand(text) != null) {
+      final handled = await _tryLocalMemorySaveCommand(
+        text, accessIsCurrent: currentAccess,
+      );
+      if (!handled && currentAccess()) {
+        _appendLocalVaultReply(text,
+            'Finish the current vault action before saving a memory.');
+      }
+      return;
+    }
+    if (parseSavedFileRenameCommand(text) != null) {
+      final handled = await _trySavedFileRenameCommand(
+        text, accessIsCurrent: currentAccess,
+      );
+      if (!handled && currentAccess()) {
+        _appendLocalVaultReply(text,
+            'Private file rename is unavailable. Nothing was changed.');
+      }
       return;
     }
     final client = VaultAIClient(baseUrl: backendBaseUrl);

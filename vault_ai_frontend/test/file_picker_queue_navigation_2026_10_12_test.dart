@@ -626,6 +626,164 @@ void main() {
           kEnableNewFileV2Upload),
       variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
+  testWidgets('private chat memory command saves ciphertext once',
+      (tester) async {
+    const prompt = 'Save a new memory with title Synthetic reminder and '
+        'content: Bring the blue folder';
+    Map<String, dynamic>? stored;
+    var writes = 0;
+    final requestsWithBodies = <http.Request>[];
+    await _withDashboard(tester, (app, picker, requests) async {
+      Future<void> sendPrompt() async {
+        await tester.enterText(
+            find.byKey(const Key('chat_composer_field')), prompt);
+        await tester.pump();
+        final send = tester.widget<InkWell>(find.descendant(
+          of: find.byKey(const Key('composer_send_button')),
+          matching: find.byType(InkWell),
+        ));
+        send.onTap!();
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pumpAndSettle();
+        await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 500)));
+        await tester.pumpAndSettle();
+      }
+
+      await sendPrompt();
+      expect(find.textContaining('Memory saved securely'), findsWidgets);
+      expect(writes, 1);
+      expect(stored, isNotNull);
+      await sendPrompt();
+      expect(find.textContaining('already'), findsWidgets);
+      expect(writes, 1, reason: 'same-title retry cannot duplicate a memory');
+      expect(requests, isNot(contains('POST /chat')));
+      expect(requests, isNot(contains('POST /chat/general')));
+      expect(requestsWithBodies.every((request) =>
+          !request.body.contains('Bring the blue folder') &&
+          !request.body.contains('"pin"')), isTrue);
+    }, respond: (request) async {
+      requestsWithBodies.add(request);
+      final path = request.url.path;
+      if (request.method == 'GET' && path == '/vault/files/metadata') {
+        return http.Response('{"records":[],"has_more":false}', 200);
+      }
+      if (request.method == 'GET' && path == '/vault/file-v2') {
+        return http.Response('{"files":[]}', 200);
+      }
+      if (request.method == 'GET' && path == '/folders') {
+        return http.Response('{"path":"","folders":[],"files":[]}', 200);
+      }
+      if (request.method == 'GET' &&
+          path == '/vault/ciphertext/vault-items') {
+        return http.Response('[]', 200);
+      }
+      if (request.method == 'GET' && path == '/vault/items/metadata') {
+        return http.Response('{"records":[],"has_more":false}', 200);
+      }
+      if (path == '/vault/ciphertext/vault-ai-memory') {
+        if (request.method == 'POST') {
+          writes++;
+          stored = Map<String, dynamic>.from(jsonDecode(request.body) as Map);
+          expectSync(stored!['replace_existing'], isFalse);
+          return http.Response('{"memory_id":"synthetic-id"}', 200);
+        }
+        return http.Response(jsonEncode(<Map<String, dynamic>>[
+          if (stored != null) stored!,
+        ]), 200);
+      }
+      fail('Unexpected private memory request ${request.method} $path');
+    });
+  },
+      skip: !(kPrivateOnlyUnlockEnabled && kEnableZkPrivateChat),
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('private chat file rename opens proof gate and cancels cleanly',
+      (tester) async {
+    final server = _PrivateV2Server();
+    await _withDashboard(tester, (app, picker, requests) async {
+      picker.action = () async => _selected();
+      await _createFile(tester);
+      Future<void> send(String text) async {
+        await tester.enterText(
+            find.byKey(const Key('chat_composer_field')), text);
+        await tester.pump();
+        final button = tester.widget<InkWell>(find.descendant(
+          of: find.byKey(const Key('composer_send_button')),
+          matching: find.byType(InkWell),
+        ));
+        button.onTap!();
+        await tester.pumpAndSettle();
+      }
+
+      await send('Save this file');
+      expect(find.textContaining('1 file saved privately'), findsWidgets);
+      await send('Rename file synthetic-file.txt to Updated.txt');
+      expect(find.byKey(const Key('zk_action_pin_field')), findsOneWidget);
+      expect(requests, isNot(contains('POST /chat')));
+      expect(requests, isNot(contains('POST /chat/general')));
+      expect(requests.any((r) => r.endsWith('/rename')), isFalse);
+      await tester.tap(find.descendant(
+        of: find.byType(AlertDialog), matching: find.text('Cancel'),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('File rename cancelled'), findsWidgets);
+      expect(requests.any((r) => r.endsWith('/rename')), isFalse);
+      await send('Rename file synthetic-file.txt to Save this file');
+      expect(find.textContaining('already has that name'), findsWidgets);
+      expect(find.byKey(const Key('zk_action_pin_field')), findsNothing);
+      expect(requests.any((r) => r.endsWith('/rename')), isFalse);
+    }, respond: server.respond);
+  },
+      skip: !(kPrivateOnlyUnlockEnabled &&
+          kEnableZkPrivateChat &&
+          kEnableZkFileV2Rename &&
+          kEnableNewFileV2Upload),
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('private chat refuses to rename an unretired legacy file',
+      (tester) async {
+    await _withDashboard(tester, (app, picker, requests) async {
+      await tester.enterText(find.byKey(const Key('chat_composer_field')),
+          'Rename file Unnamed file to Updated.txt');
+      await tester.pump();
+      final button = tester.widget<InkWell>(find.descendant(
+        of: find.byKey(const Key('composer_send_button')),
+        matching: find.byType(InkWell),
+      ));
+      button.onTap!();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('private file upgrade'), findsWidgets);
+      expect(find.byKey(const Key('zk_action_pin_field')), findsNothing);
+      expect(requests.any((r) => r.contains('/rename') ||
+          r.contains('/name-file') || r.contains('/chat')), isFalse);
+    }, respond: (request) async {
+      final path = request.url.path;
+      expectSync(request.body, isNot(contains('Updated.txt')));
+      expectSync(request.body, isNot(contains('"pin"')));
+      if (request.method == 'GET' && path == '/vault/files/metadata') {
+        return http.Response(jsonEncode({
+          'records': [
+            {'file_id': 'synthetic-legacy-file', 'file_size': 4,
+             'has_inline_ciphertext': true}
+          ],
+          'has_more': false,
+        }), 200);
+      }
+      if (request.method == 'GET' && path == '/vault/file-v2') {
+        return http.Response('{"files":[]}', 200);
+      }
+      if (request.method == 'GET' && path == '/folders') {
+        return http.Response('{"path":"","folders":[],"files":[]}', 200);
+      }
+      fail('Unexpected private legacy request ${request.method} $path');
+    });
+  },
+      skip: !(kPrivateOnlyUnlockEnabled &&
+          kEnableZkPrivateChat && kEnableZkFileV2Rename &&
+          kEnableFileV2UiRead),
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
   testWidgets('cancel and unreadable selection leave the Files section intact',
       (tester) async {
     await _withDashboard(tester, (app, picker, requests) async {
