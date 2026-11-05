@@ -320,6 +320,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
               final v = vaultCtl.text.trim();
               final p = pinCtl.text.trim();
               if (v.isEmpty || p.isEmpty) return;
+              pinCtl.clear();
               Navigator.pop(ctx, (vaultName: v, pin: p));
             },
             child: Text(AppLocalizations.of(context).securityAnalyzeButton),
@@ -327,6 +328,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
         ],
       ),
     );
+    pinCtl.clear();
     return result;
   }
 

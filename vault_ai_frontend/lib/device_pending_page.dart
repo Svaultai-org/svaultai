@@ -117,6 +117,7 @@ class _DevicePendingPageState extends State<DevicePendingPage> {
               final v = vaultCtrl.text.trim();
               final p = pinCtrl.text.trim();
               if (v.isEmpty || p.isEmpty) return;
+              pinCtrl.clear();
               Navigator.pop(ctx, {'vault_name': v, 'pin': p});
             },
             child: Text(confirmLabel),
@@ -125,6 +126,7 @@ class _DevicePendingPageState extends State<DevicePendingPage> {
       ),
     );
     vaultCtrl.dispose();
+    pinCtrl.clear();
     pinCtrl.dispose();
     return result;
   }

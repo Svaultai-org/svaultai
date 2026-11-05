@@ -790,6 +790,44 @@ const bool kAuthTimingDiagnosticsEnabled = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// Legacy accounts require a separate, explicit migration build. An unknown
+// OPAQUE identifier must not silently send the typed PIN to /auth/login.
+const bool kEnableLegacyAuthFallback = bool.fromEnvironment(
+  'VAULTAI_ENABLE_LEGACY_AUTH_FALLBACK',
+  defaultValue: false,
+);
+
+bool legacyAuthFallbackPermitted({
+  required bool opaqueLookupMissed,
+  required bool isHandle,
+}) =>
+    kEnableLegacyAuthFallback && opaqueLookupMissed && !isHandle;
+
+Future<bool> verifyCurrentVaultPinForWallet(AppState app, String pin) async {
+  final token = app.sessionToken;
+  final vaultId = app.vaultId;
+  final handle = app.vaultHandle;
+  if (!app.unlocked || token == null || vaultId == null) return false;
+  if (handle == null || handle.isEmpty) {
+    // Explicit legacy migration builds may still hold a pre-ZK vault.
+    if (!kEnableLegacyAuthFallback) return false;
+    return _VaultCrypto.cachedPinFor(
+          vaultId: vaultId,
+          vaultName: app.vaultName ?? '',
+        ) == pin;
+  }
+  try {
+    await ZkAuthService(_zkHttpPost).verifyPinProof(
+      vaultHandle: handle,
+      pin: pin,
+      sessionToken: token,
+    );
+  } on OpaqueAuthenticationFailed {
+    return false;
+  }
+  return app.unlocked && app.sessionToken == token && app.vaultId == vaultId;
+}
+
 void authTimingDiagnosticPrint(
   String stage,
   Duration elapsed, {
@@ -2176,7 +2214,7 @@ class AppState extends ChangeNotifier {
 
   Future<LoginResult?> _restoreZkSessionKeysAfterPin({
     required String pin,
-    required String expectedVaultId,
+    String? expectedVaultId,
     required String vaultNameHint,
     String? vaultHandleHint,
     required String reason,
@@ -2212,7 +2250,7 @@ class AppState extends ChangeNotifier {
         pin: pin,
         onStep: (step) => lastStep = step,
       );
-      if (result.vaultId != expectedVaultId) {
+      if (expectedVaultId != null && result.vaultId != expectedVaultId) {
         inheritanceRevealDiag('${reason}_zk_restore_vault_mismatch', {
           'expected_vault_fpr': inheritanceRevealIdFingerprint(expectedVaultId),
           'actual_vault_fpr': inheritanceRevealIdFingerprint(result.vaultId),
@@ -2253,8 +2291,8 @@ class AppState extends ChangeNotifier {
         'expected_role': 'beneficiary',
         'id_source': loginId.source,
         'active_sk_present': zk_sk_store.ZkActiveSkVault.current() != null,
-        'active_sk_vault_match':
-            zk_sk_store.ZkActiveSkVault.currentVaultId() == expectedVaultId,
+          'active_sk_vault_match':
+              zk_sk_store.ZkActiveSkVault.currentVaultId() == result.vaultId,
       });
       return result;
     } on OpaqueAuthenticationFailed catch (e) {
@@ -2265,6 +2303,12 @@ class AppState extends ChangeNotifier {
         'id_source': loginId.source,
       });
       return null;
+    } on AuthRetryException {
+      rethrow;
+    } on AuthServiceUnavailableException {
+      rethrow;
+    } on OpaqueUnavailable {
+      rethrow;
     } catch (e) {
       inheritanceRevealDiag('${reason}_zk_restore_failed', {
         'exception_type': e.runtimeType.toString(),
@@ -2333,21 +2377,45 @@ class AppState extends ChangeNotifier {
     try {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
 
+      // Verify with OPAQUE first. A returning ZK vault must not send the
+      // entered PIN to the legacy /auth/login endpoint before key restore.
+      LoginResult? zkRestore = await _restoreZkSessionKeysAfterPin(
+        pin: pin,
+        expectedVaultId: vaultId,
+        vaultNameHint: knownVaultName,
+        vaultHandleHint: vaultHandle,
+        reason: 'verify_pin',
+      );
       final Map<String, dynamic> loginResult;
-      try {
-        loginResult = await client.authLogin(
-          vaultName: knownVaultName,
-          pin: pin,
-        );
-      } on InvalidCredentialsException catch (e) {
-        lockMessage = e.message;
-        pinAttempts++;
-        vlog('pin.verify.result', {
-          'result': 'failure',
-          'code': 'invalid_credentials',
-        });
-        notifyListeners();
-        return false;
+      if (zkRestore != null) {
+        loginResult = {
+          'session_token': zkRestore.sessionToken,
+          'vault_id': zkRestore.vaultId,
+          'vault_name': zkRestore.vaultName ?? knownVaultName,
+          'display_username': zkRestore.displayName,
+          'vault_handle': zkRestore.vaultHandle,
+        };
+      } else {
+        if (!legacyAuthFallbackPermitted(
+          opaqueLookupMissed: true,
+          isHandle: vaultHandle != null && vaultHandle!.isNotEmpty,
+        )) {
+          lockMessage = 'Wrong vault name or PIN. Try again.';
+          pinAttempts++;
+          notifyListeners();
+          return false;
+        }
+        try {
+          loginResult = await client.authLogin(
+            vaultName: knownVaultName,
+            pin: pin,
+          );
+        } on InvalidCredentialsException catch (e) {
+          lockMessage = e.message;
+          pinAttempts++;
+          notifyListeners();
+          return false;
+        }
       }
       vlog('pin.timing.auth_login', {'elapsed_ms': tick()});
 
@@ -2366,8 +2434,7 @@ class AppState extends ChangeNotifier {
       var activeVaultName = newVaultName;
       var activeDisplay = newDisplay;
       var activeVaultHandle = newVaultHandle;
-      LoginResult? zkRestore;
-      if (restoreZkSessionKeys &&
+      if (zkRestore == null && restoreZkSessionKeys &&
           newVaultHandle != null &&
           newVaultHandle.isNotEmpty) {
         zkRestore = await _restoreZkSessionKeysAfterPin(
@@ -2580,6 +2647,10 @@ class AppState extends ChangeNotifier {
       return false;
     } on AuthServiceUnavailableException {
       lockMessage = AuthServiceUnavailableException.message;
+      notifyListeners();
+      return false;
+    } on OpaqueUnavailable {
+      lockMessage = kAuthDeviceSafeError;
       notifyListeners();
       return false;
     } on VaultLockedException catch (e) {
@@ -4831,7 +4902,7 @@ Future<Map<String, dynamic>> _zkHttpPost(
   }
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw Exception(
-      'ZK POST $path failed ${response.statusCode}: ${response.body}',
+      'ZK POST $path failed ${response.statusCode}',
     );
   }
   final decoded = jsonDecode(response.body);
@@ -4853,7 +4924,7 @@ Future<Map<String, dynamic>> _zkHttpGet(
   final response = await http.get(uri, headers: headers);
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw Exception(
-      'ZK GET $path failed ${response.statusCode}: ${response.body}',
+      'ZK GET $path failed ${response.statusCode}',
     );
   }
   final decoded = jsonDecode(response.body);
@@ -5125,6 +5196,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     _guardAppState?.removeListener(_onGuardStateChanged);
     vaultNameCtrl.removeListener(_maybeMarkZkHandle);
     vaultNameCtrl.dispose();
+    pinCtrl.clear();
     pinCtrl.dispose();
     super.dispose();
   }
@@ -5150,6 +5222,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       setState(() => err = 'PIN must be 64 digits or fewer.');
       return;
     }
+    pinCtrl.clear();
     setState(() {
       loading = true;
       err = null;
@@ -5176,8 +5249,8 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     // from the entered username and hit /auth/zk-login-init.
     // A legacy VLT-XXXX handle typed by an adopted user is also
     // accepted — routed via the handle branch of loginVault.
-    // If the ZK lookup 401s (unknown handle), fall through to the
-    // pre-ZK legacy /auth/login below for true-legacy accounts.
+    // An unknown OPAQUE identifier stays on the ZK path in normal builds.
+    // A dedicated legacy migration build can opt into /auth/login below.
     final bool entryIsHandle = vh.isValidVaultHandleDisplay(vaultName);
 
     // Preflight: verify the entered identifier is derivable BEFORE
@@ -5219,13 +5292,11 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       return;
     } catch (e, stack) {
       final typeName = e.runtimeType.toString();
-      final msg = e.toString();
-      final head = msg.length > 120 ? msg.substring(0, 120) : msg;
       releaseWebDiagnosticPrint('[zk-login-diag] '
-          'last_step=preflight type=$typeName head=$head');
+          'last_step=preflight type=$typeName');
       debugAuthFailureTrace('zk-login-diag', e, stack, step: 'preflight');
       vlog('login.preflight.derivation_failed',
-          {'error_type': typeName, 'error': msg});
+          {'error_type': typeName});
       setState(() {
         err = kAuthDeviceSafeError;
         loading = false;
@@ -5384,7 +5455,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         if (!mounted) return;
         pageTiming('authenticated_route_visible');
         app._recordSuccessfulLoginTiming(authTiming);
-        TextInput.finishAutofillContext(shouldSave: true);
+        TextInput.finishAutofillContext(shouldSave: false);
         Navigator.pushReplacementNamed(context, '/chat');
         return;
       } on OpaqueUnavailable catch (e, stack) {
@@ -5439,13 +5510,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         if (app.handleApiException(e)) return;
         final msg = e.toString();
         final typeName = e.runtimeType.toString();
-        final head = msg.length > 120 ? msg.substring(0, 120) : msg;
-        // Unconditional console log — fires in release builds too so
-        // an operator can grep the browser DevTools console for
-        // "[zk-login-diag]" without a debug build. No PIN, token,
-        // ciphertext or handle bytes are printed.
+        // Release diagnostics include only structured, non-secret fields.
         releaseWebDiagnosticPrint('[zk-login-diag] '
-            'last_step=$loginLastStep type=$typeName head=$head');
+            'last_step=$loginLastStep type=$typeName');
         // First line of the stack — the top frame usually names the
         // exact file+line that threw, which is the fastest way to
         // identify a bang null in a minified web build.
@@ -5456,24 +5523,12 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         vlog('login.zk.failed', {
           'error_type': typeName,
           'last_step': loginLastStep,
-          'error_head': head,
         });
-        // Two ZK failure modes:
-        //   * 401 "vault_handle or PIN is incorrect" — either the
-        //     account is pre-ZK (no vault_handle row) OR the PIN is
-        //     wrong. Only in the first case is the legacy fallback
-        //     safe. We can't tell the difference from the error
-        //     alone, so we let the fallback run; it will 401 again
-        //     with the correct "Wrong username or PIN" copy for the
-        //     pre-ZK-but-wrong-PIN case.
-        //   * anything else — hard error. Surface a controlled copy
-        //     that ALSO carries the diagnostic step + exception
-        //     class so an operator or user reading production logs
-        //     can identify the failing step. Truncated to remain
-        //     free of PIN/ciphertext/handle bytes.
-        final looksLikeAuth401 = msg.contains('HTTP 401') ||
-            msg.contains('failed 401') ||
-            msg.contains('vault_handle or PIN is incorrect');
+        // Only an explicit init lookup miss can enter the separately
+        // enabled legacy migration path. Finalize errors, outages, and
+        // malformed responses always fail closed.
+        final looksLikeAuth401 =
+            msg.contains('ZK POST /auth/zk-login-init failed 401');
         if (looksLikeAuth401) {
           zkLoginNotFound = true;
         } else {
@@ -5488,9 +5543,12 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       }
     }
 
-    // A typed VLT- handle never falls back to legacy — a wrong PIN
-    // must fail closed on the ZK side.
-    if (entryIsHandle && zkLoginNotFound) {
+    // Unknown names and handles fail closed. Sending the attempted PIN to
+    // /auth/login after an OPAQUE miss would disclose it on the network.
+    if (zkLoginNotFound && !legacyAuthFallbackPermitted(
+      opaqueLookupMissed: zkLoginNotFound,
+      isHandle: entryIsHandle,
+    )) {
       if (!mounted) return;
       setState(() {
         err = 'Wrong username or PIN.';
@@ -5537,7 +5595,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       await _deriveKeyAndUnlock(app: app, pin: pin);
       pageTiming('key_unwrap_complete');
       if (!mounted) return;
-      if (app.unlocked) TextInput.finishAutofillContext(shouldSave: true);
+      if (app.unlocked) TextInput.finishAutofillContext(shouldSave: false);
       _notifyNewDeviceTrustedIfNeeded(newDeviceTrusted);
       final adoptedNav = await _tryLegacyAdoptionBestEffort(
         context: context,
@@ -5580,10 +5638,8 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       if (app.handleApiException(e)) return;
       if (!mounted) return;
       final typeName = e.runtimeType.toString();
-      final msg = e.toString();
-      final head = msg.length > 120 ? msg.substring(0, 120) : msg;
       releaseWebDiagnosticPrint('[zk-login-diag] '
-          'last_step=legacy_fallback type=$typeName head=$head');
+          'last_step=legacy_fallback type=$typeName');
       debugAuthFailureTrace('zk-login-diag', e, stack, step: 'legacy_fallback');
       vlog('login.legacy.failed', {'error_type': typeName});
       setState(() {
@@ -5729,6 +5785,17 @@ class _SignupPageState extends State<SignupPage> {
   static const int _minPinLength = 6;
   static const int _maxPinLength = 64;
 
+  @override
+  void dispose() {
+    pinCtrl.clear();
+    confirmPinCtrl.clear();
+    pinCtrl.dispose();
+    confirmPinCtrl.dispose();
+    vaultNameCtrl.dispose();
+    displayNameCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _submit() async {
     if (loading) return;
     final vaultName = vaultNameCtrl.text.trim();
@@ -5768,6 +5835,8 @@ class _SignupPageState extends State<SignupPage> {
       return;
     }
 
+    pinCtrl.clear();
+    confirmPinCtrl.clear();
     setState(() => loading = true);
     final app = context.read<AppState>();
 
@@ -5893,7 +5962,7 @@ class _SignupPageState extends State<SignupPage> {
       // ``ZkAuthService`` for the next ZK login, but never shown to
       // the user — the only user-visible credentials are the
       // username and PIN they just chose.
-      TextInput.finishAutofillContext(shouldSave: true);
+      TextInput.finishAutofillContext(shouldSave: false);
       Navigator.of(context).pushReplacementNamed('/chat');
       return;
     } on OpaqueUnavailable catch (e) {
@@ -5930,15 +5999,14 @@ class _SignupPageState extends State<SignupPage> {
       return;
     } catch (e) {
       // Classify the failure so the user never sees a raw
-      // "ZK POST /auth/zk-register-finalize failed 409: {...}"
+      // "ZK POST /auth/zk-register-finalize failed 409"
       // string. The _zkHttpPost helper throws:
-      //   Exception('ZK POST <path> failed <status>: <body>')
+      //   Exception('ZK POST <path> failed <status>')
       // Match the two operationally meaningful cases and map them
       // to friendly copy; anything else stays generic.
       if (app.handleApiException(e)) return;
       final msg = e.toString();
-      releaseWebDiagnosticPrint('[zk-signup-diag] error_type=${e.runtimeType} '
-          'head=${msg.length > 120 ? msg.substring(0, 120) : msg}');
+      releaseWebDiagnosticPrint('[zk-signup-diag] error_type=${e.runtimeType}');
       String friendly;
       if (msg.contains('failed 409') || msg.contains('HTTP 409')) {
         // Duplicate username — the backend's canonical copy is
@@ -6198,6 +6266,7 @@ class _UnlockPageState extends State<UnlockPage> {
       setState(() => err = 'PIN must be 64 digits or fewer.');
       return;
     }
+    pinCtrl.clear();
     setState(() {
       loading = true;
       err = null;
@@ -6355,7 +6424,7 @@ class _UnlockPageState extends State<UnlockPage> {
         if (!mounted) return;
         pageTiming('authenticated_route_visible');
         app._recordSuccessfulLoginTiming(authTiming);
-        TextInput.finishAutofillContext(shouldSave: true);
+        TextInput.finishAutofillContext(shouldSave: false);
         Navigator.pushReplacementNamed(context, '/chat');
         return;
       } on OpaqueUnavailable catch (e, stack) {
@@ -6398,25 +6467,17 @@ class _UnlockPageState extends State<UnlockPage> {
         if (app.handleApiException(e)) return;
         final typeName = e.runtimeType.toString();
         final msg = e.toString();
-        final head = msg.length > 120 ? msg.substring(0, 120) : msg;
         releaseWebDiagnosticPrint('[zk-unlock-diag] '
-            'last_step=$unlockLastStep type=$typeName head=$head');
+            'last_step=$unlockLastStep type=$typeName');
         debugAuthFailureTrace('zk-unlock-diag', e, stack, step: unlockLastStep);
         vlog('unlock.zk.failed', {
           'error_type': typeName,
           'last_step': unlockLastStep,
         });
-        // 2026-07-20: mirror the LoginPage classifier so unadopted
-        // legacy accounts can still unlock. A 401 at zk-login-init
-        // means either "account not in ZK" (legacy) or "wrong PIN"
-        // (ZK). We can't tell from the error alone; let the legacy
-        // fallback run when the entry is NOT a VLT handle. A wrong
-        // PIN on a real ZK account raises OpaqueAuthenticationFailed
-        // (caught above) so we never falsely fall through for that
-        // case.
-        final looksLikeAuth401 = msg.contains('HTTP 401') ||
-            msg.contains('failed 401') ||
-            msg.contains('Wrong username or PIN');
+        // Only an explicit OPAQUE init miss is eligible for the
+        // separately enabled legacy migration path.
+        final looksLikeAuth401 =
+            msg.contains('ZK POST /auth/zk-login-init failed 401');
         if (looksLikeAuth401 && !zkLoginUsesHandle) {
           zkLoginNotFound = true;
         } else {
@@ -6430,9 +6491,11 @@ class _UnlockPageState extends State<UnlockPage> {
       }
     }
 
-    // A typed VLT handle never falls back to legacy — a wrong PIN
-    // there must fail closed on the ZK side.
-    if (zkLoginUsesHandle && zkLoginNotFound) {
+    // An OPAQUE miss cannot trigger a plaintext PIN request in normal builds.
+    if (zkLoginNotFound && !legacyAuthFallbackPermitted(
+      opaqueLookupMissed: zkLoginNotFound,
+      isHandle: zkLoginUsesHandle,
+    )) {
       if (!mounted) return;
       setState(() {
         err = 'Wrong username or PIN.';
@@ -6478,7 +6541,7 @@ class _UnlockPageState extends State<UnlockPage> {
       await _deriveKeyAndUnlock(app: app, pin: pin);
       pageTiming('key_unwrap_complete');
       if (!mounted) return;
-      if (app.unlocked) TextInput.finishAutofillContext(shouldSave: true);
+      if (app.unlocked) TextInput.finishAutofillContext(shouldSave: false);
       _notifyNewDeviceTrustedIfNeeded(newDeviceTrusted);
       final adoptedNav = await _tryLegacyAdoptionBestEffort(
         context: context,
@@ -6520,10 +6583,8 @@ class _UnlockPageState extends State<UnlockPage> {
     } catch (e, stack) {
       if (app.handleApiException(e)) return;
       final typeName = e.runtimeType.toString();
-      final msg = e.toString();
-      final head = msg.length > 120 ? msg.substring(0, 120) : msg;
       releaseWebDiagnosticPrint('[zk-unlock-diag] '
-          'last_step=legacy_fallback type=$typeName head=$head');
+          'last_step=legacy_fallback type=$typeName');
       debugAuthFailureTrace('zk-unlock-diag', e, stack,
           step: 'legacy_fallback');
       vlog('unlock.legacy.failed', {'error_type': typeName});
@@ -6546,6 +6607,7 @@ class _UnlockPageState extends State<UnlockPage> {
 
   @override
   void dispose() {
+    pinCtrl.clear();
     pinCtrl.dispose();
     super.dispose();
   }
@@ -6671,6 +6733,13 @@ class _PinGatePageState extends State<PinGatePage> {
   static const int _maxPinLength = 64;
 
   @override
+  void dispose() {
+    pinController.clear();
+    pinController.dispose();
+    super.dispose();
+  }
+
+  @override
   void initState() {
     super.initState();
     _decide();
@@ -6791,6 +6860,7 @@ class _PinGatePageState extends State<PinGatePage> {
       return;
     }
 
+    pinController.clear();
     setState(() {
       _submitting = true;
       err = null;
@@ -6800,7 +6870,7 @@ class _PinGatePageState extends State<PinGatePage> {
     final app = context.read<AppState>();
     try {
       final ok = await app.verifyPin(
-        _pin,
+        pin,
         restoreZkSessionKeys: true,
       );
       if (!ok) {
@@ -6816,7 +6886,7 @@ class _PinGatePageState extends State<PinGatePage> {
         'elapsed_ms': DateTime.now().difference(submitStartedAt).inMilliseconds,
         'route': '/chat',
       });
-      TextInput.finishAutofillContext(shouldSave: true);
+      TextInput.finishAutofillContext(shouldSave: false);
       Navigator.pushReplacementNamed(context, '/chat');
     } on RateLimitedException catch (e) {
       if (!mounted) return;
@@ -9464,10 +9534,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         saving = true;
                         errRef = null;
                       });
+                      final submittedPin = pinCtrl.text.trim();
+                      pinCtrl.clear();
                       final result = await _submitInheritanceCredentials(
                         linkId: linkId,
                         username: usernameCtrl.text.trim(),
-                        pin: pinCtrl.text.trim(),
+                        pin: submittedPin,
                         isUpdate: isUpdate,
                       );
                       if (result.ok) {
@@ -9510,6 +9582,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     // Best-effort clear of the controllers after the dialog closes.
     usernameCtrl.dispose();
+    pinCtrl.clear();
     pinCtrl.dispose();
     await _loadBeneficiaries();
   }
@@ -10501,13 +10574,16 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           FilledButton(
             onPressed: () {
               if (!(formKey.currentState?.validate() ?? false)) return;
-              Navigator.pop(dCtx, ctrl.text.trim());
+              final pin = ctrl.text.trim();
+              ctrl.clear();
+              Navigator.pop(dCtx, pin);
             },
             child: const Text('Continue'),
           ),
         ],
       ),
     );
+    ctrl.clear();
     ctrl.dispose();
     return result;
   }
@@ -16171,12 +16247,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         decryptForVault: (ciphertext) => _VaultCrypto.decrypt(ciphertext),
         isVaultKeyAvailable: () => hasVaultKey,
         verifyPin: (pin) async {
-          final cachedPin = _VaultCrypto.cachedPinFor(
-            vaultId: app.vaultId ?? '',
-            vaultName: app.vaultName ?? '',
-          );
-          if (cachedPin == null) return false;
-          return cachedPin == pin;
+          return verifyCurrentVaultPinForWallet(app, pin);
         },
         asset: asset,
         prefilledDestination: request.destinationAddress,
@@ -18598,12 +18669,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           isVaultKeyAvailable: () => hasVaultKey,
           decryptForVault: (ciphertext) => _VaultCrypto.decrypt(ciphertext),
           verifyPin: (pin) async {
-            final cachedPin = _VaultCrypto.cachedPinFor(
-              vaultId: app.vaultId ?? '',
-              vaultName: app.vaultName ?? '',
-            );
-            if (cachedPin == null) return false;
-            return cachedPin == pin;
+            return verifyCurrentVaultPinForWallet(app, pin);
           },
           // 2026-07-13 fix: was calling the legacy
           // /crypto/wallet/{asset}/receive endpoint which queries
@@ -18677,10 +18743,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           if (!keyAvailable()) throw StateError('Vault access changed.');
           return plaintext;
         },
-        verifyPin: (pin) async => keyAvailable() &&
-            _VaultCrypto.cachedPinFor(
-              vaultId: app.vaultId ?? '', vaultName: app.vaultName ?? '',
-            ) == pin,
+        verifyPin: (pin) async =>
+            keyAvailable() && await verifyCurrentVaultPinForWallet(app, pin),
         loadFromAddress: (network) async {
           if (!keyAvailable()) return null;
           try {
@@ -18887,6 +18951,21 @@ class _DeleteVaultSettingsTile extends StatelessWidget {
       context,
       client: client,
       authToken: token,
+      zkProofForPin: (pin) async {
+        final handle = app.vaultHandle;
+        if (handle == null || handle.isEmpty || app.sessionToken != token) {
+          throw StateError('Vault verification is unavailable.');
+        }
+        final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
+          vaultHandle: handle,
+          pin: pin,
+          sessionToken: token,
+        );
+        if (app.sessionToken != token) {
+          throw StateError('Vault session changed during verification.');
+        }
+        return proof.token;
+      },
       onDeleted: () {},
     );
 

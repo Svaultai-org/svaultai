@@ -194,6 +194,68 @@ void main() {
       legacyIdentifier = vaultHandleCredentialId(handleBytes);
     });
 
+    test('session-bound PIN proof never sends the PIN or mints a login',
+        () async {
+      final opaque = _StatefulOpaqueClient(
+        modernSucceeds: true,
+        legacySucceeds: false,
+        expectedLegacyIdentifier: legacyIdentifier,
+      );
+      final paths = <String>[];
+      Future<Map<String, dynamic>> post(String path, Map<String, dynamic> body,
+          {String? bearerToken}) async {
+        paths.add(path);
+        expect(bearerToken, 'synthetic-session');
+        expect(body.containsKey('pin'), isFalse);
+        expect(jsonEncode(body), isNot(contains(_goodPin)));
+        if (path == '/auth/zk-verify-init') {
+          expect(body['vault_handle'], vaultHandle);
+          return {'slot_id': 'synthetic-slot', 'ke2': 'synthetic-ke2'};
+        }
+        expect(path, '/auth/zk-verify-finalize');
+        expect(body['slot_id'], 'synthetic-slot');
+        expect(body['ke3'], 'ke3-modern');
+        return {
+          'verified': true,
+          'proof_token': 'synthetic-proof',
+          'proof_expires_at': '2030-01-01T00:00:00Z',
+        };
+      }
+
+      final proof = await ZkAuthService(post, opaque: opaque).verifyPinProof(
+        vaultHandle: vaultHandle,
+        pin: _goodPin,
+        sessionToken: 'synthetic-session',
+      );
+      expect(proof.token, 'synthetic-proof');
+      expect(paths, ['/auth/zk-verify-init', '/auth/zk-verify-finalize']);
+    });
+
+    test('wrong PIN cannot reach verification finalize', () async {
+      final opaque = _StatefulOpaqueClient(
+        modernSucceeds: true,
+        legacySucceeds: true,
+        expectedLegacyIdentifier: legacyIdentifier,
+      );
+      final paths = <String>[];
+      Future<Map<String, dynamic>> post(String path, Map<String, dynamic> body,
+          {String? bearerToken}) async {
+        paths.add(path);
+        expect(path, '/auth/zk-verify-init');
+        return {'slot_id': 'synthetic-slot', 'ke2': 'synthetic-ke2'};
+      }
+
+      await expectLater(
+        ZkAuthService(post, opaque: opaque).verifyPinProof(
+          vaultHandle: vaultHandle,
+          pin: '000000',
+          sessionToken: 'synthetic-session',
+        ),
+        throwsA(isA<OpaqueAuthenticationFailed>()),
+      );
+      expect(paths, ['/auth/zk-verify-init', '/auth/zk-verify-init']);
+    });
+
     test('legacy records use a fresh second OPAQUE exchange before finalize',
         () async {
       final opaque = _StatefulOpaqueClient(

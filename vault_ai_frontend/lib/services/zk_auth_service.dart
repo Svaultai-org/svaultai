@@ -119,6 +119,15 @@ class RegisterResult {
   });
 }
 
+/// Short-lived, one-use authorization for a sensitive action. The PIN is
+/// proven through OPAQUE and never included in the action request.
+class ZkPinProof {
+  final String token;
+  final DateTime expiresAt;
+
+  const ZkPinProof({required this.token, required this.expiresAt});
+}
+
 /// Fresh, authenticated KDF parameters. Invalid or unrelated response data
 /// cannot become a crypto context through the faster login path.
 class LoginVaultMeta {
@@ -388,6 +397,66 @@ class ZkAuthService {
   final ZkOpaqueClient _opaque;
   ZkAuthService(this._post, {ZkOpaqueClient? opaque})
       : _opaque = opaque ?? const DefaultZkOpaqueClient();
+
+  /// Recheck a PIN for the current vault without minting a new login session.
+  /// The server binds the slot and proof token to the bearer session/vault.
+  Future<ZkPinProof> verifyPinProof({
+    required String vaultHandle,
+    required String pin,
+    required String sessionToken,
+  }) async {
+    if (sessionToken.isEmpty) throw StateError('Session is unavailable.');
+    await _opaque.ready();
+    final handleBytes = vaultHandleFromDisplay(vaultHandle);
+    final handleDisplay = vaultHandleToDisplay(handleBytes);
+
+    Future<({String slotId, ZkClientLoginFinish finish})> attempt(
+        String? clientIdentifier) async {
+      final start = await _opaque.startLogin(password: pin);
+      final init = await _post(
+        '/auth/zk-verify-init',
+        {'vault_handle': handleDisplay, 'ke1': start.startLoginRequest},
+        bearerToken: sessionToken,
+      );
+      final slotId = init['slot_id'];
+      final ke2 = init['ke2'];
+      if (slotId is! String || slotId.isEmpty || ke2 is! String || ke2.isEmpty) {
+        throw StateError('Invalid OPAQUE verification response.');
+      }
+      final finish = await _opaque.finishLogin(
+        clientLoginState: start.clientLoginState,
+        loginResponse: ke2,
+        password: pin,
+        clientIdentifier: clientIdentifier,
+      );
+      return (slotId: slotId, finish: finish);
+    }
+
+    late ({String slotId, ZkClientLoginFinish finish}) exchange;
+    try {
+      exchange = await attempt(null);
+    } on OpaqueAuthenticationFailed {
+      // A few early ZK records used the handle as a client identifier.
+      // OPAQUE state is single-use, so compatibility needs a new exchange.
+      exchange = await attempt(vaultHandleCredentialId(handleBytes));
+    }
+    final response = await _post(
+      '/auth/zk-verify-finalize',
+      {
+        'slot_id': exchange.slotId,
+        'ke3': exchange.finish.finishLoginRequest,
+      },
+      bearerToken: sessionToken,
+    );
+    final proofToken = response['proof_token'];
+    final expires = DateTime.tryParse(response['proof_expires_at']?.toString() ?? '');
+    if (response['verified'] != true ||
+        proofToken is! String || proofToken.isEmpty ||
+        expires == null) {
+      throw StateError('Invalid OPAQUE verification result.');
+    }
+    return ZkPinProof(token: proofToken, expiresAt: expires);
+  }
 
   Future<SecretKey> _deriveKek(String exportKeyB64) async {
     final exportKeyBytes = _b64urlDecode(exportKeyB64);

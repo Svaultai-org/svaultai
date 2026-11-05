@@ -989,6 +989,7 @@ class _CryptoWalletEngineSolanaSendPanelState
             key: const Key(kSolanaSendPinConfirmBtnKey),
             onPressed: () async {
               final entered = controller.text.trim();
+              controller.clear();
               final ok = await widget.verifyPin!(entered);
               if (ok) {
                 pinOk = true;

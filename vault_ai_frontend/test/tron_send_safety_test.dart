@@ -592,6 +592,11 @@ void main() {
         );
         await t.tap(find.byKey(const Key(kTronSendPinConfirmBtnKey)));
         await t.pumpAndSettle();
+        final pinField = t.widget<TextField>(
+          find.byKey(const Key(kTronSendPinInputKey)),
+        );
+        expect(pinField.controller!.text, isEmpty,
+            reason: 'a failed send must not retain the attempted PIN');
         expect(client.capturedBroadcastPayload, isNull);
         expect(client.broadcastCalls, isEmpty);
       },

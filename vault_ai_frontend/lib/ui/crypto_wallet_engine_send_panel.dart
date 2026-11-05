@@ -4220,6 +4220,7 @@ class _EthSendPinDialogState extends State<_EthSendPinDialog> {
 
   @override
   void dispose() {
+    _pinCtrl.clear();
     _pinCtrl.dispose();
     super.dispose();
   }
@@ -4256,7 +4257,11 @@ class _EthSendPinDialogState extends State<_EthSendPinDialog> {
         ),
         ElevatedButton(
           key: const Key('eth_send_panel_pin_confirm'),
-          onPressed: () => Navigator.of(context).pop(_pinCtrl.text),
+          onPressed: () {
+            final pin = _pinCtrl.text;
+            _pinCtrl.clear();
+            Navigator.of(context).pop(pin);
+          },
           child: const Text(kEthSendPinDialogConfirmLabel),
         ),
       ],

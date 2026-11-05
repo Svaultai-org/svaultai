@@ -552,6 +552,11 @@ void main() {
           find.byKey(const Key(kSolanaSendPinConfirmBtnKey)),
         );
         await tester.pumpAndSettle();
+        final pinField = tester.widget<TextField>(
+          find.byKey(const Key(kSolanaSendPinInputKey)),
+        );
+        expect(pinField.controller!.text, isEmpty,
+            reason: 'a failed send must not retain the attempted PIN');
         await tester.tap(find.text('Cancel'));
         await tester.pumpAndSettle();
         expect(client.broadcastCalls, equals(0));

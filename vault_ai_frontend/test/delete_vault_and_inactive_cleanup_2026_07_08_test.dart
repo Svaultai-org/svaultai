@@ -1,6 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/delete_vault_flow.dart';
@@ -188,6 +192,47 @@ void main() {
   });
 
   group('Part 3 — PIN gate', () {
+    test('OPAQUE delete proof excludes raw PIN from the confirm body',
+        () async {
+      Map<String, dynamic>? sent;
+      final client = VaultAIClient(
+        baseUrl: 'https://example.invalid',
+        httpClient: MockClient((request) async {
+          expect(request.url.path, '/vault/delete/confirm');
+          sent = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response('', 204);
+        }),
+      );
+      await client.confirmDeleteVault(
+        authToken: 'synthetic-session',
+        requestToken: 'synthetic-delete-request',
+        zkProofToken: 'synthetic-opaque-proof',
+        confirmationPhrase: kDeleteVaultConfirmationPhrase,
+      );
+      expect(sent?['zk_proof_token'], 'synthetic-opaque-proof');
+      expect(sent?.containsKey('pin'), isFalse);
+    });
+
+    testWidgets('submitting clears the masked PIN field before the request',
+        (tester) async {
+      await _pumpDeleteFlow(tester);
+      await tester.enterText(
+        find.byKey(const Key('delete_vault_phrase_field')),
+        kDeleteVaultConfirmationPhrase,
+      );
+      await tester.enterText(
+        find.byKey(const Key('delete_vault_pin_field')),
+        '000123',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('delete_vault_confirm_button')));
+      await tester.pump();
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('delete_vault_pin_field')),
+      );
+      expect(field.controller!.text, isEmpty);
+    });
+
     testWidgets('PIN field is obscured', (tester) async {
       await _pumpDeleteFlow(tester);
       final TextField pinField = tester.widget<TextField>(

@@ -1136,13 +1136,18 @@ class VaultAIClient {
   Future<void> confirmDeleteVault({
     required String authToken,
     required String requestToken,
-    required String pin,
+    String? pin,
+    String? zkProofToken,
     required String confirmationPhrase,
   }) async {
+    if ((pin == null) == (zkProofToken == null)) {
+      throw ArgumentError('Exactly one delete verification method is required.');
+    }
     final uri = Uri.parse('$baseUrl/vault/delete/confirm');
     final body = jsonEncode({
       'request_token': requestToken,
-      'pin': pin,
+      if (pin != null) 'pin': pin,
+      if (zkProofToken != null) 'zk_proof_token': zkProofToken,
       'confirmation_phrase': confirmationPhrase,
     });
     final response = await _runWithNetLog(

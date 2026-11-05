@@ -41,6 +41,11 @@ bool savedAutofill(WidgetTester tester) =>
         call.method == 'TextInput.finishAutofillContext' &&
         call.arguments == true);
 
+bool cancelledAutofill(WidgetTester tester) =>
+    tester.testTextInput.log.any((call) =>
+        call.method == 'TextInput.finishAutofillContext' &&
+        call.arguments == false);
+
 Future<void> platformAutofill(
     WidgetTester tester, Finder field, String value) async {
   await tester.showKeyboard(field);
@@ -119,6 +124,28 @@ void main() {
   tearDown(() => NativeSecureStore.useSharedPreferencesForTesting = false);
 
   group('Explicit authentication retry errors', () {
+    test('normal builds never allow legacy PIN fallback after OPAQUE miss',
+        () {
+      expect(kEnableLegacyAuthFallback, isFalse);
+      expect(
+          legacyAuthFallbackPermitted(
+            opaqueLookupMissed: true,
+            isHandle: false,
+          ),
+          isFalse);
+      expect(
+          legacyAuthFallbackPermitted(
+            opaqueLookupMissed: true,
+            isHandle: true,
+          ),
+          isFalse);
+      expect(
+          legacyAuthFallbackPermitted(
+            opaqueLookupMissed: false,
+            isHandle: false,
+          ),
+          isFalse);
+    });
     test('service failure code is separate from an exhausted retry budget',
         () {
       expect(
@@ -188,48 +215,23 @@ void main() {
               .retryAfterSeconds,
           86400);
     });
-    test('actual PIN verification displays throttle instead of silent false',
+    test('PIN gate never sends a raw PIN when OPAQUE is unavailable',
         () async {
-      final app = AppState()..lastVaultName = 'QA-only';
+      expect(kEnableLegacyAuthFallback, isFalse);
+      final app = AppState()
+        ..lastVaultName = 'QA-only'
+        ..vaultHandle = 'VLT-TEST-HANDLE';
+      var requests = 0;
       await http.runWithClient(() async {
         expect(await app.verifyPin('000123'), isFalse);
-      },
-          () => MockClient((request) async {
-                expect(request.url.path, '/auth/login');
-                return http.Response(
-                    '{"detail":{"code":"rate_limited","reset_in_seconds":42}}',
-                    429);
-              }));
-      expect(app.lockMessage, 'Too many attempts. Try again in 42 seconds.');
-      expect(app.pinAttempts, 0);
+      }, () => MockClient((_) async {
+            requests++;
+            return http.Response('unexpected', 500);
+          }));
+      expect(requests, 0);
+      expect(app.pinAttempts, 0,
+          reason: 'a local OPAQUE outage is not a wrong PIN');
       expect(app.unlocked, isFalse);
-    });
-    test('auth service outage does not count as a wrong PIN', () async {
-      final app = AppState()..lastVaultName = 'QA-only';
-      await http.runWithClient(() async {
-        expect(await app.verifyPin('000123'), isFalse);
-      },
-          () => MockClient((request) async {
-                expect(request.url.path, '/auth/login');
-                return http.Response(
-                    '{"detail":{"code":"auth_temporarily_unavailable"}}',
-                    503);
-              }));
-      expect(app.lockMessage, AuthServiceUnavailableException.message);
-      expect(app.pinAttempts, 0);
-      expect(app.unlocked, isFalse);
-    });
-    test('actual PIN verification retains existing lock and its clear message',
-        () async {
-      final app = AppState()..lastVaultName = 'QA-only';
-      await http.runWithClient(() async {
-        expect(await app.verifyPin('000123'), isFalse);
-      },
-          () => MockClient((_) async => http.Response(
-              '{"detail":{"code":"pin_locked","message":"This vault is temporarily locked. Try again in 59 seconds."}}',
-              423)));
-      expect(app.lockMessage, contains('59 seconds'));
-      expect(app.pinAttempts, 0);
     });
   });
 
@@ -352,6 +354,62 @@ void main() {
     expect(savedAutofill(tester), isFalse);
   });
 
+  testWidgets('sign-in clears a valid submitted PIN before auth completes',
+      (tester) async {
+    await pumpAuth(tester, ReadyApp(), const LoginPage());
+    await tester.enterText(
+        find.byKey(const Key('auth_vault_name_field')), 'QA-only');
+    final field = find.byKey(const Key('auth_pin_field'));
+    await tester.enterText(field, '000123');
+    final controller = tester.widget<TextField>(field).controller!;
+    await http.runWithClient(() async {
+      await tester.tap(find.byKey(const Key('auth_sign_in_button')));
+      await tester.pump();
+      expect(controller.text, isEmpty);
+      await tester.pumpAndSettle();
+    }, () => MockClient((_) async => http.Response('synthetic failure', 503)));
+    expect(savedAutofill(tester), isFalse);
+  });
+
+  testWidgets('unlock clears a valid submitted PIN before auth completes',
+      (tester) async {
+    final app = ReadyApp()..lastVaultName = 'QA-only';
+    await pumpAuth(tester, app, const UnlockPage());
+    final field = find.byKey(const Key('auth_unlock_pin_field'));
+    await tester.enterText(field, '000123');
+    final controller = tester.widget<TextField>(field).controller!;
+    await http.runWithClient(() async {
+      await tester.tap(find.byKey(const Key('auth_unlock_button')));
+      await tester.pump();
+      expect(controller.text, isEmpty);
+      await tester.pumpAndSettle();
+    }, () => MockClient((_) async => http.Response('synthetic failure', 503)));
+    expect(savedAutofill(tester), isFalse);
+  });
+
+  testWidgets('signup clears both PIN fields before registration completes',
+      (tester) async {
+    await pumpAuth(tester, ReadyApp(), const SignupPage());
+    await tester.enterText(
+        find.byKey(const Key('signup_vault_name_field')), 'QA-only');
+    final pinField = find.byKey(const Key('signup_pin_field'));
+    final confirmField = find.byKey(const Key('signup_confirm_pin_field'));
+    await tester.enterText(pinField, '000123');
+    await tester.enterText(confirmField, '000123');
+    final pinController = tester.widget<TextField>(pinField).controller!;
+    final confirmController = tester.widget<TextField>(confirmField).controller!;
+    await tester.tap(find.byKey(const Key('signup_risk_checkbox')));
+    await tester.ensureVisible(find.byKey(const Key('signup_create_vault_button')));
+    await http.runWithClient(() async {
+      await tester.tap(find.byKey(const Key('signup_create_vault_button')));
+      await tester.pump();
+      expect(pinController.text, isEmpty);
+      expect(confirmController.text, isEmpty);
+      await tester.pumpAndSettle();
+    }, () => MockClient((_) async => http.Response('synthetic failure', 503)));
+    expect(savedAutofill(tester), isFalse);
+  });
+
   testWidgets(
       'signup groups new-name and new-PIN hints, not display-name credentials',
       (tester) async {
@@ -398,7 +456,7 @@ void main() {
   });
 
   for (final accepted in [false, true]) {
-    testWidgets('PIN gate saves autofill only after verified result=$accepted',
+    testWidgets('PIN gate clears attempted PIN without saving result=$accepted',
         (tester) async {
       final app = PinResultApp()
         ..sessionToken = 'synthetic-only'
@@ -420,11 +478,18 @@ void main() {
                     200);
               }));
       expect(app.submittedPin, '000123');
-      expect(savedAutofill(tester), accepted);
+      expect(savedAutofill(tester), isFalse);
+      expect(cancelledAutofill(tester), accepted);
       if (accepted) {
         expect(find.text('Verified destination'), findsOneWidget);
       } else {
         expect(find.text('Wrong username or PIN.'), findsOneWidget);
+        expect(
+            tester
+                .widget<TextField>(find.byKey(const Key('pin_gate_pin_field')))
+                .controller!
+                .text,
+            isEmpty);
       }
       expect(tester.takeException(), isNull);
     });
@@ -449,7 +514,19 @@ void main() {
       expect(body, contains('on AuthRetryException catch'));
       expect(body, contains('on AuthServiceUnavailableException'));
       expect(
-          body, contains('TextInput.finishAutofillContext(shouldSave: true)'));
+          body, contains('TextInput.finishAutofillContext(shouldSave: false)'));
     }
+  });
+
+  test('auth HTTP failure diagnostics never include response bodies', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    for (final method in ['POST', 'GET']) {
+      final start = source.indexOf("'ZK $method \$path failed");
+      expect(start, greaterThan(0));
+      final failure = source.substring(start, source.indexOf(';', start));
+      expect(failure, isNot(contains('response.body')));
+    }
+    expect(source, isNot(contains('head=\$head')));
+    expect(source, isNot(contains("'error_head': head")));
   });
 }

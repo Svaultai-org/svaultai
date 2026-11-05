@@ -14,12 +14,14 @@ const String kDeleteVaultConfirmationPhrase = 'DELETE MY VAULT';
 class DeleteVaultFlow extends StatefulWidget {
   final VaultAIClient client;
   final String authToken;
+  final Future<String> Function(String pin)? zkProofForPin;
   final VoidCallback? onDeleted;
 
   const DeleteVaultFlow({
     super.key,
     required this.client,
     required this.authToken,
+    this.zkProofForPin,
     this.onDeleted,
   });
 
@@ -38,6 +40,7 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
   @override
   void dispose() {
     _phraseCtrl.dispose();
+    _pinCtrl.clear();
     _pinCtrl.dispose();
     super.dispose();
   }
@@ -50,11 +53,20 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
   bool get _canDelete => _phraseMatches && _pinEntered && !_submitting;
 
   Future<void> _performDelete(AppLocalizations l) async {
+    final pin = _pinCtrl.text;
+    _pinCtrl.clear();
     setState(() {
       _submitting = true;
       _errorText = null;
     });
     try {
+      final status = await widget.client.getDeleteStatus(
+        authToken: widget.authToken,
+      );
+      final requiresOpaque = status['requires_opaque_verification'] == true;
+      if (requiresOpaque && widget.zkProofForPin == null) {
+        throw StateError('OPAQUE verification is unavailable.');
+      }
       final req = await widget.client.requestDeleteVault(
         authToken: widget.authToken,
       );
@@ -62,10 +74,12 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
       if (token.isEmpty) {
         throw Exception('Missing delete request token');
       }
+      final proofToken = requiresOpaque ? await widget.zkProofForPin!(pin) : null;
       await widget.client.confirmDeleteVault(
         authToken: widget.authToken,
         requestToken: token,
-        pin: _pinCtrl.text,
+        pin: requiresOpaque ? null : pin,
+        zkProofToken: proofToken,
         confirmationPhrase: _phraseCtrl.text,
       );
       if (!mounted) return;
@@ -257,6 +271,7 @@ Future<bool> showDeleteVaultDialog(
   BuildContext context, {
   required VaultAIClient client,
   required String authToken,
+  Future<String> Function(String pin)? zkProofForPin,
   VoidCallback? onDeleted,
 }) async {
   final result = await showDialog<bool>(
@@ -265,6 +280,7 @@ Future<bool> showDeleteVaultDialog(
     builder: (_) => DeleteVaultFlow(
       client: client,
       authToken: authToken,
+      zkProofForPin: zkProofForPin,
       onDeleted: onDeleted,
     ),
   );
