@@ -2154,47 +2154,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  Future<Map<String, dynamic>> getOrCreateVaultMeta({
-    required String vaultName,
-    required String authToken,
-    required String pin,
-    bool acknowledgeOrphanWipe = false,
-  }) async {
-    final uri = Uri.parse('$baseUrl/get-or-create-vault-meta');
-
-    final response = await _sessionHttp.post(
-      uri,
-      headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode({
-        'vault_name': '',
-        'pin': pin,
-        'acknowledge_orphan_wipe': acknowledgeOrphanWipe,
-      }),
-    );
-
-    if (response.statusCode == 409 && _isOrphanConflict(response.body)) {
-      throw OrphanDataException.fromResponseBody(response.body);
-    }
-
-    if (response.statusCode != 200) {
-      _throwIfAuthExpired(response.statusCode, response.body);
-      _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLockOrFrozen(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'Get/Create vault meta failed',
-        statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
-    }
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw Exception('Invalid vault meta response format');
-    }
-
-    return decoded;
-  }
-
   Future<Map<String, dynamic>> createBeneficiary({
     required String vaultName,
     required String pin,
