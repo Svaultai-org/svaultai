@@ -283,20 +283,24 @@ def test_ai_memory_identical_retry_is_reported_without_rewrite() -> None:
 
 def test_all_ciphertext_write_endpoints_require_auth() -> None:
     """None of the ciphertext-write endpoints may be reachable
-    without a valid session token. Verified by checking each route's
-    dependency graph includes verify_session_token."""
+    without a valid session token and a trusted, session-bound device."""
     from auth_local import verify_session_token
+    from device_gate import verify_trusted_device
+
+    def includes(dependency, target):
+        return dependency.call is target or any(
+            includes(child, target) for child in dependency.dependencies
+        )
+
     for route in router.routes:
         deps = getattr(route, "dependant", None)
         if deps is None:
             continue
-        found = False
-        for dep in deps.dependencies:
-            if getattr(dep, "call", None) is verify_session_token:
-                found = True
-                break
-        assert found, (
+        assert any(includes(dep, verify_session_token) for dep in deps.dependencies), (
             f"Route {getattr(route, 'path', '<unknown>')} does not "
-            "require verify_session_token — every ciphertext-write "
-            "endpoint must be per-vault authenticated"
+            "require a valid session"
+        )
+        assert any(dep.call is verify_trusted_device for dep in deps.dependencies), (
+            f"Route {getattr(route, 'path', '<unknown>')} does not "
+            "require a trusted device"
         )
