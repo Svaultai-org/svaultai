@@ -1145,8 +1145,9 @@ class LinkBeneficiaryRequest(BaseModel):
 
 
 class BeneficiaryListRequest(BaseModel):
-    vault_name: str
-    pin: str
+    vault_name: str = ""
+    pin: Optional[str] = None
+    zk_proof_token: Optional[str] = None
 
 
 class DeleteBeneficiaryRequest(BaseModel):
@@ -1157,8 +1158,37 @@ class DeleteBeneficiaryRequest(BaseModel):
 
 class TransferActionRequest(BaseModel):
     link_id: int
-    vault_name: str
-    pin: str
+    vault_name: str = ""
+    pin: Optional[str] = None
+    zk_proof_token: Optional[str] = None
+
+
+def _beneficiary_opaque_reauth_enabled() -> bool:
+    return os.getenv(
+        "VAULTAI_ZK_BENEFICIARY_PROOF_ENABLED", "false",
+    ).strip().lower() == "true"
+
+
+def _verify_beneficiary_action(
+    principal, *, pin: Optional[str], proof_token: Optional[str],
+) -> None:
+    """Recheck ZK actions with one-time OPAQUE, retaining legacy PIN auth."""
+    vault_id = principal["vault_id"]
+    if _beneficiary_opaque_reauth_enabled():
+        from vault_core import is_vault_zk_adopted
+        if is_vault_zk_adopted(vault_id):
+            if pin is not None:
+                raise HTTPException(status_code=409, detail="zk_client_update_required")
+            if not proof_token:
+                raise HTTPException(status_code=400, detail="zk_proof_token_required")
+            from routes.auth_zk_routes import consume_recent_zk_proof
+            consume_recent_zk_proof(proof_token, principal)
+            return
+    if proof_token is not None:
+        raise HTTPException(status_code=409, detail="zk_beneficiary_proof_not_enabled")
+    if not pin:
+        raise HTTPException(status_code=400, detail="pin_required")
+    verify_vault_pin(vault_id, pin)
 
 
 class ClaimTransferRequest(BaseModel):
@@ -10580,7 +10610,9 @@ async def beneficiary_list_mine_endpoint(
 ):
 
     vault_id = principal["vault_id"]
-    verify_vault_pin(vault_id, payload.pin)
+    _verify_beneficiary_action(
+        principal, pin=payload.pin, proof_token=payload.zk_proof_token,
+    )
 
     conn = get_db()
     try:
@@ -10672,7 +10704,9 @@ async def beneficiary_list_inheritances_endpoint(
 ):
 
     vault_id = principal["vault_id"]
-    verify_vault_pin(vault_id, payload.pin)
+    _verify_beneficiary_action(
+        principal, pin=payload.pin, proof_token=payload.zk_proof_token,
+    )
 
     conn = get_db()
     try:
@@ -10748,7 +10782,9 @@ async def beneficiary_request_transfer_endpoint(
 ):
 
     vault_id = principal["vault_id"]
-    verify_vault_pin(vault_id, payload.pin)
+    _verify_beneficiary_action(
+        principal, pin=payload.pin, proof_token=payload.zk_proof_token,
+    )
 
     requested_at = datetime.now(timezone.utc)
     executes_at = requested_at + timedelta(days=TRANSFER_COOLDOWN_DAYS)
@@ -10812,7 +10848,9 @@ async def beneficiary_cancel_transfer_endpoint(
 ):
 
     vault_id = principal["vault_id"]
-    verify_vault_pin(vault_id, payload.pin)
+    _verify_beneficiary_action(
+        principal, pin=payload.pin, proof_token=payload.zk_proof_token,
+    )
 
     conn = get_db()
     try:
