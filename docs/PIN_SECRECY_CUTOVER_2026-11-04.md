@@ -30,4 +30,15 @@ These counts were read without names, PINs, content, ciphertext, or row identifi
 - A read-only production aggregate confirms zero remaining ZK verifiers and zero legacy PIN-derived ciphertext, with no user content examined.
 - Web build and both native builds use the same reviewed shared-source commit, and backend build matches its reviewed contract. Existing billing, session, and release-update gates pass.
 
-The current integration commit is a baseline merge, **not a security fix or deployable cutover**. Rollout flags must remain off until the gates above pass.
+The original integration baseline merge was not a deployable cutover. Rollout flags must remain off until the gates above pass.
+
+## 5 November progress (UTC)
+
+This is a security work log, not a declaration that the cutover passed.
+
+- Live web `1fd7e5b` skips the legacy raw-PIN KDF-rotation call after an OPAQUE unlock. Its default build also blocks the ambiguous legacy-login fallback for ZK/unknown names, clears submitted PIN form controllers, and redacts release diagnostics.
+- Live backend image `vaultai-backend:trust-inheritance-4e432e7` binds trusted-device checks to the session and requires them on V2 content, inheritance, and ZK adoption routes. Its runtime has `VAULTAI_ZK_LEGACY_LOGIN_DISABLED=true`, which rejects plaintext legacy login for ZK rows. Public health and web release requests returned HTTP 200 after both live changes.
+- The local integration branch contains opt-in OPAQUE proof routes, encrypted legacy export and stage/readback, private V2 chat/file/saved-item paths, verifier-free registration, and an old-mobile reader gate. No new client, V2, migration, or verifier-free flag is enabled in production.
+- Read-only live aggregates: 4 ZK vaults still have a PIN verifier; 3 legacy item blobs and 3 legacy inline file blobs remain. The one AI memory row is a client-MVK V2 envelope. Other inspected PIN-key content tables have no live rows. These are aggregate checks, not inspection of private content.
+- Local web release build, iOS simulator build, and Android debug APK compiled. Xcode 27 requires the iOS project to target iOS 15 or newer; the integration branch has that packaging change. Neither mobile store has received this branch.
+- **Cutover remains blocked** by PIN-bearing chat/file/deep-answer/beneficiary paths, production owner-side re-encryption and readback, old mobile versions, and current store availability. Do not clear verifier or legacy ciphertext, turn on verifier-free signup, or claim PIN secrecy from the live partial hotfixes.
