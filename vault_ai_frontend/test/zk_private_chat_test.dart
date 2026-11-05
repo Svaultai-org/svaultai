@@ -149,6 +149,36 @@ void main() {
     expect(requests, 1);
   });
 
+  test('private index transport sends only bearer-scoped ciphertext GETs',
+      () async {
+    var requests = 0;
+    final mock = MockClient((request) async {
+      requests++;
+      expect(request.method, 'GET');
+      expect(request.url.path, '/vault/file-v2/synthetic-file-1/manifest');
+      expect(request.url.query, isEmpty);
+      expect(request.body, isEmpty);
+      expect(request.headers['Authorization'], 'Bearer synthetic-token');
+      expect(request.toString(), isNot(contains('synthetic-pin')));
+      return http.Response('{"file_id":"synthetic-file-1"}', 200);
+    });
+    final client = VaultAIClient(
+      baseUrl: 'https://example.invalid', httpClient: mock,
+    );
+    final result = await client.zkPrivateChatCiphertextGet(
+      authToken: 'synthetic-token',
+      path: '/vault/file-v2/synthetic-file-1/manifest',
+    );
+    expect((result as Map)['file_id'], 'synthetic-file-1');
+    await expectLater(
+      client.zkPrivateChatCiphertextGet(
+        authToken: 'synthetic-token', path: '/auth/login',
+      ),
+      throwsArgumentError,
+    );
+    expect(requests, 1);
+  });
+
   test('dispatch never sends saved-item or file lookup to general AI',
       () async {
     var sent = 0;

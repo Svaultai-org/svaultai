@@ -1633,6 +1633,41 @@ class VaultAIClient {
     return (decoded['reply'] as String).trim();
   }
 
+  /// Read only the ciphertext endpoints needed by the ephemeral private
+  /// search index. No PIN, MVK, private query text, or decrypted content is
+  /// included in these requests.
+  Future<Object?> zkPrivateChatCiphertextGet({
+    required String authToken,
+    required String path,
+    void Function()? accessGuard,
+  }) async {
+    final filePath = RegExp(
+      r'^/vault/file-v2/[^/?#]+/(?:manifest|chunk/[0-9]+)$',
+    );
+    if (path != '/vault/ciphertext/vault-items' &&
+        path != '/vault/file-v2' &&
+        !filePath.hasMatch(path)) {
+      throw ArgumentError.value(path, 'path', 'Unsupported private search route');
+    }
+    accessGuard?.call();
+    final response = await _sessionHttpWithGuard(accessGuard).get(
+      Uri.parse('$baseUrl$path'),
+      headers: _defaultHeaders(authToken: authToken),
+    );
+    accessGuard?.call();
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Private search failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body);
+  }
+
   Stream<String> chatStream({
     required String encryptedMessage,
     required String vaultName,

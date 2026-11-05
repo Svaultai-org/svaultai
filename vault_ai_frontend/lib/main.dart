@@ -49,6 +49,9 @@ import 'services/opaque_client.dart'
     if (dart.library.io) 'services/opaque_client_native.dart';
 import 'services/vault_handle.dart' as vh;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
+import 'services/zk_private_chat.dart' as zk_private_chat;
+import 'services/zk_private_chat_flow.dart' as zk_chat_flow;
+import 'services/zk_private_chat_index.dart' as zk_chat_index;
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/vault_key_hierarchy.dart' as vk_hier;
 import 'services/zk_auth_service.dart';
@@ -813,6 +816,17 @@ const bool kEnableLegacyContentStage = bool.fromEnvironment(
 );
 
 const bool kEnableFileV2UiRead = bool.fromEnvironment(
+  'VAULTAI_ENABLE_FILE_V2_UI_READ',
+  defaultValue: false,
+);
+
+// This path reads only MVK ciphertext and keeps private search on the client.
+// It stays off until file V2 viewing and all chat entry points are verified.
+const bool kEnableZkPrivateChat = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_PRIVATE_CHAT',
+  defaultValue: false,
+);
+const bool kZkChatFileCardsEnabled = bool.fromEnvironment(
   'VAULTAI_ENABLE_FILE_V2_UI_READ',
   defaultValue: false,
 );
@@ -8608,6 +8622,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   final input = TextEditingController();
   final List<_Msg> msgs = <_Msg>[];
   final List<_Attachment> attachments = [];
+  zk_chat_flow.ZkPrivateChatFlow? _zkPrivateChatFlow;
+  String? _zkPrivateChatToken;
+  String? _zkPrivateChatVaultId;
+  SecretKey? _zkPrivateChatMvk;
   bool _filePickerInFlight = false;
   final ScrollController _scrollController = ScrollController();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
@@ -17031,6 +17049,134 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
+  Future<void> _sendZkPrivateChat({
+    required AppState app,
+    required String token,
+    required String vaultId,
+    required SecretKey mvk,
+    required String text,
+  }) async {
+    if (attachments.isNotEmpty) {
+      _appendAssistantMessage(
+        'Attachments are not available in private chat yet. You can search '
+        'files already saved in your vault.',
+      );
+      return;
+    }
+    bool currentAccess() =>
+        mounted &&
+        app.authed &&
+        app.unlocked &&
+        app.sessionToken == token &&
+        app.vaultId == vaultId &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
+        identical(zk_mvk_store.ZkActiveMvk.current(), mvk);
+    if (!currentAccess()) return;
+    final client = VaultAIClient(baseUrl: backendBaseUrl);
+    if (_zkPrivateChatFlow == null ||
+        _zkPrivateChatToken != token ||
+        _zkPrivateChatVaultId != vaultId ||
+        !identical(_zkPrivateChatMvk, mvk)) {
+      _zkPrivateChatToken = token;
+      _zkPrivateChatVaultId = vaultId;
+      _zkPrivateChatMvk = mvk;
+      _zkPrivateChatFlow = zk_chat_flow.ZkPrivateChatFlow(
+        accessIsCurrent: currentAccess,
+        loadIndex: () => zk_chat_index.ZkPrivateChatIndexLoader(
+          mvk: mvk,
+          accessIsCurrent: currentAccess,
+          get: (path) => client.zkPrivateChatCiphertextGet(
+            authToken: token,
+            path: path,
+            accessGuard: () {
+              if (!currentAccess()) throw StateError('Vault access changed');
+            },
+          ),
+        ).load(),
+        sendGeneral: (prompt, history) => client.zkGeneralChat(
+          authToken: token,
+          message: prompt,
+          history: history,
+        ),
+      );
+    }
+    setState(() {
+      selectedSection = _DashboardSection.chat;
+      sending = true;
+      thinking = true;
+      msgs.add(_Msg('user', text));
+      input.clear();
+    });
+    _scrollToBottom();
+    try {
+      final turn = await _zkPrivateChatFlow!.run(text);
+      if (!currentAccess()) return;
+      final local = turn.local;
+      final selected = local.selection;
+      _Msg answer;
+      switch (local.disposition) {
+        case zk_private_chat.ZkLocalChatDisposition.general:
+          answer = _Msg(
+              'assistant',
+              turn.generalReply ??
+                  'I could not answer that question right now.');
+        case zk_private_chat.ZkLocalChatDisposition.found:
+          if (selected == null) {
+            answer = _Msg('assistant', 'I could not find a match.');
+          } else if (selected.kind == zk_private_chat.ZkLocalChatKind.file &&
+              kZkChatFileCardsEnabled) {
+            answer = _Msg(
+              'assistant',
+              'Found “${selected.title}” in your vault.',
+              kind: ChatMessage.kVaultFile,
+              fileId: selected.id,
+              fileName: selected.title,
+              mimeType: selected.mimeType,
+              payload: const {'zk_private_chat_v2': true},
+            );
+          } else {
+            answer = _Msg(
+              'assistant',
+              'Found “${selected.title}” in your vault.'
+                  '${selected.kind == zk_private_chat.ZkLocalChatKind.file ? ' File viewing is not enabled in this build.' : ''}',
+            );
+          }
+        case zk_private_chat.ZkLocalChatDisposition.ambiguous:
+          final names =
+              local.matches.take(5).map((r) => '“${r.title}”').join(', ');
+          answer = _Msg('assistant',
+              'I found several matches: $names. Please describe the one you want.');
+        case zk_private_chat.ZkLocalChatDisposition.needsPrivateIndex:
+          answer = _Msg(
+              'assistant',
+              'I could not find that media from its saved name or searchable text. '
+                  'Visual and spoken-content search is not available yet.');
+        case zk_private_chat.ZkLocalChatDisposition.notFound:
+          answer = _Msg(
+              'assistant',
+              'I could not find a match in the searchable encrypted records.'
+                  '${turn.indexIncomplete ? ' Some records could not be searched.' : ''}');
+        case zk_private_chat.ZkLocalChatDisposition.unsupportedAction:
+          answer = _Msg('assistant',
+              'That vault action is not available in private chat yet.');
+      }
+      setState(() => msgs.add(answer));
+      _scrollToBottom();
+    } catch (_) {
+      if (currentAccess()) {
+        _appendAssistantMessage(
+            'Private chat is temporarily unavailable. Please try again.');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          sending = false;
+          thinking = false;
+        });
+      }
+    }
+  }
+
   Future<void> _sendOnce() async {
     final text = input.text.trim();
     if ((text.isEmpty && attachments.isEmpty) || sending) return;
@@ -17074,6 +17220,16 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         'vaultName': vaultName,
       });
       app.handleApiException(const InvalidVaultUnlockException());
+      return;
+    }
+
+    final zkChatMvk = zk_mvk_store.ZkActiveMvk.current();
+    if (kEnableZkPrivateChat && zkChatMvk != null &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == activeVaultId) {
+      await _sendZkPrivateChat(
+        app: app, token: authToken, vaultId: activeVaultId,
+        mvk: zkChatMvk, text: text,
+      );
       return;
     }
 

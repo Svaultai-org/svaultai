@@ -1,12 +1,15 @@
 /// PIN-free chat routing for locally unlocked ZK vaults.
 ///
-/// Only display titles are searched here. Decrypted secrets, file bytes,
-/// vault keys and PINs are never copied into the general AI request body.
+/// Locally decrypted titles, annotations and bounded text content may be
+/// searched in memory. Decrypted vault content, vault keys and PINs are never
+/// copied into the general AI request body.
 /// The caller must pass a `general` result to the general-chat API and render
 /// local results in the vault UI without a network request.
 library;
 
 enum ZkLocalChatKind { savedItem, file }
+
+enum ZkLocalMediaKind { photo, video, audio, document, other }
 
 enum ZkLocalChatDisposition {
   general,
@@ -14,17 +17,24 @@ enum ZkLocalChatDisposition {
   ambiguous,
   notFound,
   needsPrivateIndex,
+  unsupportedAction,
 }
 
 class ZkLocalChatRecord {
   final ZkLocalChatKind kind;
   final String id;
   final String title;
+  final String searchText;
+  final String? mimeType;
+  final ZkLocalMediaKind mediaKind;
 
   const ZkLocalChatRecord({
     required this.kind,
     required this.id,
     required this.title,
+    this.searchText = '',
+    this.mimeType,
+    this.mediaKind = ZkLocalMediaKind.other,
   });
 }
 
@@ -61,11 +71,27 @@ class ZkLocalChatRouter {
     caseSensitive: false,
   );
   static final RegExp _assetCue = RegExp(
-    r'\b(file|document|photo|image|video|recording|audio|login|password|credential|code)\b',
+    r'\b(file|document|photo|picture|image|video|clip|recording|audio|voice|login|password|credential|code)\b',
     caseSensitive: false,
   );
   static final RegExp _mediaCue = RegExp(
-    r'\b(photo|image|video|recording|audio)\b',
+    r'\b(photo|picture|image|video|clip|recording|audio|voice)\b',
+    caseSensitive: false,
+  );
+  static final RegExp _photoCue = RegExp(
+    r'\b(photo|picture|image|screenshot)\b',
+    caseSensitive: false,
+  );
+  static final RegExp _videoCue = RegExp(
+    r'\b(video|clip|movie)\b',
+    caseSensitive: false,
+  );
+  static final RegExp _audioCue = RegExp(
+    r'\b(audio|voice|recording|sound)\b',
+    caseSensitive: false,
+  );
+  static final RegExp _mutationCue = RegExp(
+    r'\b(save|remember|store|upload|delete|remove|rename|change|edit|share)\b',
     caseSensitive: false,
   );
   static final RegExp _followUp = RegExp(
@@ -84,6 +110,8 @@ class ZkLocalChatRouter {
     'from',
     'i',
     'image',
+    'picture',
+    'photo',
     'in',
     'is',
     'it',
@@ -105,16 +133,36 @@ class ZkLocalChatRouter {
     'to',
     'vault',
     'video',
+    'voice',
+    'audio',
+    'clip',
     'what',
     'where',
     'with',
   };
 
+  static String _normalizeTerm(String term) {
+    if (term.endsWith('ies') && term.length > 4) {
+      return '${term.substring(0, term.length - 3)}y';
+    }
+    if (term.endsWith('s') && !term.endsWith('ss') && term.length > 3) {
+      return term.substring(0, term.length - 1);
+    }
+    return term;
+  }
+
   static Set<String> _terms(String text) => _word
       .allMatches(text.toLowerCase())
-      .map((match) => match.group(0)!)
+      .map((match) => _normalizeTerm(match.group(0)!))
       .where((term) => term.length > 1 && !_stop.contains(term))
       .toSet();
+
+  static ZkLocalMediaKind? _requestedMedia(String query) {
+    if (_videoCue.hasMatch(query)) return ZkLocalMediaKind.video;
+    if (_photoCue.hasMatch(query)) return ZkLocalMediaKind.photo;
+    if (_audioCue.hasMatch(query)) return ZkLocalMediaKind.audio;
+    return null;
+  }
 
   static ZkLocalChatResult resolve({
     required String prompt,
@@ -124,31 +172,44 @@ class ZkLocalChatRouter {
   }) {
     final query = prompt.trim();
     if (_followUp.hasMatch(query)) {
-      if (previousSelection == null) {
+      final previous = previousSelection;
+      if (previous == null ||
+          ![...savedItems, ...files].any((record) =>
+              record.kind == previous.kind && record.id == previous.id)) {
         return const ZkLocalChatResult(ZkLocalChatDisposition.notFound);
       }
       return ZkLocalChatResult(
         ZkLocalChatDisposition.found,
-        matches: [previousSelection],
-        selection: previousSelection,
+        matches: [previous],
+        selection: previous,
       );
     }
     final hasMy = _myCue.hasMatch(query);
     final hasAsset = _assetCue.hasMatch(query);
     final hasLookup = _lookupCue.hasMatch(query);
     final isHowTo = query.toLowerCase().startsWith('how ');
+    if (_mutationCue.hasMatch(query) && !isHowTo) {
+      return const ZkLocalChatResult(ZkLocalChatDisposition.unsupportedAction);
+    }
     final isPrivate = _privateCue.hasMatch(query) ||
         (hasLookup && (hasMy || hasAsset)) ||
-        (hasMy && hasAsset && !isHowTo);
+        (hasMy && !isHowTo);
     if (!isPrivate) {
       return const ZkLocalChatResult(ZkLocalChatDisposition.general);
     }
 
     final queryTerms = _terms(query);
+    final mediaKind = _requestedMedia(query);
     final scored = <(ZkLocalChatRecord, int)>[];
     for (final record in [...savedItems, ...files]) {
-      final score = _terms(record.title).intersection(queryTerms).length;
-      if (score > 0) scored.add((record, score));
+      if (mediaKind != null && record.mediaKind != mediaKind) continue;
+      final titleScore = _terms(record.title).intersection(queryTerms).length;
+      final contentScore =
+          _terms(record.searchText).intersection(queryTerms).length;
+      final score = titleScore * 4 + contentScore * 2;
+      if (score > 0 || (queryTerms.isEmpty && mediaKind != null)) {
+        scored.add((record, score));
+      }
     }
     scored.sort((a, b) => b.$2.compareTo(a.$2));
     if (scored.isEmpty) {
