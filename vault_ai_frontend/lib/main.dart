@@ -861,6 +861,7 @@ enum LegacyStageDiagnosticCode {
   fileSourceRead,
   filePrepared,
   fileDeferred,
+  fileExtraLegacyDataDeferred,
   stageComplete,
   stageDeferred,
 }
@@ -5446,6 +5447,10 @@ Future<void> _stageLegacyContentBestEffort({
     if (stageResult.filesDeferredForUnreadableSource > 0) {
       _legacyStageDiagnostic(LegacyStageDiagnosticCode.fileDeferred);
     }
+    if (stageResult.filesDeferredForExtraLegacyData > 0) {
+      _legacyStageDiagnostic(
+          LegacyStageDiagnosticCode.fileExtraLegacyDataDeferred);
+    }
     _legacyStageDiagnostic(LegacyStageDiagnosticCode.stageComplete);
     vlog('legacy_content_stage.summary', {
       'items_verified': stageResult.itemsVerified,
@@ -5454,6 +5459,8 @@ Future<void> _stageLegacyContentBestEffort({
       'files_deferred_for_size': stageResult.filesDeferredForSize,
       'files_deferred_for_unreadable_source':
           stageResult.filesDeferredForUnreadableSource,
+      'files_deferred_for_extra_legacy_data':
+          stageResult.filesDeferredForExtraLegacyData,
     });
   } catch (error) {
     _legacyStageDiagnostic(LegacyStageDiagnosticCode.stageDeferred);

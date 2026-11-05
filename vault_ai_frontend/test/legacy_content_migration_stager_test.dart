@@ -313,6 +313,260 @@ void main() {
     ]));
   });
 
+  test('unsupported legacy file metadata defers only that existing sidecar',
+      () async {
+    final extra = await _legacyEncrypt(<int>[1, 2, 3]);
+    final valid = await _legacyEncrypt(<int>[4, 5, 6]);
+    final codec = LegacyCiphertextMigrationCodec(
+      legacyKey: _legacyKey,
+      mvk: _mvk,
+    );
+    final metadataKey = await VaultKeyHierarchy(_mvk).metadataKey();
+    final encryptedName = b64urlEncode(await aesGcmWrap(
+      metadataKey,
+      utf8.encode('synthetic-file.bin'),
+    ));
+    final prepared = await codec.stageFile(
+      fileId: 'synthetic-valid-file',
+      legacyCiphertext: valid,
+      declaredFileSize: 3,
+      contentType: null,
+      encryptedMetadata: <String, String?>{
+        'file_name_ciphertext': encryptedName,
+        'saved_name_ciphertext': null,
+        'content_type_ciphertext': null,
+        'detected_type_ciphertext': null,
+        'detected_service_ciphertext': null,
+        'asset_type_ciphertext': null,
+      },
+    );
+    final calls = <String>[];
+    final result = await LegacyContentMigrationStager(
+      enabled: true,
+      export: _export(
+        itemRows: const <Map<String, dynamic>>[],
+        fileRows: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'file_id': 'synthetic-extra-file',
+            'ciphertext_chars': extra.length,
+            'file_size': 3,
+            'file_name_ciphertext': encryptedName,
+          },
+          <String, dynamic>{
+            'file_id': 'synthetic-valid-file',
+            'ciphertext_chars': valid.length,
+            'file_size': 3,
+            'file_name_ciphertext': encryptedName,
+          },
+        ],
+        itemCiphertexts: const <int, String>{},
+        fileCiphertexts: <String, String>{
+          'synthetic-extra-file': extra,
+          'synthetic-valid-file': valid,
+        },
+        calls: calls,
+      ),
+      codec: codec,
+      request: (method, path, [body]) async {
+        calls.add('$method $path');
+        if (method == 'GET' &&
+            path.endsWith('/file-staged/synthetic-extra-file')) {
+          return const MigrationReply(409, <String, dynamic>{
+            'detail': 'file_extra_legacy_data_requires_migration',
+          });
+        }
+        if (method == 'GET' &&
+            path.endsWith('/file-staged/synthetic-valid-file')) {
+          return MigrationReply(200, <String, dynamic>{
+            'file_id': 'synthetic-valid-file',
+            'source_snapshot': _snapshotA,
+            'total_bytes': 3,
+            'chunk_count': prepared.chunkCiphertexts.length,
+            'manifest_ciphertext': prepared.manifestCiphertext,
+          });
+        }
+        if (method == 'GET' && path.endsWith('/chunk/0')) {
+          return MigrationReply(200, <String, dynamic>{
+            'file_id': 'synthetic-valid-file',
+            'chunk_index': 0,
+            'ciphertext': prepared.chunkCiphertexts.single,
+          });
+        }
+        fail('Unexpected file staging request: $method $path');
+      },
+    ).stageAndVerify();
+    expect(result.filesVerified, 1);
+    expect(result.filesDeferredForExtraLegacyData, 1);
+    expect(result.filesDeferredForUnreadableSource, 0);
+    expect(
+        calls.where((call) => call.contains('synthetic-extra-file')),
+        contains(
+            'GET /vault/legacy-ciphertext/migrate/file-staged/synthetic-extra-file'));
+    expect(
+        calls.any((call) =>
+            call.contains('retire') ||
+            call.contains('delete') ||
+            call == 'POST /vault/file-v2/manifest'),
+        isFalse);
+  });
+
+  test('unsupported metadata after sidecar upload preserves and continues',
+      () async {
+    final extra = await _legacyEncrypt(<int>[1, 2, 3]);
+    final valid = await _legacyEncrypt(<int>[4, 5, 6]);
+    final codec = LegacyCiphertextMigrationCodec(
+      legacyKey: _legacyKey,
+      mvk: _mvk,
+    );
+    final metadataKey = await VaultKeyHierarchy(_mvk).metadataKey();
+    final encryptedName = b64urlEncode(await aesGcmWrap(
+      metadataKey,
+      utf8.encode('synthetic-file.bin'),
+    ));
+    final prepared = await codec.stageFile(
+      fileId: 'synthetic-valid-file',
+      legacyCiphertext: valid,
+      declaredFileSize: 3,
+      contentType: null,
+      encryptedMetadata: <String, String?>{
+        'file_name_ciphertext': encryptedName,
+        'saved_name_ciphertext': null,
+        'content_type_ciphertext': null,
+        'detected_type_ciphertext': null,
+        'detected_service_ciphertext': null,
+        'asset_type_ciphertext': null,
+      },
+    );
+    final calls = <String>[];
+    var extraStageReads = 0;
+    final result = await LegacyContentMigrationStager(
+      enabled: true,
+      export: _export(
+        itemRows: const <Map<String, dynamic>>[],
+        fileRows: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'file_id': 'synthetic-extra-file',
+            'ciphertext_chars': extra.length,
+            'file_size': 3,
+            'file_name_ciphertext': encryptedName,
+          },
+          <String, dynamic>{
+            'file_id': 'synthetic-valid-file',
+            'ciphertext_chars': valid.length,
+            'file_size': 3,
+            'file_name_ciphertext': encryptedName,
+          },
+        ],
+        itemCiphertexts: const <int, String>{},
+        fileCiphertexts: <String, String>{
+          'synthetic-extra-file': extra,
+          'synthetic-valid-file': valid,
+        },
+        calls: calls,
+      ),
+      codec: codec,
+      request: (method, path, [body]) async {
+        calls.add('$method $path');
+        if (method == 'GET' &&
+            path.endsWith('/file-staged/synthetic-extra-file')) {
+          extraStageReads++;
+          return MigrationReply(409, <String, dynamic>{
+            'detail': extraStageReads == 1
+                ? 'file_v2_not_staged'
+                : 'file_extra_legacy_data_requires_migration',
+          });
+        }
+        if (method == 'GET' &&
+            path.endsWith('/synthetic-extra-file/manifest')) {
+          return const MigrationReply(404, <String, dynamic>{
+            'detail': 'file_v2_not_found',
+          });
+        }
+        if (method == 'POST' && path == '/vault/file-v2/manifest') {
+          expect(body?['migrating_legacy'], isTrue);
+          return const MigrationReply(200, <String, dynamic>{});
+        }
+        if (method == 'GET' && path.endsWith('/synthetic-extra-file/chunk/0')) {
+          return const MigrationReply(404, <String, dynamic>{
+            'detail': 'file_v2_chunk_not_found',
+          });
+        }
+        if (method == 'PUT' && path == '/vault/file-v2/chunk') {
+          return const MigrationReply(200, <String, dynamic>{});
+        }
+        if (method == 'GET' &&
+            path.endsWith('/file-staged/synthetic-valid-file')) {
+          return MigrationReply(200, <String, dynamic>{
+            'file_id': 'synthetic-valid-file',
+            'source_snapshot': _snapshotA,
+            'total_bytes': 3,
+            'chunk_count': prepared.chunkCiphertexts.length,
+            'manifest_ciphertext': prepared.manifestCiphertext,
+          });
+        }
+        if (method == 'GET' && path.endsWith('/synthetic-valid-file/chunk/0')) {
+          return MigrationReply(200, <String, dynamic>{
+            'file_id': 'synthetic-valid-file',
+            'chunk_index': 0,
+            'ciphertext': prepared.chunkCiphertexts.single,
+          });
+        }
+        fail('Unexpected file staging request: $method $path');
+      },
+    ).stageAndVerify();
+    expect(extraStageReads, 2);
+    expect(result.filesVerified, 1);
+    expect(result.filesDeferredForExtraLegacyData, 1);
+    expect(calls.where((call) => call == 'POST /vault/file-v2/manifest'),
+        hasLength(1));
+    expect(calls.where((call) => call == 'PUT /vault/file-v2/chunk'),
+        hasLength(1));
+    expect(
+        calls.any((call) => call.contains('retire') || call.contains('delete')),
+        isFalse);
+  });
+
+  test('other file-stage conflicts still abort the batch', () async {
+    final legacy = await _legacyEncrypt(<int>[1, 2, 3]);
+    final metadataKey = await VaultKeyHierarchy(_mvk).metadataKey();
+    final encryptedName = b64urlEncode(await aesGcmWrap(
+      metadataKey, utf8.encode('synthetic-file.bin'),
+    ));
+    final calls = <String>[];
+    final stager = LegacyContentMigrationStager(
+      enabled: true,
+      export: _export(
+        itemRows: const <Map<String, dynamic>>[],
+        fileRows: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'file_id': 'synthetic-conflict-file',
+            'ciphertext_chars': legacy.length,
+            'file_size': 3,
+            'file_name_ciphertext': encryptedName,
+          },
+        ],
+        itemCiphertexts: const <int, String>{},
+        fileCiphertexts: <String, String>{
+          'synthetic-conflict-file': legacy,
+        },
+        calls: calls,
+      ),
+      codec: LegacyCiphertextMigrationCodec(
+        legacyKey: _legacyKey, mvk: _mvk,
+      ),
+      request: (method, path, [body]) async {
+        calls.add('$method $path');
+        return const MigrationReply(409, <String, dynamic>{
+          'detail': 'file_v2_manifest_conflict',
+        });
+      },
+    );
+    await expectLater(stager.stageAndVerify(), throwsA(isA<StateError>()));
+    expect(calls.any((call) => call.contains('retire') ||
+        call.contains('delete') || call == 'POST /vault/file-v2/manifest'),
+        isFalse);
+  });
+
   test('wallet-engine row is not generically staged or counted', () async {
     final legacy = await _legacyEncrypt(utf8.encode('{"wallet":"synthetic"}'));
     final key = await VaultKeyHierarchy(_mvk).metadataKey();

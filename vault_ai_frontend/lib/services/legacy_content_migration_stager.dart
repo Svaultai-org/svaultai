@@ -51,6 +51,7 @@ class LegacyStageResult {
   final int itemsDeferredForSize;
   final int filesDeferredForSize;
   final int filesDeferredForUnreadableSource;
+  final int filesDeferredForExtraLegacyData;
 
   const LegacyStageResult({
     required this.itemsVerified,
@@ -58,6 +59,7 @@ class LegacyStageResult {
     this.itemsDeferredForSize = 0,
     this.filesDeferredForSize = 0,
     this.filesDeferredForUnreadableSource = 0,
+    this.filesDeferredForExtraLegacyData = 0,
   });
 }
 
@@ -92,6 +94,7 @@ class LegacyContentMigrationStager {
     var itemsDeferredForSize = 0;
     var filesDeferredForSize = 0;
     var filesDeferredForUnreadableSource = 0;
+    var filesDeferredForExtraLegacyData = 0;
     try {
       final items = await export.listItems();
       for (final item in items) {
@@ -119,6 +122,10 @@ class LegacyContentMigrationStager {
           // no longer opens it. Keep the old row intact and try later files.
           // Export, session, network, quota, and V2 conflicts still abort.
           filesDeferredForUnreadableSource++;
+        } on _ExtraLegacyFileData {
+          // The V2 sidecar cannot represent all legacy file metadata yet.
+          // Preserve the original and any unverified sidecar; continue safely.
+          filesDeferredForExtraLegacyData++;
         }
       }
       return LegacyStageResult(
@@ -127,6 +134,7 @@ class LegacyContentMigrationStager {
         itemsDeferredForSize: itemsDeferredForSize,
         filesDeferredForSize: filesDeferredForSize,
         filesDeferredForUnreadableSource: filesDeferredForUnreadableSource,
+        filesDeferredForExtraLegacyData: filesDeferredForExtraLegacyData,
       );
     } finally {
       export.clearGrant();
@@ -374,6 +382,9 @@ class LegacyContentMigrationStager {
     final encodedId = Uri.encodeComponent(id);
     final stagePath = '/vault/legacy-ciphertext/migrate/file-staged/$encodedId';
     var staged = await request('GET', stagePath);
+    if (_hasExtraLegacyFileData(staged)) {
+      throw const _ExtraLegacyFileData();
+    }
     if (staged.statusCode == 409 &&
         <String>{'file_v2_not_staged', 'file_v2_chunks_incomplete'}
             .contains(_detailCode(staged))) {
@@ -437,6 +448,9 @@ class LegacyContentMigrationStager {
       }
       staged = await request('GET', stagePath);
     }
+    if (_hasExtraLegacyFileData(staged)) {
+      throw const _ExtraLegacyFileData();
+    }
     _require200(staged);
     final readback = _requireMap(staged);
     if (readback['file_id'] != id ||
@@ -479,6 +493,9 @@ class LegacyContentMigrationStager {
       throw const _StageConflict();
     }
     final finalSource = await request('GET', stagePath);
+    if (_hasExtraLegacyFileData(finalSource)) {
+      throw const _ExtraLegacyFileData();
+    }
     _require200(finalSource);
     if (_requireMap(finalSource)['source_snapshot'] != source.sourceSnapshot) {
       throw const FormatException('Legacy file changed during readback');
@@ -523,6 +540,14 @@ class LegacyContentMigrationStager {
 class _StageConflict implements Exception {
   const _StageConflict();
 }
+
+class _ExtraLegacyFileData implements Exception {
+  const _ExtraLegacyFileData();
+}
+
+bool _hasExtraLegacyFileData(MigrationReply reply) =>
+    reply.statusCode == 409 &&
+    _detailCode(reply) == 'file_extra_legacy_data_requires_migration';
 
 /// Only pre-write, deterministic local source failures may be deferred. This
 /// marker carries no record identifier, ciphertext, plaintext, or error body.
