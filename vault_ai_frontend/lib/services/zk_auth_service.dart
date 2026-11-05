@@ -404,6 +404,31 @@ class ZkAuthService {
     required String vaultHandle,
     required String pin,
     required String sessionToken,
+  }) => _verifyPinProof(
+        vaultHandle: vaultHandle,
+        pin: pin,
+        sessionToken: sessionToken,
+        pendingDevice: false,
+      );
+
+  /// Recheck the PIN only for self-approval of this session's pending device.
+  /// This proof cannot authorize other sensitive vault actions.
+  Future<ZkPinProof> verifyPendingDeviceProof({
+    required String vaultHandle,
+    required String pin,
+    required String sessionToken,
+  }) => _verifyPinProof(
+        vaultHandle: vaultHandle,
+        pin: pin,
+        sessionToken: sessionToken,
+        pendingDevice: true,
+      );
+
+  Future<ZkPinProof> _verifyPinProof({
+    required String vaultHandle,
+    required String pin,
+    required String sessionToken,
+    required bool pendingDevice,
   }) async {
     if (sessionToken.isEmpty) throw StateError('Session is unavailable.');
     await _opaque.ready();
@@ -414,7 +439,9 @@ class ZkAuthService {
         String? clientIdentifier) async {
       final start = await _opaque.startLogin(password: pin);
       final init = await _post(
-        '/auth/zk-verify-init',
+        pendingDevice
+            ? '/auth/zk-pending-verify-init'
+            : '/auth/zk-verify-init',
         {'vault_handle': handleDisplay, 'ke1': start.startLoginRequest},
         bearerToken: sessionToken,
       );
@@ -441,7 +468,9 @@ class ZkAuthService {
       exchange = await attempt(vaultHandleCredentialId(handleBytes));
     }
     final response = await _post(
-      '/auth/zk-verify-finalize',
+      pendingDevice
+          ? '/auth/zk-pending-verify-finalize'
+          : '/auth/zk-verify-finalize',
       {
         'slot_id': exchange.slotId,
         'ke3': exchange.finish.finishLoginRequest,

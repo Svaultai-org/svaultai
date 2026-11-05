@@ -8,8 +8,15 @@ import 'package:provider/provider.dart';
 import 'api_client.dart';
 import 'device_id.dart';
 import 'l10n/app_localizations.dart';
+import 'services/zk_auth_service.dart';
 import 'ui/responsive.dart';
-import 'main.dart' show AppState, backendBaseUrl;
+import 'main.dart' show AppState, backendBaseUrl, kEnableLegacyAuthFallback;
+
+
+const bool kEnableZkPendingDeviceProof = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_PENDING_DEVICE_PROOF',
+  defaultValue: false,
+);
 
 
 class DevicePendingPage extends StatefulWidget {
@@ -131,6 +138,101 @@ class _DevicePendingPageState extends State<DevicePendingPage> {
     return result;
   }
 
+  Future<String?> _promptPinOnly({
+    required String title,
+    required String confirmLabel,
+  }) async {
+    final pinCtrl = TextEditingController();
+    final result = await showDialog<String?>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: pinCtrl,
+          decoration: const InputDecoration(labelText: 'PIN'),
+          autofocus: true,
+          obscureText: true,
+          keyboardType: TextInputType.number,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, null),
+            child: Text(AppLocalizations.of(context).commonCancel),
+          ),
+          FilledButton(
+            onPressed: () {
+              final pin = pinCtrl.text.trim();
+              if (pin.isEmpty) return;
+              pinCtrl.clear();
+              Navigator.pop(ctx, pin);
+            },
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    );
+    pinCtrl.clear();
+    pinCtrl.dispose();
+    return result;
+  }
+
+  Future<String> _pendingOpaqueProof({
+    required VaultAIClient client,
+    required String token,
+    required String handle,
+    required String pin,
+  }) async {
+    final proof = await ZkAuthService(
+      (path, body, {bearerToken}) => client.postPendingDeviceOpaque(
+        path,
+        body,
+        authToken: bearerToken ?? token,
+      ),
+    ).verifyPendingDeviceProof(
+      vaultHandle: handle,
+      pin: pin,
+      sessionToken: token,
+    );
+    return proof.token;
+  }
+
+  Future<({String? pin, String? proof})?> _approvalCredential({
+    required VaultAIClient client,
+    required String token,
+    required String title,
+    required String confirmLabel,
+  }) async {
+    final app = context.read<AppState>();
+    if (kEnableZkPendingDeviceProof) {
+      final handle = app.vaultHandle;
+      if (handle != null && handle.isNotEmpty) {
+        final pin = await _promptPinOnly(
+          title: title,
+          confirmLabel: confirmLabel,
+        );
+        if (pin == null) return null;
+        final proof = await _pendingOpaqueProof(
+          client: client,
+          token: token,
+          handle: handle,
+          pin: pin,
+        );
+        return (pin: null, proof: proof);
+      }
+      // A normal ZK build cannot infer a legacy account from a missing
+      // handle. Only an explicit legacy migration build may use the PIN path.
+      if (!kEnableLegacyAuthFallback) {
+        throw StateError('Sign in again to verify this device.');
+      }
+    }
+    final creds = await _promptVaultAndPin(
+      title: title,
+      confirmLabel: confirmLabel,
+    );
+    if (creds == null) return null;
+    return (pin: creds['pin'], proof: null);
+  }
+
   void _startCountdown() {
     _countdownTimer?.cancel();
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
@@ -146,22 +248,24 @@ class _DevicePendingPageState extends State<DevicePendingPage> {
   Future<void> _requestSelfApproval() async {
     final token = context.read<AppState>().sessionToken;
     if (token == null) return;
-    final creds = await _promptVaultAndPin(
-      title: 'Request self-approval',
-      confirmLabel: 'Start cooldown',
-    );
-    if (creds == null) return;
-
     setState(() {
       _selfApprovalBusy = true;
       _selfApprovalError = null;
     });
     try {
-      final r = await VaultAIClient(baseUrl: backendBaseUrl)
-          .requestSelfApproval(
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final credential = await _approvalCredential(
+        client: client,
+        token: token,
+        title: 'Request self-approval',
+        confirmLabel: 'Start cooldown',
+      );
+      if (credential == null || !mounted ||
+          context.read<AppState>().sessionToken != token) return;
+      final r = await client.requestSelfApproval(
         authToken: token,
-        vaultName: creds['vault_name']!,
-        pin: creds['pin']!,
+        pin: credential.pin,
+        zkProofToken: credential.proof,
       );
       final iso = r['cooldown_until']?.toString();
       if (iso != null) {
@@ -182,21 +286,24 @@ class _DevicePendingPageState extends State<DevicePendingPage> {
   Future<void> _finalizeSelfApproval() async {
     final token = context.read<AppState>().sessionToken;
     if (token == null) return;
-    final creds = await _promptVaultAndPin(
-      title: 'Confirm with PIN',
-      confirmLabel: 'Finalize',
-    );
-    if (creds == null) return;
-
     setState(() {
       _selfApprovalBusy = true;
       _selfApprovalError = null;
     });
     try {
-      await VaultAIClient(baseUrl: backendBaseUrl).finalizeSelfApproval(
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final credential = await _approvalCredential(
+        client: client,
+        token: token,
+        title: 'Confirm with PIN',
+        confirmLabel: 'Finalize',
+      );
+      if (credential == null || !mounted ||
+          context.read<AppState>().sessionToken != token) return;
+      await client.finalizeSelfApproval(
         authToken: token,
-        vaultName: creds['vault_name']!,
-        pin: creds['pin']!,
+        pin: credential.pin,
+        zkProofToken: credential.proof,
       );
       _countdownTimer?.cancel();
       _pollTimer?.cancel();

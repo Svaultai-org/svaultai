@@ -1460,16 +1460,63 @@ class VaultAIClient {
     return decoded;
   }
 
+  Future<Map<String, dynamic>> postPendingDeviceOpaque(
+    String path,
+    Map<String, dynamic> body, {
+    required String authToken,
+  }) async {
+    if (path != '/auth/zk-pending-verify-init' &&
+        path != '/auth/zk-pending-verify-finalize') {
+      throw ArgumentError.value(path, 'path', 'Not a pending-device proof path');
+    }
+    final response = await _sessionHttp.post(
+      Uri.parse('$baseUrl$path'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(body),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Pending-device verification failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid pending-device verification response');
+    }
+    return decoded;
+  }
+
+  Map<String, dynamic> _selfApprovalBody({
+    String? pin,
+    String? zkProofToken,
+  }) {
+    if ((pin == null) == (zkProofToken == null) ||
+        (pin != null && pin.isEmpty) ||
+        (zkProofToken != null && zkProofToken.isEmpty)) {
+      throw ArgumentError('Exactly one credential is required');
+    }
+    return zkProofToken != null
+        ? {'zk_proof_token': zkProofToken}
+        : {'pin': pin};
+  }
+
   Future<Map<String, dynamic>> requestSelfApproval({
     required String authToken,
-    required String vaultName,
-    required String pin,
+    String vaultName = '',
+    String? pin,
+    String? zkProofToken,
   }) async {
     final uri = Uri.parse('$baseUrl/devices/request-self-approval');
     final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode({'vault_name': '', 'pin': pin}),
+      body: jsonEncode(_selfApprovalBody(
+        pin: pin,
+        zkProofToken: zkProofToken,
+      )),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -1490,14 +1537,18 @@ class VaultAIClient {
 
   Future<Map<String, dynamic>> finalizeSelfApproval({
     required String authToken,
-    required String vaultName,
-    required String pin,
+    String vaultName = '',
+    String? pin,
+    String? zkProofToken,
   }) async {
     final uri = Uri.parse('$baseUrl/devices/finalize-self-approval');
     final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode({'vault_name': '', 'pin': pin}),
+      body: jsonEncode(_selfApprovalBody(
+        pin: pin,
+        zkProofToken: zkProofToken,
+      )),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
