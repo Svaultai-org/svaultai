@@ -90,18 +90,19 @@ class LegacyContentMigrationStager {
     if (id is! int || id <= 0 || chars is! int) {
       throw const FormatException('Invalid legacy item listing');
     }
-    final itemType = await _itemLabel(
-      record['item_type'],
-      record['item_type_ciphertext'],
-    );
-    final service = await _itemLabel(
-      record['service'],
-      record['service_ciphertext'],
-    );
-    final legacy = await export.readItemCiphertext(
+    final source = await export.readItemSource(
       itemId: id,
       ciphertextChars: chars,
     );
+    final metadata = source.sourceMetadata;
+    final itemType = await _itemLabel(
+      metadata['item_type'], metadata['item_type_ciphertext'],
+    );
+    final service = await _itemLabel(
+      metadata['service'], metadata['service_ciphertext'],
+    );
+    final legacy = source.ciphertext;
+    var expectedSnapshot = source.sourceSnapshot;
     final readPath = '/vault/legacy-ciphertext/migrate/item-staged/$id';
     var readback = await request('GET', readPath);
     if (readback.statusCode == 409 &&
@@ -115,18 +116,24 @@ class LegacyContentMigrationStager {
       final response = await request(
         'POST',
         '/vault/legacy-ciphertext/migrate/item-stage',
-        Map<String, dynamic>.from(staged.toStageBody()),
+        <String, dynamic>{
+          ...staged.toStageBody(),
+          'source_snapshot': source.sourceSnapshot,
+        },
       );
       _require200(response);
       if ((response.data as Map?)?['item_id'] != id ||
-          (response.data as Map?)?['staged'] != true) {
+          (response.data as Map?)?['staged'] != true ||
+          !_validSnapshot((response.data as Map?)?['source_snapshot'])) {
         throw const FormatException('Invalid item stage acknowledgement');
       }
+      expectedSnapshot = (response.data as Map)['source_snapshot'] as String;
       readback = await request('GET', readPath);
     }
     _require200(readback);
     final body = _requireMap(readback);
     if (body['item_id'] != id ||
+        body['source_snapshot'] != expectedSnapshot ||
         body['item_type_ciphertext'] is! String ||
         body['service_ciphertext'] is! String ||
         body['payload_ciphertext'] is! String ||
@@ -162,40 +169,28 @@ class LegacyContentMigrationStager {
   Future<void> _stageFile(Map<String, dynamic> record) async {
     final id = record['file_id'];
     final chars = record['ciphertext_chars'];
-    final size = record['file_size'];
-    final contentType = record['content_type'];
     if (id is! String ||
         id.isEmpty ||
-        chars is! int ||
-        size is! int ||
-        size < 0 ||
-        (contentType != null && contentType is! String)) {
+        chars is! int) {
       throw const FormatException('Invalid legacy file listing');
     }
-    const metadataFields = <String>[
-      'file_name_ciphertext',
-      'saved_name_ciphertext',
-      'content_type_ciphertext',
-      'detected_type_ciphertext',
-      'detected_service_ciphertext',
-      'asset_type_ciphertext',
-    ];
-    final encryptedMetadata = <String, String?>{};
-    for (final name in metadataFields) {
-      final value = record[name];
-      if (value != null && value is! String) {
-        throw const FormatException('Invalid encrypted file metadata');
-      }
-      encryptedMetadata[name] = value as String?;
+    final source = await export.readFileSource(
+      fileId: id,
+      ciphertextChars: chars,
+    );
+    final metadata = source.sourceMetadata;
+    final size = metadata['file_size'];
+    final contentType = metadata['content_type'];
+    if (size is! int || size < 0 ||
+        (contentType != null && contentType is! String)) {
+      throw const FormatException('Invalid legacy file source metadata');
     }
+    final encryptedMetadata = await _fileEncryptedMetadata(metadata);
     if (encryptedMetadata['file_name_ciphertext'] == null &&
         encryptedMetadata['saved_name_ciphertext'] == null) {
       throw const FormatException('Legacy file name is unavailable');
     }
-    final legacy = await export.readFileCiphertext(
-      fileId: id,
-      ciphertextChars: chars,
-    );
+    final legacy = source.ciphertext;
     final prepared = await codec.stageFile(
       fileId: id,
       legacyCiphertext: legacy,
@@ -219,6 +214,7 @@ class LegacyContentMigrationStager {
           <String, dynamic>{
             ...prepared.toManifestBody(),
             'migrating_legacy': true,
+            'source_snapshot': source.sourceSnapshot,
           },
         );
         _require200(ack);
@@ -262,6 +258,7 @@ class LegacyContentMigrationStager {
     _require200(staged);
     final readback = _requireMap(staged);
     if (readback['file_id'] != id ||
+        readback['source_snapshot'] != source.sourceSnapshot ||
         readback['total_bytes'] != size ||
         readback['chunk_count'] != prepared.chunkCiphertexts.length ||
         readback['manifest_ciphertext'] is! String) {
@@ -295,8 +292,48 @@ class LegacyContentMigrationStager {
     )) {
       throw const FormatException('File readback did not match legacy');
     }
+    final finalSource = await request('GET', stagePath);
+    _require200(finalSource);
+    if (_requireMap(finalSource)['source_snapshot'] != source.sourceSnapshot) {
+      throw const FormatException('Legacy file changed during readback');
+    }
+  }
+
+  Future<Map<String, String?>> _fileEncryptedMetadata(
+    Map<String, dynamic> metadata,
+  ) async {
+    const names = <String, String>{
+      'file_name_ciphertext': 'file_name',
+      'saved_name_ciphertext': 'saved_name',
+      'content_type_ciphertext': 'content_type',
+      'detected_type_ciphertext': 'detected_type',
+      'detected_service_ciphertext': 'detected_service',
+      'asset_type_ciphertext': 'asset_type',
+    };
+    final key = await VaultKeyHierarchy(codec.mvk).metadataKey();
+    final result = <String, String?>{};
+    for (final entry in names.entries) {
+      final encrypted = metadata[entry.key];
+      final plain = metadata[entry.value];
+      if ((encrypted != null && encrypted is! String) ||
+          (plain != null && plain is! String)) {
+        throw const FormatException('Invalid legacy file metadata');
+      }
+      // An old app can rename saved_name after a listing. Use the plaintext
+      // value from the same locked source row over an older ciphertext label.
+      final usePlain = plain is String && plain.isNotEmpty &&
+          (entry.key == 'saved_name_ciphertext' ||
+              encrypted == null || encrypted == '');
+      result[entry.key] = usePlain
+          ? b64urlEncode(await aesGcmWrap(key, utf8.encode(plain)))
+          : encrypted is String && encrypted.isNotEmpty ? encrypted : null;
+    }
+    return result;
   }
 }
+
+bool _validSnapshot(Object? value) =>
+    value is String && RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(value);
 
 String? _detailCode(MigrationReply reply) {
   final data = reply.data;
@@ -316,6 +353,9 @@ Map<String, dynamic> _requireMap(MigrationReply reply) {
 }
 
 void _require200(MigrationReply reply) {
+  if (reply.statusCode == 409 && _detailCode(reply) == 'legacy_source_changed') {
+    throw StateError('Legacy source changed. Restart migration to use the latest record.');
+  }
   if (reply.statusCode != 200) {
     // Never attach server response bodies, ciphertext, or identifiers.
     throw StateError('Migration endpoint unavailable (${reply.statusCode})');

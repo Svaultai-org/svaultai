@@ -2,6 +2,58 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vault_ai_frontend/services/legacy_ciphertext_export_client.dart';
 
 void main() {
+  test('staging rejects a source that changes between export chunks', () async {
+    final firstSnapshot = List<String>.filled(43, 'A').join();
+    final changedSnapshot = List<String>.filled(43, 'B').join();
+    var grants = 0;
+    var pages = 0;
+    final client = LegacyCiphertextExportClient(
+      proofProvider: () async => 'synthetic-proof',
+      post: (path, body) async {
+        if (path.endsWith('/start')) {
+          grants++;
+          return <String, dynamic>{
+            'export_token': 'synthetic-grant-$grants',
+            'next_sequence': 0,
+            'pages_remaining': 16,
+          };
+        }
+        pages++;
+        if (body['mode'] == 'list_items') {
+          return <String, dynamic>{
+            'next_sequence': 1,
+            'pages_remaining': 15,
+            'records': <Map<String, dynamic>>[],
+            'has_more': false,
+          };
+        }
+        final offset = body['offset'] as int;
+        return <String, dynamic>{
+          'next_sequence': body['sequence'] + 1,
+          'pages_remaining': 16 - (body['sequence'] as int) - 1,
+          'item_id': 11,
+          'offset': offset,
+          'ciphertext_chunk': offset == 0 ? 'abc' : 'def',
+          'total_chars': 6,
+          'next_offset': offset + 3,
+          'done': offset == 3,
+          'source_snapshot': offset == 0 ? firstSnapshot : changedSnapshot,
+          'source_metadata': const <String, dynamic>{
+            'item_type': 'note', 'service': 'synthetic',
+            'item_type_ciphertext': null, 'service_ciphertext': null,
+          },
+        };
+      },
+    );
+    await expectLater(
+      client.readItemSource(itemId: 11, ciphertextChars: 6),
+      throwsA(isA<FormatException>()),
+    );
+    expect(pages, 2);
+    await client.listItems();
+    expect(grants, 2);
+  });
+
   test(
       'exports paged IDs and exact ciphertext with fresh proof on grant rollover',
       () async {

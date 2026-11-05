@@ -215,10 +215,31 @@ class LegacyCiphertextMigrationCodec {
           manifest['content_type'] == contentType &&
           manifest['chunk_size'] == chunkSize &&
           manifest['chunk_count'] == chunkCount &&
-          _sameJson(manifest['encrypted_metadata'], encryptedMetadata);
+          await _sameEncryptedMetadata(
+            manifest['encrypted_metadata'], encryptedMetadata, metadataKey,
+          );
     } catch (_) {
       return false;
     }
+  }
+
+  Future<bool> _sameEncryptedMetadata(
+    Object? staged,
+    Map<String, String?> expected,
+    SecretKey key,
+  ) async {
+    if (staged is! Map || staged.length != expected.length) return false;
+    for (final entry in expected.entries) {
+      if (!staged.containsKey(entry.key)) return false;
+      final oldValue = staged[entry.key];
+      final newValue = entry.value;
+      if (oldValue == null && newValue == null) continue;
+      if (oldValue is! String || newValue is! String) return false;
+      final oldPlain = utf8.decode(await aesGcmUnwrap(key, b64urlDecode(oldValue)));
+      final newPlain = utf8.decode(await aesGcmUnwrap(key, b64urlDecode(newValue)));
+      if (oldPlain != newPlain) return false;
+    }
+    return true;
   }
 
   Future<bool> verifyStagedFile({
