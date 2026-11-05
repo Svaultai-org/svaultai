@@ -1980,7 +1980,7 @@ class ZkAdoptResponse(BaseModel):
 @router.post("/auth/zk-adopt", response_model=ZkAdoptResponse)
 async def zk_adopt(
     payload: ZkAdoptRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> ZkAdoptResponse:
     return await run_in_threadpool(_zk_adopt_sync, payload, principal)
 

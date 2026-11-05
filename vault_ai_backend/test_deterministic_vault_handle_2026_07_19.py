@@ -439,7 +439,7 @@ class DictPrincipalRegressionTests(unittest.TestCase):
         """
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from routes.auth_zk_routes import router, verify_session_token
+        from routes.auth_zk_routes import router, verify_trusted_device
         from routes import auth_zk_routes as m
 
         # Fake DB that returns None for the SELECT.
@@ -456,7 +456,7 @@ class DictPrincipalRegressionTests(unittest.TestCase):
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[verify_session_token] = lambda: {
+        app.dependency_overrides[verify_trusted_device] = lambda: {
             "vault_id":   "11111111-1111-1111-1111-111111111111",
             "vault_name": "unused",
             "token_id":   "tk",

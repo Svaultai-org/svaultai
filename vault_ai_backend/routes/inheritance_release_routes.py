@@ -66,7 +66,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from psycopg2.extras import RealDictCursor
 
@@ -373,7 +373,7 @@ class RetrievedCredentialPackage(BaseModel):
 @router.post("/inheritance/access/request", response_model=AccessStatusResponse)
 def request_access(
     body: AccessRequestBody,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> AccessStatusResponse:
     conn = get_db()
     try:
@@ -436,7 +436,7 @@ def request_access(
 @router.post("/inheritance/access/cancel", response_model=AccessStatusResponse)
 def cancel_access(
     body: AccessCancelBody,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> AccessStatusResponse:
     conn = get_db()
     try:
@@ -486,7 +486,7 @@ def cancel_access(
 @router.post("/inheritance/access/approve", response_model=AccessStatusResponse)
 def approve_access(
     body: AccessApproveBody,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> AccessStatusResponse:
     conn = get_db()
     try:
@@ -533,7 +533,7 @@ def approve_access(
 @router.post("/inheritance/access/reject", response_model=AccessStatusResponse)
 def reject_access(
     body: AccessRejectBody,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> AccessStatusResponse:
     conn = get_db()
     try:
@@ -585,7 +585,7 @@ def reject_access(
 @router.post("/inheritance/access/claim", response_model=AccessStatusResponse)
 def claim_access(
     body: AccessClaimBody,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> AccessStatusResponse:
     """Beneficiary-side claim after the cooldown expires. Moves the
     state to ``claimable`` (idempotent — repeated calls stay in
@@ -637,7 +637,7 @@ def claim_access(
 @router.get("/inheritance/access/status", response_model=AccessStatusResponse)
 def access_status(
     link_id: int = Query(..., ge=1),
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> AccessStatusResponse:
     conn = get_db()
     try:
@@ -788,7 +788,7 @@ def _revoke_active_device_authorizations(cur, *, link_id: int) -> None:
 def authorize_device(
     body: _LinkOnlyBody,
     request: Request,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> DeviceAuthorizeResponse:
     """Beneficiary asks the server to mint a one-time inheritance-
     scoped enrollment token for the current device. Only allowed
@@ -890,6 +890,8 @@ def consume_device_authorization(
     device_id = (request.headers.get("x-device-id") or "").strip()
     if not device_id:
         raise inheritance_http_error(INHERR.DEV_MISSING_DEVICE_ID)
+    if principal.get("device_id") != device_id:
+        raise HTTPException(status_code=403, detail={"code": "device_session_mismatch"})
     token = body.token.strip()
     if not token:
         raise inheritance_http_error(INHERR.DEV_TOKEN_INVALID)
