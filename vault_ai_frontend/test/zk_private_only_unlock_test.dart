@@ -8,6 +8,8 @@ import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/main.dart';
 import 'package:vault_ai_frontend/services/native_secure_store.dart';
+import 'package:vault_ai_frontend/services/session_termination.dart' as st;
+import 'package:vault_ai_frontend/services/zk_auth_service.dart';
 import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
 import 'package:vault_ai_frontend/services/zk_active_sk_vault.dart';
 import 'package:provider/provider.dart';
@@ -18,6 +20,7 @@ void main() {
     NativeSecureStore.useSharedPreferencesForTesting = true;
     ZkActiveMvk.clear();
     ZkActiveSkVault.clear();
+    PrivateZkPinTransportSession.clear();
     VaultCryptoRegistry.clear(reason: 'private_unlock_test');
   });
 
@@ -25,6 +28,7 @@ void main() {
     NativeSecureStore.useSharedPreferencesForTesting = false;
     ZkActiveMvk.clear();
     ZkActiveSkVault.clear();
+    PrivateZkPinTransportSession.clear();
     VaultCryptoRegistry.clear(reason: 'private_unlock_test');
   });
 
@@ -32,6 +36,7 @@ void main() {
     expect(kPrivateOnlyUnlockEnabled, isTrue);
     expect(kZkPrivateOnlyClientReady, isTrue);
     expect(kPrivateOnlyTransportRejectPin, isTrue);
+    expect(kVerifierFreeZkRegistration, isTrue);
     expect(
         legacyAuthFallbackPermitted(
           opaqueLookupMissed: true,
@@ -77,6 +82,7 @@ void main() {
           'legacy_key_entries': 0,
           'has_pbkdf2_context': false,
         });
+        expect(PrivateZkPinTransportSession.active, isTrue);
         expect(
             await app.applyFreshKdfMetadata(
               pinSaltBase64: 'unused',
@@ -257,6 +263,8 @@ void main() {
   });
 
   test('nested and multipart raw PIN fields fail before transport', () {
+    st.SessionTermination.instance.bindSession('synthetic-private-marker');
+    PrivateZkPinTransportSession.bind('synthetic-private-marker');
     expect(
       () => assertPrivateOnlyPinFreeBody('{"pin":"123456"}'),
       throwsStateError,
@@ -279,5 +287,64 @@ void main() {
       () => assertPrivateOnlyPinFreeBody({'pin_salt': 'public salt'}),
       returnsNormally,
     );
+  });
+
+  test('legacy-only session can send its legacy PIN with private build flag',
+      () async {
+    st.SessionTermination.instance.bindSession('legacy-only-session');
+    expect(PrivateZkPinTransportSession.active, isFalse);
+    expect(
+      () => assertPrivateOnlyPinFreeBody({'pin': '123456'}),
+      returnsNormally,
+    );
+    final sent = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.invalid',
+      httpClient: MockClient((request) async {
+        sent.add(request);
+        return http.Response('{"session_token":"legacy-token"}', 200);
+      }),
+    );
+    await client.authLogin(vaultName: 'Legacy fixture', pin: '123456');
+    expect(sent, hasLength(1));
+    expect(sent.single.url.path, '/auth/login');
+  });
+
+  test('lost MVK cannot disable PIN guard until session switch', () async {
+    final app = AppState();
+    try {
+      await app.setSession(
+        token: 'private-token',
+        vaultIdValue: 'private-vault',
+        vaultNameValue: 'Private fixture',
+        vaultHandleValue: 'VLT-private',
+      );
+      installZkPrivateOnlyUnlockKeys(
+        app: app,
+        origin: ZkPrivateUnlockOrigin.login,
+        sessionToken: 'private-token',
+        vaultId: 'private-vault',
+        vaultName: 'Private fixture',
+        vaultHandle: 'VLT-private',
+        mvk: SecretKey(List<int>.filled(32, 90)),
+        skVault: SecretKey(List<int>.filled(32, 91)),
+      );
+      ZkActiveMvk.clear();
+      expect(PrivateZkPinTransportSession.active, isTrue);
+      expect(() => assertPrivateOnlyPinFreeBody({'pin': '123456'}),
+          throwsStateError);
+
+      await app.setSession(
+        token: 'replacement-legacy-token',
+        vaultIdValue: 'replacement-legacy-vault',
+        vaultNameValue: 'Replacement legacy',
+      );
+      expect(PrivateZkPinTransportSession.active, isFalse);
+      expect(() => assertPrivateOnlyPinFreeBody({'pin': '123456'}),
+          returnsNormally);
+    } finally {
+      await app.clearSession();
+      app.dispose();
+    }
   });
 }

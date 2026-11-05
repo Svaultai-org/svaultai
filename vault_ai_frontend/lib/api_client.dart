@@ -80,6 +80,36 @@ const bool kPrivateOnlyTransportRejectPin = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// The build flag alone does not identify a ZK vault: legacy-only accounts
+// still need their migration path. Bind this marker only after OPAQUE has
+// installed a private vault. Its session epoch survives loss of the MVK.
+class PrivateZkPinTransportSession {
+  static int? _sessionEpoch;
+  static String? _sessionFingerprint;
+
+  static void bind(String sessionToken) {
+    if (!kPrivateOnlyTransportRejectPin) return;
+    final scope = st.SessionTermination.instance.captureRequest(sessionToken);
+    if (!st.SessionTermination.instance.isCurrentRequest(scope)) {
+      throw StateError('Private vault session changed.');
+    }
+    _sessionEpoch = scope.sessionEpoch;
+    _sessionFingerprint = scope.sessionFingerprint;
+  }
+
+  static void clear() {
+    _sessionEpoch = null;
+    _sessionFingerprint = null;
+  }
+
+  static bool get active =>
+      kPrivateOnlyTransportRejectPin &&
+      _sessionFingerprint != null &&
+      _sessionEpoch == st.SessionTermination.instance.sessionEpoch &&
+      st.SessionTermination.instance.hasBoundSession &&
+      !st.SessionTermination.instance.isTerminated;
+}
+
 bool _containsRawPinField(Object? value) {
   if (value is Map) {
     for (final entry in value.entries) {
@@ -96,9 +126,10 @@ bool _containsRawPinField(Object? value) {
   return false;
 }
 
-/// Catch accidental legacy PIN requests before they leave a private build.
+/// Catch PIN requests from the active private ZK session before transport.
+/// A lost MVK cannot turn this guard off; logout or session rebinding does.
 void assertPrivateOnlyPinFreeBody(Object? body) {
-  if (!kPrivateOnlyTransportRejectPin || body == null) return;
+  if (!PrivateZkPinTransportSession.active || body == null) return;
   Object? parsed = body;
   if (body is String) {
     try {

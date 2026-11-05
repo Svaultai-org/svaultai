@@ -976,6 +976,7 @@ const bool kRequirePinFreeFileRoutes = bool.fromEnvironment(
 );
 
 const bool kZkPrivateOnlyClientReady = kEnableZkPrivateChat &&
+    kVerifierFreeZkRegistration &&
     kEnableFileV2UiRead &&
     kEnableNewFileV2Upload &&
     kRequirePinFreeFileRoutes &&
@@ -1883,6 +1884,8 @@ class AppState extends ChangeNotifier {
     if (currentVaultId == null) return;
     if (newVaultName == vaultName) return;
 
+    PrivateZkPinTransportSession.clear();
+
     perf_cache.clearCacheOnVaultSwitch(currentVaultId, null);
 
     _VaultCrypto.clearCache(currentVaultId);
@@ -2273,6 +2276,7 @@ class AppState extends ChangeNotifier {
   }) async {
     // Bind before the first await. Late responses/cleanup from an old login
     // cannot revoke, resurrect, or overwrite this replacement session.
+    PrivateZkPinTransportSession.clear();
     final epoch = ++_sessionEpoch;
     _sessionProbeEpoch++;
     st.SessionTermination.instance.bindSession(token);
@@ -2314,6 +2318,7 @@ class AppState extends ChangeNotifier {
     bool keepLastVaultName = true,
     st.SessionTerminationCode? signedOutCode,
   }) async {
+    PrivateZkPinTransportSession.clear();
     final departingToken = sessionToken;
     final epoch = ++_sessionEpoch;
     _sessionProbeEpoch++;
@@ -21059,6 +21064,7 @@ void installZkPrivateOnlyUnlockKeys({
       app.vaultHandle != vaultHandle) {
     throw StateError('Vault session changed during private unlock.');
   }
+  PrivateZkPinTransportSession.bind(sessionToken);
   VaultCryptoRegistry.clear(reason: 'zk_private_only_unlock');
   _VaultCrypto.clearAllCachedCredentials();
   zk_mvk_store.ZkActiveMvk.clear();
