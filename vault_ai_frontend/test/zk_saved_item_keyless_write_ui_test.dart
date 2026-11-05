@@ -106,8 +106,15 @@ void main() {
       if (request.method == 'POST' && path == '/vault/ciphertext/vault-items') {
         final body = Map<String, dynamic>.from(jsonDecode(request.body) as Map);
         final id = body['item_id'] as int? ?? nextId++;
+        final prior = rows.where((row) => row['item_id'] == id).toList();
         rows.removeWhere((row) => row['item_id'] == id);
-        rows.add(<String, dynamic>{...body, 'item_id': id});
+        rows.add(<String, dynamic>{
+          ...body,
+          'item_id': id,
+          'title_indexed': true,
+          'title_revision':
+              prior.isEmpty ? 0 : (prior.single['title_revision'] as int) + 1,
+        });
         return http.Response(
             jsonEncode(<String, dynamic>{
               'item_id': id,

@@ -3107,6 +3107,9 @@ class VaultAIClient {
           'notes': payload['notes'],
           'draft_id': payload['draft_id'],
           'zk_payload': payload,
+          'zk_service_ciphertext': raw['service_ciphertext'],
+          'title_indexed': raw['title_indexed'] == true,
+          'title_revision': raw['title_revision'],
           'storage_engine': 'ciphertext',
           'created_at': raw['created_at'],
         });
@@ -3210,6 +3213,34 @@ class VaultAIClient {
     if (sameTitle.isNotEmpty) {
       throw const SavedItemConflictException(duplicate: true);
     }
+    // Existing V2 rows predate the server's keyed unique index. Claim each
+    // other row with an exact ciphertext/revision comparison before a write.
+    // The selected edit row is updated atomically below, which also permits
+    // repairing a preexisting duplicate by renaming that selected row.
+    for (final entry in v2ById.entries) {
+      if (entry.key == itemId || entry.value['title_indexed'] == true) continue;
+      final revision = entry.value['title_revision'];
+      final serviceCt = entry.value['zk_service_ciphertext'];
+      if (revision is! int || revision < 0 ||
+          serviceCt is! String || serviceCt.isEmpty) {
+        throw const FormatException('Private saved-item title index is unavailable');
+      }
+      await _claimZkSavedItemTitleIndex(
+        authToken: authToken,
+        mvk: mvk,
+        itemId: entry.key,
+        itemType: '${entry.value['item_type']}',
+        service: '${entry.value['service']}',
+        expectedServiceCiphertext: serviceCt,
+        expectedRevision: revision,
+      );
+    }
+    final selectedRevision = itemId == null
+        ? null : v2ById[itemId]?['title_revision'];
+    if (itemId != null &&
+        (selectedRevision is! int || selectedRevision < 0)) {
+      throw const FormatException('Private saved-item revision is unavailable');
+    }
     Map<String, dynamic> payload = <String, dynamic>{};
     if (itemId != null) {
       final selected = resolved.where((row) => row.id == itemId).toList();
@@ -3231,6 +3262,7 @@ class VaultAIClient {
       baseUrl: baseUrl,
       authToken: authToken,
       existingItemId: itemId,
+      expectedTitleRevision: selectedRevision as int?,
       itemType: type,
       service: title,
       payload: payload,
@@ -3250,6 +3282,9 @@ class VaultAIClient {
         .toList();
     if (matches.length != 1 || matches.single['item_type'] != type ||
         matches.single['service'] != title ||
+        matches.single['title_indexed'] != true ||
+        matches.single['title_revision'] !=
+            (itemId == null ? 0 : (selectedRevision as int) + 1) ||
         jsonEncode(matches.single['zk_payload']) != jsonEncode(payload)) {
       throw const FormatException('Private saved-item readback did not match');
     }
@@ -3364,6 +3399,80 @@ class VaultAIClient {
 
   String _savedItemTitleIdentity(String value) =>
       value.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+
+  Future<String> _savedItemTitleLookupHash(
+      SecretKey mvk, String itemType, String service) async {
+    final subkey = await vault_key_hierarchy.VaultKeyHierarchy(mvk)
+        .savedItemTitleLookupKey();
+    final canonical = '${itemType.trim().toLowerCase()}\u0000'
+        '${_savedItemTitleIdentity(service)}';
+    return vault_key_hierarchy.b64urlEncode(
+      await vault_key_hierarchy.keyedLookupHash(
+        subkey, utf8.encode(canonical),
+      ),
+    );
+  }
+
+  void _throwSavedItemTitleConflict(int status, String body) {
+    if (status != 409) return;
+    try {
+      final decoded = jsonDecode(body);
+      final detail = decoded is Map ? decoded['detail'] : null;
+      final code = detail is Map ? detail['code'] : detail;
+      if (code == 'saved_item_title_conflict') {
+        throw const SavedItemConflictException(duplicate: true);
+      }
+      if (code == 'saved_item_revision_stale' ||
+          code == 'saved_item_title_index_changed') {
+        throw StateError('Saved item changed. Refresh and try again.');
+      }
+    } on SavedItemConflictException {
+      rethrow;
+    } on StateError {
+      rethrow;
+    } catch (_) {}
+  }
+
+  Future<int> _claimZkSavedItemTitleIndex({
+    required String authToken,
+    required SecretKey mvk,
+    required int itemId,
+    required String itemType,
+    required String service,
+    required String expectedServiceCiphertext,
+    required int expectedRevision,
+  }) async {
+    _requireSavedItemKey(mvk);
+    final lookup = await _savedItemTitleLookupHash(mvk, itemType, service);
+    final uri = Uri.parse(
+        '$baseUrl/vault/ciphertext/vault-items/$itemId/title-index');
+    final response = await _sessionHttpWithGuard(
+      () => _requireSavedItemKey(mvk),
+    ).post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(<String, Object>{
+        'title_lookup_hash': lookup,
+        'expected_title_revision': expectedRevision,
+        'expected_service_ciphertext': expectedServiceCiphertext,
+      }),
+    );
+    _requireSavedItemKey(mvk);
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwSavedItemTitleConflict(response.statusCode, response.body);
+      throw StateError('Private saved-item title index is unavailable');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic> ||
+        decoded['item_id'] != itemId || decoded['indexed'] != true ||
+        decoded['title_revision'] is! int ||
+        (decoded['title_revision'] as int) < expectedRevision) {
+      throw const FormatException('Invalid private saved-item title index');
+    }
+    return decoded['title_revision'] as int;
+  }
 
   void _requireSavedItemKey(Object? expected) {
     if (expected == null ||
@@ -5248,6 +5357,7 @@ class VaultAIClient {
     required String baseUrl,
     required String authToken,
     int? existingItemId,
+    int? expectedTitleRevision,
     required String itemType,
     required String service,
     required Map<String, dynamic> payload,
@@ -5257,6 +5367,22 @@ class VaultAIClient {
     }
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) return null;
+    final indexedWrite =
+        kEnableKeylessSavedItemWrite && kEnableKeylessSavedItemRead;
+    int? titleRevision = expectedTitleRevision;
+    if (indexedWrite && existingItemId != null && titleRevision == null) {
+      final current = await _listZkVaultItems(authToken: authToken);
+      final rows = (current['items'] as List? ?? const [])
+          .whereType<Map>()
+          .where((row) => row['id'] == existingItemId)
+          .toList();
+      if (rows.length != 1 || rows.single['title_revision'] is! int) {
+        throw StateError('Private saved-item revision is unavailable');
+      }
+      titleRevision = rows.single['title_revision'] as int;
+    }
+    final titleLookup = indexedWrite
+        ? await _savedItemTitleLookupHash(mvk, itemType, service) : null;
     final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
     final metaKey = await hierarchy.metadataKey();
     final itCt = await vault_key_hierarchy.aesGcmWrap(
@@ -5275,6 +5401,9 @@ class VaultAIClient {
     final body = <String, dynamic>{
       if (existingItemId != null) 'item_id': existingItemId,
       'mutation_intent': existingItemId == null ? 'create' : 'edit',
+      if (titleLookup != null) 'title_lookup_hash': titleLookup,
+      if (indexedWrite && existingItemId != null)
+        'expected_title_revision': titleRevision,
       'item_type_ciphertext': vault_key_hierarchy.b64urlEncode(itCt),
       'service_ciphertext': vault_key_hierarchy.b64urlEncode(svcCt),
       'payload_ciphertext': vault_key_hierarchy.b64urlEncode(pyCt),
@@ -5292,6 +5421,9 @@ class VaultAIClient {
       // Fail closed for ZK — a broken ciphertext write must NOT
       // silently fall back to plaintext.
       throwIfSavedItemUpdateRequired(resp.statusCode, resp.body);
+      _throwIfAuthExpired(resp.statusCode, resp.body);
+      _throwIfDeviceNotTrusted(resp.statusCode, resp.body);
+      _throwSavedItemTitleConflict(resp.statusCode, resp.body);
       throw Exception(
         'ZK ciphertext vault-item write failed (${resp.statusCode})',
       );

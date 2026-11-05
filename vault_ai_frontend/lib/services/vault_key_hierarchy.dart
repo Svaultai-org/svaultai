@@ -42,6 +42,8 @@ class VaultKeyHierarchy {
       _sub('vaultai.lookup.semantic.v1');
   Future<SecretKey> memoryLookupKey() =>
       _sub('vaultai.lookup.memory.v1');
+  Future<SecretKey> savedItemTitleLookupKey() =>
+      _sub('vaultai.lookup.saved-item-title.v1');
   Future<SecretKey> walletLockLookupKey() =>
       _sub('vaultai.lookup.wallet.lock.v1');
 }

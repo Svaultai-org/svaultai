@@ -69,6 +69,35 @@ router = APIRouter()
 
 
 MAX_CIPHERTEXT_BYTES = 128 * 1024
+TITLE_LOOKUP_BYTES = 32
+TITLE_LOOKUP_INDEX_NAME = "vault_items_title_lookup_uniq"
+
+
+def _saved_item_title_unique_required() -> bool:
+    # Enable only after current web/iOS/Android clients can index existing V2
+    # rows and send a keyed identity plus edit revision. Legacy mode is intact.
+    return os.getenv(
+        "VAULTAI_ZK_SAVED_ITEM_TITLE_UNIQUE_ENABLED", "false",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _title_lookup_bytes(value: Optional[str]) -> Optional[bytes]:
+    if value is None:
+        return None
+    raw = _b64url_decode(value, name="title_lookup_hash", max_bytes=TITLE_LOOKUP_BYTES)
+    if len(raw) != TITLE_LOOKUP_BYTES:
+        raise HTTPException(status_code=400, detail="title_lookup_hash has invalid length")
+    return raw
+
+
+def _raise_title_unique_conflict(conn: Any, exc: UniqueViolation) -> None:
+    conn.rollback()
+    if getattr(getattr(exc, "diag", None), "constraint_name", None) == TITLE_LOOKUP_INDEX_NAME:
+        raise HTTPException(status_code=409, detail={
+            "code": "saved_item_title_conflict",
+            "message": "A saved item already uses this title.",
+        }) from exc
+    raise exc
 
 
 def _b64url_decode(text: str, *, name: str, max_bytes: int) -> bytes:
@@ -130,6 +159,8 @@ class VaultItemUpsertRequest(BaseModel):
     item_type_ciphertext: str = Field(..., min_length=1)
     service_ciphertext: str = Field(..., min_length=1)
     payload_ciphertext: str = Field(..., min_length=1)
+    title_lookup_hash: Optional[str] = None
+    expected_title_revision: Optional[int] = Field(default=None, ge=0)
     # Guardrail: refuse if the caller accidentally sends plaintext.
     item_type: Optional[str] = None
     service: Optional[str] = None
@@ -147,6 +178,15 @@ class VaultItemCiphertextResponse(BaseModel):
     service_ciphertext: str
     payload_ciphertext: str
     created_at: str
+    title_indexed: bool = False
+    title_revision: int = 0
+
+
+class VaultItemTitleIndexRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title_lookup_hash: str = Field(..., min_length=1)
+    expected_title_revision: int = Field(..., ge=0)
+    expected_service_ciphertext: str = Field(..., min_length=1)
 
 
 class GeneratedDraftCiphertextFinalizeRequest(BaseModel):
@@ -206,48 +246,94 @@ def vault_item_upsert_ciphertext(
         payload.payload_ciphertext, name="payload_ciphertext",
         max_bytes=MAX_CIPHERTEXT_BYTES,
     )
+    title_hash = _title_lookup_bytes(payload.title_lookup_hash)
+    if ((payload.item_id is None and payload.expected_title_revision is not None)
+            or (title_hash is None and payload.expected_title_revision is not None)
+            or (payload.item_id is not None and title_hash is not None
+                and payload.expected_title_revision is None)):
+        raise HTTPException(status_code=400, detail="invalid_title_revision")
+    strict_titles = _saved_item_title_unique_required()
+    if strict_titles and title_hash is None:
+        raise HTTPException(status_code=409, detail={
+            "code": "update_app_required",
+            "message": "Update SVaultAI before editing saved items. Your saved data remains available.",
+        })
 
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        if strict_titles:
+            # A preexisting unindexed V2 title could equal the new one, and
+            # the server cannot derive its HMAC from encrypted labels. The
+            # unlocked client indexes all other V2 rows first. An edit may
+            # repair its own unindexed/duplicate title in the same mutation.
+            cur.execute(
+                """SELECT id FROM vault_items
+                    WHERE vault_id = %s AND id <> %s
+                      AND encrypted_data IS NULL
+                      AND item_type_ciphertext IS NOT NULL
+                      AND service_ciphertext IS NOT NULL
+                      AND payload_ciphertext IS NOT NULL
+                      AND title_lookup_hash IS NULL
+                    LIMIT 1""",
+                (principal["vault_id"], payload.item_id or 0),
+            )
+            if cur.fetchone():
+                conn.rollback()
+                raise HTTPException(status_code=409, detail={
+                    "code": "saved_item_title_index_required",
+                    "message": "Saved items need a private index before editing.",
+                })
         if payload.item_id is None:
             cur.execute(
-                """
-                INSERT INTO vault_items (
+                """INSERT INTO vault_items (
                     vault_id, item_type, service, encrypted_data,
                     item_type_ciphertext, service_ciphertext,
-                    payload_ciphertext
-                )
-                VALUES (%s, NULL, NULL, NULL, %s, %s, %s)
-                RETURNING id
-                """,
-                (
-                    principal["vault_id"],
-                    item_type_ct, service_ct, payload_ct,
-                ),
+                    payload_ciphertext, title_lookup_hash
+                ) VALUES (%s, NULL, NULL, NULL, %s, %s, %s, %s)
+                RETURNING id""",
+                (principal["vault_id"], item_type_ct, service_ct,
+                 payload_ct, title_hash),
             )
             new_id = int(cur.fetchone()["id"])
             conn.commit()
             return VaultItemUpsertResponse(item_id=new_id, created=True)
 
-        cur.execute(
-            """
-            UPDATE vault_items
-               SET item_type_ciphertext = %s,
-                   service_ciphertext   = %s,
-                   payload_ciphertext   = %s,
-                   item_type            = NULL,
-                   service              = NULL,
-                   encrypted_data       = NULL
-             WHERE id = %s
-               AND vault_id = %s
-               AND encrypted_data IS NULL
-            """,
-            (
-                item_type_ct, service_ct, payload_ct,
-                payload.item_id, principal["vault_id"],
-            ),
-        )
+        if title_hash is not None:
+            cur.execute(
+                """UPDATE vault_items
+                   SET item_type_ciphertext = %s,
+                       service_ciphertext = %s,
+                       payload_ciphertext = %s,
+                       item_type = NULL, service = NULL,
+                       encrypted_data = NULL,
+                       title_lookup_hash = %s,
+                       title_revision = title_revision + 1
+                 WHERE id = %s AND vault_id = %s
+                   AND encrypted_data IS NULL
+                   AND title_revision = %s""",
+                (item_type_ct, service_ct, payload_ct, title_hash,
+                 payload.item_id, principal["vault_id"],
+                 payload.expected_title_revision),
+            )
+        else:
+            # Compatibility mode: an old client may still edit a V2 row.
+            # Clear any previously claimed hash so it never describes stale
+            # ciphertext; the modern client must reindex before strict writes.
+            cur.execute(
+                """UPDATE vault_items
+                   SET item_type_ciphertext = %s,
+                       service_ciphertext = %s,
+                       payload_ciphertext = %s,
+                       item_type = NULL, service = NULL,
+                       encrypted_data = NULL,
+                       title_lookup_hash = NULL,
+                       title_revision = title_revision + 1
+                 WHERE id = %s AND vault_id = %s
+                   AND encrypted_data IS NULL""",
+                (item_type_ct, service_ct, payload_ct,
+                 payload.item_id, principal["vault_id"]),
+            )
         if cur.rowcount != 1:
             # A legacy row may have staged V2 ciphertext while retaining its
             # only PIN-encrypted copy. The generic edit path must not clear
@@ -263,9 +349,95 @@ def vault_item_upsert_ciphertext(
                 raise HTTPException(
                     status_code=409, detail="legacy_item_migration_required",
                 )
+            if existing:
+                raise HTTPException(status_code=409, detail={
+                    "code": "saved_item_revision_stale",
+                    "message": "This saved item changed. Refresh and try again.",
+                })
             raise HTTPException(status_code=404, detail="item not found")
         conn.commit()
         return VaultItemUpsertResponse(item_id=payload.item_id, created=False)
+    except UniqueViolation as exc:
+        _raise_title_unique_conflict(conn, exc)
+    finally:
+        conn.close()
+
+
+@router.post("/vault/ciphertext/vault-items/{item_id}/title-index", response_model=dict)
+def claim_vault_item_title_index(
+    item_id: int,
+    payload: VaultItemTitleIndexRequest,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    """Claim a keyed identity for one existing V2 row without changing it.
+
+    The client supplies the exact encrypted service it just decrypted and the
+    current revision. A unique index serializes competing claims on different
+    rows that represent the same private title.
+    """
+    require_content_write(principal)
+    if item_id <= 0:
+        raise HTTPException(status_code=400, detail="invalid_item_id")
+    title_hash = _title_lookup_bytes(payload.title_lookup_hash)
+    service_ct = _b64url_decode(
+        payload.expected_service_ciphertext,
+        name="expected_service_ciphertext",
+        max_bytes=MAX_CIPHERTEXT_BYTES,
+    )
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """SELECT service_ciphertext, item_type_ciphertext,
+                      payload_ciphertext, title_lookup_hash,
+                      title_revision, encrypted_data
+                 FROM vault_items WHERE id = %s AND vault_id = %s
+                 FOR UPDATE""",
+            (item_id, principal["vault_id"]),
+        )
+        row = cur.fetchone()
+        if row is None:
+            conn.rollback()
+            raise HTTPException(status_code=404, detail="item not found")
+        if row["encrypted_data"] is not None:
+            conn.rollback()
+            raise HTTPException(status_code=409, detail="legacy_item_migration_required")
+        if (row["item_type_ciphertext"] is None or
+                row["payload_ciphertext"] is None or
+                row["service_ciphertext"] is None or
+                bytes(row["service_ciphertext"]) != service_ct):
+            conn.rollback()
+            raise HTTPException(status_code=409, detail="saved_item_revision_stale")
+        current_revision = int(row["title_revision"])
+        existing_hash = row["title_lookup_hash"]
+        if existing_hash is not None:
+            if bytes(existing_hash) != title_hash:
+                conn.rollback()
+                raise HTTPException(status_code=409, detail="saved_item_title_index_changed")
+            conn.commit()
+            return {"item_id": item_id, "indexed": True,
+                    "title_revision": current_revision}
+        if current_revision != payload.expected_title_revision:
+            conn.rollback()
+            raise HTTPException(status_code=409, detail="saved_item_revision_stale")
+        cur.execute(
+            """UPDATE vault_items
+                  SET title_lookup_hash = %s,
+                      title_revision = title_revision + 1
+                WHERE id = %s AND vault_id = %s
+                  AND title_lookup_hash IS NULL
+                  AND encrypted_data IS NULL
+                  AND title_revision = %s""",
+            (title_hash, item_id, principal["vault_id"], current_revision),
+        )
+        if cur.rowcount != 1:
+            conn.rollback()
+            raise HTTPException(status_code=409, detail="saved_item_revision_stale")
+        conn.commit()
+        return {"item_id": item_id, "indexed": True,
+                "title_revision": current_revision + 1}
+    except UniqueViolation as exc:
+        _raise_title_unique_conflict(conn, exc)
     finally:
         conn.close()
 
@@ -342,7 +514,9 @@ def list_vault_item_ciphertexts(
         cur.execute(
             """
             SELECT id, item_type_ciphertext, service_ciphertext,
-                   payload_ciphertext, created_at
+                   payload_ciphertext, created_at,
+                   title_lookup_hash IS NOT NULL AS title_indexed,
+                   title_revision
               FROM vault_items
              WHERE vault_id = %s
                AND encrypted_data IS NULL
@@ -366,6 +540,8 @@ def list_vault_item_ciphertexts(
                     bytes(row["payload_ciphertext"]),
                 ).decode().rstrip("="),
                 created_at=row["created_at"].isoformat(),
+                title_indexed=bool(row["title_indexed"]),
+                title_revision=int(row["title_revision"]),
             )
             for row in (cur.fetchall() or [])
         ]

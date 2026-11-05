@@ -64,8 +64,18 @@ void main() {
             final body =
                 Map<String, dynamic>.from(jsonDecode(request.body) as Map);
             final id = (body['item_id'] as int?) ?? nextId++;
+            final prior = rows.where((row) => row['item_id'] == id).toList();
+            expect(body['title_lookup_hash'], isA<String>());
+            expect(body['expected_title_revision'],
+                prior.isEmpty ? isNull : prior.single['title_revision']);
             rows.removeWhere((row) => row['item_id'] == id);
-            rows.add(<String, dynamic>{...body, 'item_id': id});
+            rows.add(<String, dynamic>{
+              ...body,
+              'item_id': id,
+              'title_indexed': true,
+              'title_revision':
+                  prior.isEmpty ? 0 : (prior.single['title_revision'] as int) + 1,
+            });
             return http.Response(
                 jsonEncode(<String, dynamic>{
                   'item_id': id,
@@ -89,6 +99,10 @@ void main() {
     expect(created, <String, dynamic>{'item_id': 42, 'created': true});
     expect(rows, hasLength(1));
     expect(rows.single['mutation_intent'], 'create');
+    final titleKey = await VaultKeyHierarchy(mvk).savedItemTitleLookupKey();
+    expect(rows.single['title_lookup_hash'], b64urlEncode(
+      await keyedLookupHash(titleKey, utf8.encode('login\u0000synthetic account')),
+    ));
     expect(await unwrap(rows.single['item_type_ciphertext']), 'login');
     expect(
         await unwrap(rows.single['service_ciphertext']), 'Synthetic account');
@@ -125,6 +139,11 @@ void main() {
     expect(edited, <String, dynamic>{'item_id': 42, 'created': false});
     expect(rows, hasLength(1));
     expect(rows.single['mutation_intent'], 'edit');
+    expect(rows.single['title_revision'], 1);
+    expect(rows.single['title_lookup_hash'], b64urlEncode(
+      await keyedLookupHash(
+          titleKey, utf8.encode('login\u0000synthetic renamed account')),
+    ));
     expect(await unwrap(rows.single['service_ciphertext']),
         'Synthetic renamed account');
     final editedPayload = jsonDecode(
@@ -144,6 +163,137 @@ void main() {
               '/update-secure-item',
             }.contains(r.url.path)),
         isFalse);
+  }, skip: !(kEnableKeylessSavedItemRead && kEnableKeylessSavedItemWrite));
+
+  test('server title and revision conflicts fail closed without PIN fallback',
+      () async {
+    final routes = <String>[];
+    var conflictCode = 'saved_item_title_conflict';
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        routes.add('${request.method} ${request.url.path}');
+        expect(request.body, isNot(contains('"pin"')));
+        expect(request.body, isNot(contains('Synthetic collision')));
+        if (request.url.path == '/vault/ciphertext/vault-items') {
+          final body = jsonDecode(request.body) as Map;
+          expect(body['item_id'], 88);
+          expect(body['title_lookup_hash'], isA<String>());
+          expect(body['expected_title_revision'], 0);
+          return http.Response(jsonEncode(<String, dynamic>{
+            'detail': <String, String>{'code': conflictCode},
+          }), 409);
+        }
+        fail('Unexpected route ${request.url.path}');
+      }),
+    );
+    Future<void> edit() async {
+      await client.tryZkVaultItemCiphertextUpsert(
+        baseUrl: 'https://synthetic.example',
+        authToken: 'synthetic-session',
+        existingItemId: 88,
+        expectedTitleRevision: 0,
+        itemType: 'login',
+        service: 'Synthetic collision',
+        payload: const <String, dynamic>{
+          'fields': <String, String>{'username': 'synthetic-user'},
+        },
+      );
+    }
+
+    await expectLater(edit(), throwsA(isA<SavedItemConflictException>()));
+    conflictCode = 'saved_item_revision_stale';
+    await expectLater(edit(), throwsStateError);
+    expect(routes, <String>[
+      'POST /vault/ciphertext/vault-items',
+      'POST /vault/ciphertext/vault-items',
+    ]);
+  }, skip: !(kEnableKeylessSavedItemRead && kEnableKeylessSavedItemWrite));
+
+  test('older V2 title is privately indexed before a new title is saved',
+      () async {
+    final metadataKey = await VaultKeyHierarchy(mvk).metadataKey();
+    Future<String> wrap(String value) async =>
+        b64urlEncode(await aesGcmWrap(metadataKey, utf8.encode(value)));
+    final oldRow = <String, dynamic>{
+      'item_id': 7,
+      'item_type_ciphertext': await wrap('login'),
+      'service_ciphertext': await wrap('Old synthetic account'),
+      'payload_ciphertext': await wrap('{"fields":{"username":"old-synthetic"}}'),
+      'title_indexed': false,
+      'title_revision': 0,
+      'created_at': '2026-01-01T00:00:00Z',
+    };
+    final rows = <Map<String, dynamic>>[oldRow];
+    final routes = <String>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        routes.add('${request.method} ${request.url.path}');
+        expect(request.body, isNot(contains('"pin"')));
+        expect(request.body, isNot(contains('Old synthetic account')));
+        expect(request.body, isNot(contains('New synthetic account')));
+        if (request.url.path == '/vault/items/metadata') {
+          return http.Response(jsonEncode(<String, dynamic>{
+            'records': <Map<String, dynamic>>[
+              for (final row in rows) <String, dynamic>{
+                'item_id': row['item_id'],
+                'item_type_ciphertext': row['item_type_ciphertext'],
+                'service_ciphertext': row['service_ciphertext'],
+                'is_legacy': false,
+                'has_v2_payload': true,
+              },
+            ],
+            'has_more': false,
+          }), 200);
+        }
+        if (request.url.path == '/vault/ciphertext/vault-items' &&
+            request.method == 'GET') {
+          return http.Response(jsonEncode(rows), 200);
+        }
+        if (request.url.path ==
+            '/vault/ciphertext/vault-items/7/title-index') {
+          final body = jsonDecode(request.body) as Map;
+          expect(body['expected_title_revision'], 0);
+          expect(body['expected_service_ciphertext'],
+              oldRow['service_ciphertext']);
+          final lookupKey =
+              await VaultKeyHierarchy(mvk).savedItemTitleLookupKey();
+          expect(body['title_lookup_hash'], b64urlEncode(
+            await keyedLookupHash(
+                lookupKey, utf8.encode('login\u0000old synthetic account')),
+          ));
+          oldRow['title_indexed'] = true;
+          oldRow['title_revision'] = 1;
+          return http.Response('{"item_id":7,"indexed":true,"title_revision":1}',
+              200);
+        }
+        if (request.url.path == '/vault/ciphertext/vault-items' &&
+            request.method == 'POST') {
+          expect(oldRow['title_indexed'], true);
+          final body = Map<String, dynamic>.from(jsonDecode(request.body) as Map);
+          rows.add(<String, dynamic>{
+            ...body,
+            'item_id': 8,
+            'title_indexed': true,
+            'title_revision': 0,
+            'created_at': '2026-01-01T00:00:00Z',
+          });
+          return http.Response('{"item_id":8,"created":true}', 200);
+        }
+        fail('Unexpected route ${request.url.path}');
+      }),
+    );
+    final result = await client.saveZkVaultSecureItem(
+      authToken: 'synthetic-session',
+      itemType: 'login',
+      service: 'New synthetic account',
+      fields: const <String, dynamic>{'username': 'new-synthetic'},
+    );
+    expect(result['item_id'], 8);
+    expect(routes.indexOf('POST /vault/ciphertext/vault-items/7/title-index'),
+        lessThan(routes.indexOf('POST /vault/ciphertext/vault-items')));
+    expect(routes, isNot(contains('POST /list-secure-items')));
   }, skip: !(kEnableKeylessSavedItemRead && kEnableKeylessSavedItemWrite));
 
   test('legacy duplicate and incomplete V2 inventory fail before mutation',
