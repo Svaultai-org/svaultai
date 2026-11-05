@@ -559,7 +559,22 @@ def delete_vault_item_ciphertext(
     try:
         cur = conn.cursor()
         cur.execute(
-            "DELETE FROM vault_items WHERE id = %s AND vault_id = %s",
+            "SELECT encrypted_data IS NOT NULL FROM vault_items "
+            "WHERE id = %s AND vault_id = %s FOR UPDATE",
+            (item_id, principal["vault_id"]),
+        )
+        row = cur.fetchone()
+        if row is None:
+            conn.rollback()
+            raise HTTPException(status_code=404, detail="item not found")
+        if row[0]:
+            # Staged MVK ciphertext is not yet the active copy. Only the
+            # proof-gated migration path may retire its legacy counterpart.
+            conn.rollback()
+            raise HTTPException(status_code=409, detail="legacy_item_migration_required")
+        cur.execute(
+            "DELETE FROM vault_items WHERE id = %s AND vault_id = %s "
+            "AND encrypted_data IS NULL",
             (item_id, principal["vault_id"]),
         )
         if cur.rowcount != 1:
