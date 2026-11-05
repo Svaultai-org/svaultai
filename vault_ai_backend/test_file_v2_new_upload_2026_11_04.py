@@ -40,6 +40,11 @@ class _Cursor:
         self.rowcount = 0
         if statement.startswith("select pg_advisory_xact_lock"):
             return
+        if statement.startswith("select 1 from auth_sessions"):
+            self.result = (1,) if self.db.session_current and params == (
+                PRINCIPAL["token_id"], self.db.owner,
+            ) else None
+            return
         if statement.startswith("select file_id, manifest_ciphertext"):
             self.result = self.db.record if params == (FILE, self.db.owner) else None
             return
@@ -130,6 +135,7 @@ class _Db:
         self.marker = None
         self.vault_bytes = 100
         self.account_bytes = 100
+        self.session_current = True
         self.commits = 0
         self.rollbacks = 0
         self.cur = _Cursor(self)
@@ -237,6 +243,29 @@ def test_old_client_session_cannot_publish_a_client_only_file(harness):
     assert raised.value.status_code == 426
     assert raised.value.detail["code"] == "client_update_required"
     assert db.marker is None and db.vault_bytes == 100
+
+
+def test_superseded_capable_session_cannot_publish_after_old_login(harness):
+    db, _ = harness
+    # Models a login that obtained the vault lock while this request waited
+    # for it. The dependency had already accepted the old bearer, but the
+    # under-lock check must reject it before changing file visibility.
+    db.session_current = False
+    with pytest.raises(HTTPException) as raised:
+        route.publish_new_file(FILE, _publish(), PRINCIPAL)
+    assert raised.value.status_code == 401
+    assert raised.value.detail == "session_expired"
+    assert db.record["lifecycle_state"] == "file_v2_written"
+    assert db.marker is None and db.vault_bytes == 100
+    assert db.rollbacks == 1 and db.commits == 0
+    sql = db.cur.sql
+    vault_lock = next(i for i, s in enumerate(sql)
+                      if s.startswith("select total_bytes, account_id from vaults"))
+    session_check = next(i for i, s in enumerate(sql)
+                         if s.startswith("select 1 from auth_sessions"))
+    assert vault_lock < session_check
+    assert not any("update file_v2_records" in s or
+                   "insert into uploaded_files" in s for s in sql)
 
 
 def test_zero_byte_file_has_no_chunks_or_quota_delta(harness):

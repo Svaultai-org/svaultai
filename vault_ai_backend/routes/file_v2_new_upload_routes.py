@@ -144,6 +144,25 @@ def publish_new_file(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
                     (vault_id, file_id))
+        # Login takes the vault row lock before it revokes the current
+        # session. Take that same lock before making a file visible, then
+        # recheck the session: a login may have superseded it since the
+        # request dependency first authenticated this request.
+        cur.execute(
+            "SELECT total_bytes, account_id FROM vaults "
+            "WHERE vault_id=%s FOR UPDATE", (vault_id,),
+        )
+        vault = cur.fetchone()
+        if vault is None:
+            raise HTTPException(404, detail="vault_not_found")
+        cur.execute(
+            "SELECT 1 FROM auth_sessions WHERE token_id=%s AND vault_id=%s "
+            "AND file_v2_reader_capable=TRUE AND revoked_at IS NULL "
+            "AND expires_at>NOW() LIMIT 1",
+            (principal["token_id"], vault_id),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(401, detail="session_expired")
         cur.execute(
             "SELECT file_id, manifest_ciphertext, total_bytes, chunk_size, "
             "chunk_count, lifecycle_state, verification_state "
@@ -184,13 +203,6 @@ def publish_new_file(
         )
         _validate_framing(record, cur.fetchall() or [])
         total = int(record["total_bytes"])
-        cur.execute(
-            "SELECT total_bytes, account_id FROM vaults "
-            "WHERE vault_id=%s FOR UPDATE", (vault_id,),
-        )
-        vault = cur.fetchone()
-        if vault is None:
-            raise HTTPException(404, detail="vault_not_found")
         account_id = str(vault["account_id"]) if vault["account_id"] else None
         limit, used = _account_quota(cur, account_id, int(vault["total_bytes"]))
         if used + total > limit:
