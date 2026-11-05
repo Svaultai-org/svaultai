@@ -856,6 +856,7 @@ enum LegacyStageDiagnosticCode {
   workerSessionChanged,
   proofAttempt,
   proofComplete,
+  fileDeferred,
   stageComplete,
   stageDeferred,
 }
@@ -5415,12 +5416,17 @@ Future<void> _stageLegacyContentBestEffort({
       ),
       request: request,
     ).stageAndVerify();
+    if (stageResult.filesDeferredForUnreadableSource > 0) {
+      _legacyStageDiagnostic(LegacyStageDiagnosticCode.fileDeferred);
+    }
     _legacyStageDiagnostic(LegacyStageDiagnosticCode.stageComplete);
     vlog('legacy_content_stage.summary', {
       'items_verified': stageResult.itemsVerified,
       'files_verified': stageResult.filesVerified,
       'items_deferred_for_size': stageResult.itemsDeferredForSize,
       'files_deferred_for_size': stageResult.filesDeferredForSize,
+      'files_deferred_for_unreadable_source':
+          stageResult.filesDeferredForUnreadableSource,
     });
   } catch (error) {
     _legacyStageDiagnostic(LegacyStageDiagnosticCode.stageDeferred);

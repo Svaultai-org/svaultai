@@ -211,6 +211,53 @@ void main() {
     expect(calls.where((path) => path.endsWith('/page')), hasLength(2));
   });
 
+  test('unreadable local file source does not block later safe deferrals',
+      () async {
+    final wrongKey = SecretKey(List<int>.filled(32, 88));
+    final box = await AesGcm.with256bits().encrypt(
+      <int>[1, 2, 3],
+      secretKey: wrongKey,
+      nonce: List<int>.generate(12, (i) => i + 3),
+    );
+    final unreadable = base64.encode(<int>[
+      ...box.nonce, ...box.cipherText, ...box.mac.bytes,
+    ]);
+    final calls = <String>[];
+    final result = await LegacyContentMigrationStager(
+      enabled: true,
+      export: _export(
+        itemRows: const <Map<String, dynamic>>[],
+        fileRows: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'file_id': 'synthetic-unreadable-file',
+            'ciphertext_chars': unreadable.length,
+            'file_size': 3,
+            'file_name': 'synthetic-unreadable.bin',
+          },
+          <String, dynamic>{
+            'file_id': 'synthetic-oversize-file',
+            'ciphertext_chars':
+                LegacyContentMigrationStager.maxAutomaticCiphertextChars + 1,
+          },
+        ],
+        itemCiphertexts: const <int, String>{},
+        fileCiphertexts: <String, String>{
+          'synthetic-unreadable-file': unreadable,
+        },
+        calls: calls,
+      ),
+      codec: LegacyCiphertextMigrationCodec(
+        legacyKey: _legacyKey, mvk: _mvk,
+      ),
+      request: (_, __, [___]) async =>
+          throw StateError('unreadable file reached a V2 stage route'),
+    ).stageAndVerify();
+    expect(result.filesVerified, 0);
+    expect(result.filesDeferredForUnreadableSource, 1);
+    expect(result.filesDeferredForSize, 1);
+    expect(calls.where((path) => path.endsWith('/page')), hasLength(3));
+  });
+
   test('wallet-engine row is not generically staged or counted', () async {
     final legacy = await _legacyEncrypt(utf8.encode('{"wallet":"synthetic"}'));
     final key = await VaultKeyHierarchy(_mvk).metadataKey();

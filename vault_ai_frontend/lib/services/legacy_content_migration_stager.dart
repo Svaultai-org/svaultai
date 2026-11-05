@@ -4,6 +4,8 @@
 
 import 'dart:convert';
 
+import 'package:cryptography/cryptography.dart' show SecretBoxAuthenticationError;
+
 import 'legacy_ciphertext_export_client.dart';
 import 'legacy_ciphertext_migration_codec.dart';
 import 'vault_key_hierarchy.dart';
@@ -40,12 +42,14 @@ class LegacyStageResult {
   final int filesVerified;
   final int itemsDeferredForSize;
   final int filesDeferredForSize;
+  final int filesDeferredForUnreadableSource;
 
   const LegacyStageResult({
     required this.itemsVerified,
     required this.filesVerified,
     this.itemsDeferredForSize = 0,
     this.filesDeferredForSize = 0,
+    this.filesDeferredForUnreadableSource = 0,
   });
 }
 
@@ -77,6 +81,7 @@ class LegacyContentMigrationStager {
     var filesVerified = 0;
     var itemsDeferredForSize = 0;
     var filesDeferredForSize = 0;
+    var filesDeferredForUnreadableSource = 0;
     try {
       final items = await export.listItems();
       for (final item in items) {
@@ -94,14 +99,22 @@ class LegacyContentMigrationStager {
           filesDeferredForSize++;
           continue;
         }
-        await _stageFile(file);
-        filesVerified++;
+        try {
+          await _stageFile(file);
+          filesVerified++;
+        } on _UnreadableLegacyFileSource {
+          // A historical file can be malformed or encrypted under a key that
+          // no longer opens it. Keep the old row intact and try later files.
+          // Export, session, network, quota, and V2 conflicts still abort.
+          filesDeferredForUnreadableSource++;
+        }
       }
       return LegacyStageResult(
         itemsVerified: itemsVerified,
         filesVerified: filesVerified,
         itemsDeferredForSize: itemsDeferredForSize,
         filesDeferredForSize: filesDeferredForSize,
+        filesDeferredForUnreadableSource: filesDeferredForUnreadableSource,
       );
     } finally {
       export.clearGrant();
@@ -311,21 +324,33 @@ class LegacyContentMigrationStager {
     final contentType = metadata['content_type'];
     if (size is! int || size < 0 ||
         (contentType != null && contentType is! String)) {
-      throw const FormatException('Invalid legacy file source metadata');
+      throw const _UnreadableLegacyFileSource();
     }
-    final encryptedMetadata = await _fileEncryptedMetadata(metadata);
+    late final Map<String, String?> encryptedMetadata;
+    try {
+      encryptedMetadata = await _fileEncryptedMetadata(metadata);
+    } on FormatException {
+      throw const _UnreadableLegacyFileSource();
+    }
     if (encryptedMetadata['file_name_ciphertext'] == null &&
         encryptedMetadata['saved_name_ciphertext'] == null) {
-      throw const FormatException('Legacy file name is unavailable');
+      throw const _UnreadableLegacyFileSource();
     }
     final legacy = source.ciphertext;
-    final prepared = await codec.stageFile(
-      fileId: id,
-      legacyCiphertext: legacy,
-      declaredFileSize: size,
-      contentType: contentType as String?,
-      encryptedMetadata: encryptedMetadata,
-    );
+    late final StagedLegacyFile prepared;
+    try {
+      prepared = await codec.stageFile(
+        fileId: id,
+        legacyCiphertext: legacy,
+        declaredFileSize: size,
+        contentType: contentType as String?,
+        encryptedMetadata: encryptedMetadata,
+      );
+    } on FormatException {
+      throw const _UnreadableLegacyFileSource();
+    } on SecretBoxAuthenticationError {
+      throw const _UnreadableLegacyFileSource();
+    }
     final encodedId = Uri.encodeComponent(id);
     final stagePath = '/vault/legacy-ciphertext/migrate/file-staged/$encodedId';
     var staged = await request('GET', stagePath);
@@ -477,6 +502,12 @@ class LegacyContentMigrationStager {
 /// reset attempt. Missing source data and unexpected responses fail closed.
 class _StageConflict implements Exception {
   const _StageConflict();
+}
+
+/// Only pre-write, deterministic local source failures may be deferred. This
+/// marker carries no record identifier, ciphertext, plaintext, or error body.
+class _UnreadableLegacyFileSource implements Exception {
+  const _UnreadableLegacyFileSource();
 }
 
 bool _validSnapshot(Object? value) =>
