@@ -8170,18 +8170,32 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final app = context.read<AppState>();
     final dialogToken = app.sessionToken;
     final dialogVaultId = app.vaultId;
+    final keylessZkWrite = kEnableKeylessSavedItemWrite &&
+        (zk_mvk_store.ZkActiveMvk.current() != null ||
+            app.vaultHandle?.isNotEmpty == true);
+    final dialogMvk = keylessZkWrite
+        ? zk_mvk_store.ZkActiveMvk.current() : null;
+    if (keylessZkWrite &&
+        (!kEnableKeylessSavedItemRead || dialogMvk == null)) {
+      _showSnack('Private saved-item editing needs a fresh vault unlock.');
+      return;
+    }
     bool dialogIsCurrent() => mounted && app.unlocked &&
-        app.sessionToken == dialogToken && app.vaultId == dialogVaultId;
+        app.sessionToken == dialogToken && app.vaultId == dialogVaultId &&
+        (!keylessZkWrite ||
+            identical(zk_mvk_store.ZkActiveMvk.current(), dialogMvk));
 
     Map<String, String> resolved = initialFields ?? const {};
     // A create dialog has no existing item to fetch. Calling the read endpoint
     // with an empty service produced a misleading "Could not load" banner on
     // both web and iOS before the user had entered anything.
-    if (resolved.isEmpty && !createMode) {
+    if (!createMode &&
+        (resolved.isEmpty || (keylessZkWrite && itemId == null))) {
       final token = app.sessionToken;
       if (token != null && app.vaultName != null) {
         try {
-          final pin = await _VaultCrypto.currentPinOrThrow();
+          final pin = keylessZkWrite
+              ? '' : await _VaultCrypto.currentPinOrThrow();
           if (!dialogIsCurrent()) return;
           final client = _savedItemClient(app);
           final fetched = await client.getVaultSecureItem(
@@ -8192,6 +8206,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             pin: pin,
             authToken: token,
           );
+          if (keylessZkWrite &&
+              fetched['storage_engine'] != 'ciphertext') {
+            _showSnack('This saved item needs migration before editing.');
+            return;
+          }
           final raw = fetched['fields'];
           if (!dialogIsCurrent()) return;
           itemId = fetched['id']?.toString() ?? itemId;
@@ -8230,22 +8249,34 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           return false;
         }
         try {
-          final pin = await _VaultCrypto.currentPinOrThrow();
+          final pin = keylessZkWrite
+              ? '' : await _VaultCrypto.currentPinOrThrow();
           if (!dialogIsCurrent()) return false;
           final client = VaultAIClient(baseUrl: backendBaseUrl);
           final oldServiceForRequest =
               oldTitle.trim().isEmpty ? newTitle : oldTitle;
-          await client.updateVaultSecureItem(
-            vaultName: app.vaultName!,
-            oldService: oldServiceForRequest,
-            itemId: itemId,
-            createOnly: createMode,
-            itemType: itemType,
-            newService: newTitle == oldServiceForRequest ? null : newTitle,
-            fields: fields.isEmpty ? null : fields,
-            pin: pin,
-            authToken: token,
-          );
+          if (keylessZkWrite) {
+            await client.saveZkVaultSecureItem(
+              authToken: token,
+              itemType: itemType,
+              service: newTitle,
+              fields: Map<String, dynamic>.from(fields),
+              itemId: createMode ? null : int.tryParse(itemId ?? ''),
+              expectedOldService: createMode ? null : oldServiceForRequest,
+            );
+          } else {
+            await client.updateVaultSecureItem(
+              vaultName: app.vaultName!,
+              oldService: oldServiceForRequest,
+              itemId: itemId,
+              createOnly: createMode,
+              itemType: itemType,
+              newService: newTitle == oldServiceForRequest ? null : newTitle,
+              fields: fields.isEmpty ? null : fields,
+              pin: pin,
+              authToken: token,
+            );
+          }
           if (!dialogIsCurrent()) return false;
 
           final isLogin = itemType == 'login' || itemType == 'credential';
@@ -8253,7 +8284,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               ? (isLogin ? 'Login saved' : 'Saved item')
               : (isLogin ? 'Updated login' : 'Updated saved item'));
           await _reloadVaultLoginsAfterMutation();
-          unawaited(app.refreshVaultStats());
+          if (!keylessZkWrite) unawaited(app.refreshVaultStats());
           if (createMode && isLogin) {
             setState(() => selectedSection = _DashboardSection.logins);
           }
@@ -13338,7 +13369,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
 
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
+      final pin = kEnableKeylessSavedItemRead &&
+              zk_mvk_store.ZkActiveMvk.current() != null
+          ? ''
+          : await _VaultCrypto.currentPinOrThrow();
       final client = VaultAIClient(baseUrl: backendBaseUrl);
 
       final result = await client.listVaultSecureItems(

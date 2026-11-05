@@ -36,6 +36,13 @@ const bool kEnableKeylessSavedItemRead = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// Enable only alongside the trusted-session metadata inventory. A ZK write
+// must never use a PIN-bearing list or mutation route for its preflight.
+const bool kEnableKeylessSavedItemWrite = bool.fromEnvironment(
+  'VAULTAI_ENABLE_KEYLESS_SAVED_ITEM_WRITE',
+  defaultValue: false,
+);
+
 void _vlog(String tag, [Map<String, Object?>? data]) {
   if (kReleaseMode) return;
   final payload = data == null
@@ -3097,6 +3104,7 @@ class VaultAIClient {
               : <String, dynamic>{},
           'notes': payload['notes'],
           'draft_id': payload['draft_id'],
+          'zk_payload': payload,
           'storage_engine': 'ciphertext',
           'created_at': raw['created_at'],
         });
@@ -3112,6 +3120,139 @@ class VaultAIClient {
   Future<Map<String, dynamic>> listZkVaultItemsOnly({
     required String authToken,
   }) => _listZkVaultItems(authToken: authToken);
+
+  /// Strict MVK-only create/edit path. Metadata covers every legacy and V2
+  /// title so a new ciphertext item cannot silently duplicate an older item.
+  /// An edit requires a selected V2 item ID; legacy rows remain untouched.
+  Future<Map<String, dynamic>> saveZkVaultSecureItem({
+    required String authToken,
+    required String itemType,
+    required String service,
+    required Map<String, dynamic> fields,
+    int? itemId,
+    String? expectedOldService,
+  }) async {
+    if (!kEnableKeylessSavedItemWrite || !kEnableKeylessSavedItemRead) {
+      throw StateError('Private saved-item writing is not enabled');
+    }
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    final type = itemType.trim();
+    final title = service.trim();
+    if (type.isEmpty || title.isEmpty ||
+        (itemId == null) != (expectedOldService == null) ||
+        (itemId != null && (itemId <= 0 ||
+            expectedOldService!.trim().isEmpty))) {
+      throw ArgumentError('A saved-item type, title and selected edit ID are required');
+    }
+
+    // The V2 list may omit a corrupt envelope. Compare it to the complete
+    // metadata inventory before writing, rather than interpreting omission as
+    // an available title or as a missing edit target.
+    final metadata = await listZkItemMetadataRaw(authToken: authToken);
+    final listed = await _listZkVaultItems(authToken: authToken);
+    _requireSavedItemKey(mvk);
+    final v2ById = <int, Map<String, dynamic>>{};
+    for (final raw in (listed['items'] as List? ?? const [])) {
+      if (raw is! Map || raw['id'] is! int ||
+          v2ById.containsKey(raw['id'] as int)) {
+        throw const FormatException('Invalid private saved-item inventory');
+      }
+      v2ById[raw['id'] as int] = Map<String, dynamic>.from(raw);
+    }
+    final metadataKey = await vault_key_hierarchy.VaultKeyHierarchy(mvk)
+        .metadataKey();
+    Future<String> label(Map<String, dynamic> row,
+        String encryptedField, String plainField) async {
+      final encrypted = row[encryptedField];
+      if (encrypted is String && encrypted.isNotEmpty) {
+        return utf8.decode(await vault_key_hierarchy.aesGcmUnwrap(
+          metadataKey, vault_key_hierarchy.b64urlDecode(encrypted),
+        ));
+      }
+      final plain = row[plainField];
+      if (row['is_legacy'] == true && plain is String && plain.isNotEmpty) {
+        return plain;
+      }
+      throw const FormatException('Saved-item label is unavailable');
+    }
+    final normalizedType = type.toLowerCase();
+    final normalizedTitle = _savedItemTitleIdentity(title);
+    final resolved = <({int id, String type, String title, bool legacy})>[];
+    final metadataIds = <int>{};
+    for (final row in metadata) {
+      final id = row['item_id'];
+      if (id is! int || id <= 0 || !metadataIds.add(id)) {
+        throw const FormatException('Invalid saved-item metadata inventory');
+      }
+      final legacy = row['is_legacy'] == true;
+      final hasV2 = row['has_v2_payload'] == true;
+      if (!legacy && (!hasV2 || !v2ById.containsKey(id))) {
+        throw const FormatException('Private saved-item inventory is incomplete');
+      }
+      final rowType = await label(row, 'item_type_ciphertext', 'item_type');
+      final rowTitle = await label(row, 'service_ciphertext', 'service');
+      if (rowType.trim().isEmpty || rowTitle.trim().isEmpty) {
+        throw const FormatException('Empty saved-item metadata');
+      }
+      resolved.add((id: id, type: rowType, title: rowTitle, legacy: legacy));
+    }
+    if (v2ById.keys.any((id) => !metadataIds.contains(id))) {
+      throw const FormatException('Private saved-item metadata is incomplete');
+    }
+    _requireSavedItemKey(mvk);
+
+    final sameTitle = resolved.where((row) =>
+        row.id != itemId && row.type.toLowerCase() == normalizedType &&
+        _savedItemTitleIdentity(row.title) == normalizedTitle);
+    if (sameTitle.isNotEmpty) {
+      throw const SavedItemConflictException(duplicate: true);
+    }
+    Map<String, dynamic> payload = <String, dynamic>{};
+    if (itemId != null) {
+      final selected = resolved.where((row) => row.id == itemId).toList();
+      if (selected.length != 1 || selected.single.legacy ||
+          selected.single.type.toLowerCase() != normalizedType ||
+          _savedItemTitleIdentity(selected.single.title) !=
+              _savedItemTitleIdentity(expectedOldService!)) {
+        throw StateError('Selected private saved item changed');
+      }
+      final rawPayload = v2ById[itemId]?['zk_payload'];
+      if (rawPayload is! Map) {
+        throw const FormatException('Private saved-item content is unavailable');
+      }
+      payload = Map<String, dynamic>.from(rawPayload);
+    }
+    payload['fields'] = Map<String, dynamic>.from(fields);
+    _requireSavedItemKey(mvk);
+    final written = await tryZkVaultItemCiphertextUpsert(
+      baseUrl: baseUrl,
+      authToken: authToken,
+      existingItemId: itemId,
+      itemType: type,
+      service: title,
+      payload: payload,
+    );
+    _requireSavedItemKey(mvk);
+    final writtenId = written?['item_id'];
+    if (writtenId is! int || writtenId <= 0 ||
+        writtenId != (itemId ?? writtenId) ||
+        written?['created'] != (itemId == null)) {
+      throw const FormatException('Private saved-item acknowledgement is invalid');
+    }
+    final readback = await _listZkVaultItems(authToken: authToken);
+    _requireSavedItemKey(mvk);
+    final matches = (readback['items'] as List? ?? const [])
+        .whereType<Map>()
+        .where((row) => row['id'] == writtenId)
+        .toList();
+    if (matches.length != 1 || matches.single['item_type'] != type ||
+        matches.single['service'] != title ||
+        jsonEncode(matches.single['zk_payload']) != jsonEncode(payload)) {
+      throw const FormatException('Private saved-item readback did not match');
+    }
+    return written!;
+  }
 
   Future<Map<String, dynamic>> getVaultSecureItem({
     required String vaultName,
@@ -5062,14 +5203,14 @@ class VaultAIClient {
       'payload_ciphertext': vault_key_hierarchy.b64urlEncode(pyCt),
     };
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items');
-    final resp = await _sessionHttp.post(
+    final resp = await _sessionHttpWithGuard(
+      () => _requireSavedItemKey(mvk),
+    ).post(
       uri,
-      headers: <String, String>{
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $authToken',
-      },
+      headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
     );
+    _requireSavedItemKey(mvk);
     if (resp.statusCode != 200) {
       // Fail closed for ZK — a broken ciphertext write must NOT
       // silently fall back to plaintext.
