@@ -196,3 +196,14 @@ def test_proof_expiry_fails_before_db_consumption(route_harness):
             )
     assert exc.value.status_code == 401
     assert proof in db.slots
+
+
+def test_verify_slot_and_proof_cannot_be_exchanged_for_login(route_harness):
+    zk, client, db, selected, handle, opaque_finish, issue = route_harness
+    verify_slot = _init(client, handle).json()["slot_id"]
+    for candidate in (verify_slot, _finish(client, verify_slot).json()["proof_token"]):
+        denied = client.post("/auth/zk-login-finalize", json={
+            "slot_id": candidate, "ke3": _b64(b"synthetic-ke3"),
+        })
+        assert denied.status_code == 401
+        issue.assert_not_called()

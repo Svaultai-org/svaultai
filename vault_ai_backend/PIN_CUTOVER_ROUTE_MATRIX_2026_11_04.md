@@ -6,8 +6,8 @@ Source baseline: integration commit `365d329` (web `b29bb27` and backend
 | Feature | Current web request | Existing PIN-free route | Cutover blocker |
 | --- | --- | --- | --- |
 | Login/unlock | OPAQUE `/auth/zk-login-*` plus plaintext `/auth/login` fallback | OPAQUE is implemented | Default web fallback must be disabled for ZK and unknown names. Keep legacy migration opt-in. |
-| Fresh PIN re-entry | `/verify-pin`, delete, device approval, Security Center, wallet flows carry PIN | New `/auth/zk-verify-*` with session-bound, single-use action proof is under development | Each sensitive action must consume the proof on the server; a client-only `verified` boolean is insufficient. |
-| New ZK registration | `/auth/zk-register-finalize` supplies a PBKDF2 verifier | Verifier-free mode is under development | Keep KDF salt/iterations for local legacy data migration; gate old clients explicitly. |
+| Fresh PIN re-entry | `/verify-pin`, delete, device approval, Security Center, wallet flows carry PIN | New `/auth/zk-verify-*` returns a session-bound, single-use action proof; delete can consume it behind a flag | Each sensitive action must consume proof on the server. Pending-device self-approval cannot use the current verify route because it requires a trusted device. |
+| New ZK registration | `/auth/zk-register-finalize` supplies a PBKDF2 verifier | Verifier-free mode exists behind a flag | Keep KDF salt/iterations for local legacy data migration; keep the flag off until chat/files/beneficiary and other PIN-verifying routes work with verifier-free rows. Otherwise new accounts lose core features. |
 | Saved items and crypto records | ZK write/read/delete via `/vault/ciphertext/vault-items`; list always also POSTs raw PIN to `/list-secure-items`; legacy item reads/edits/deletes fall back to PIN routes | Ciphertext CRUD and credential-v2 APIs exist | Migrate three legacy `encrypted_data` rows client-side and remove unconditional raw-PIN list/fallback. |
 | Files | Upload, list, download, import, chunk finalize, delete, stats, related-file search carry PIN; ciphertext filename metadata does not remove it | Backend `/vault/file-v2` manifest/chunk/read/delete exists behind flags | No frontend file-v2 client. Three production files are server-key inline ciphertext; migrate their content client-side. |
 | Memory | Older `/memory/*` helpers carry PIN; modern vault-AI-memory CRUD is ciphertext | `/vault/ciphertext/vault-ai-memory` exists and is used | Chat save/search and extraction pipelines still use the server PIN-derived key. |
@@ -52,3 +52,5 @@ counts only; no names, content, keys, or PINs were read.
 Current gate: `test_zk_raw_pin_release_gate_2026_11_04.py` finds 50 direct
 raw-PIN request construction sites outside opt-in legacy login on the
 live-equivalent web code. The test asserts zero, not a fixed historical count.
+The backend's new security flags default off; changing them to on before the
+core route and pending-device work above is complete would break active flows.

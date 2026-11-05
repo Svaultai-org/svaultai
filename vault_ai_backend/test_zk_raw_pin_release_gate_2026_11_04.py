@@ -40,10 +40,20 @@ def test_zk_client_has_no_raw_pin_api_sink_outside_legacy_migration():
     sinks = _pin_request_sinks()
     unapproved = [(line, method) for line, method in sinks
                   if method != "authLogin"]
+    core = {"buildChatRequestBody", "uploadVaultFile", "listVaultFiles",
+            "downloadVaultFile", "getDownloadManifest", "initChunkedUpload",
+            "finalizeChunkedUpload", "getVaultSecureItem"}
+    pending_device = {"requestSelfApproval", "finalizeSelfApproval"}
+    core_blockers = sorted({method for _, method in unapproved if method in core})
+    device_blockers = sorted({method for _, method in unapproved
+                             if method in pending_device})
     detail = ", ".join(f"{method}@{line}" for line, method in unapproved)
     assert not unapproved, (
         f"{len(unapproved)} raw-PIN HTTP request construction sites remain "
-        f"outside the opt-in legacy login: {detail}"
+        f"outside the opt-in legacy login. Verifier-free signup would break "
+        f"core flows: {core_blockers}; pending-device self-approval still "
+        f"depends on raw PIN and cannot use trusted-device-only OPAQUE "
+        f"reverify: {device_blockers}. All sinks: {detail}"
     )
 
 
