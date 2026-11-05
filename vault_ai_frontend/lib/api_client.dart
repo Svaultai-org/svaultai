@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:cryptography/cryptography.dart' show SecretKey;
 import 'package:http/http.dart' as http;
 
+import 'logins_page.dart' show isSystemHiddenItemType;
 import 'services/asset_catalog.dart' show parseAssetBaseUnits;
 import 'services/auth_retry.dart';
 import 'services/memory_title_identity.dart';
@@ -65,6 +66,14 @@ void _rejectLegacyFilePinForActiveZk() {
 // A missing keyless route must fail closed instead of sending a ZK PIN.
 const bool kEnableKeylessSavedItemRead = bool.fromEnvironment(
   'VAULTAI_ENABLE_KEYLESS_SAVED_ITEM_READ',
+  defaultValue: false,
+);
+
+// A narrow ZK index cutover. Legacy item details still use their existing
+// reader, while list/search preflights can use the trusted metadata inventory.
+// Coordinate with VAULTAI_ZK_METADATA_INVENTORY_ENABLED on the API.
+const bool kEnableZkPinFreeSavedItemIndex = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_PIN_FREE_SAVED_ITEM_INDEX',
   defaultValue: false,
 );
 
@@ -3009,7 +3018,8 @@ class VaultAIClient {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk != null) {
       final ciphertext = await _listZkVaultItems(authToken: authToken);
-      final legacy = kEnableKeylessSavedItemRead
+      final legacy = (kEnableKeylessSavedItemRead ||
+              kEnableZkPinFreeSavedItemIndex)
           ? await _listZkItemMetadata(authToken: authToken, mvk: mvk)
           : await _listLegacyVaultSecureItems(
               vaultName: vaultName,
@@ -3077,6 +3087,7 @@ class VaultAIClient {
       }
 
       final type = await label('item_type_ciphertext', 'item_type');
+      if (isSystemHiddenItemType(type)) continue;
       final service = await label('service_ciphertext', 'service');
       if (type.trim().isEmpty || service.trim().isEmpty) {
         throw const FormatException('Empty saved-item metadata');
@@ -5802,7 +5813,8 @@ class VaultAIClient {
       }
     }
     if (existingItemId == null) {
-      final legacy = kEnableKeylessSavedItemRead
+      final legacy = (kEnableKeylessSavedItemRead ||
+              kEnableZkPinFreeSavedItemIndex)
           ? await _listZkItemMetadata(authToken: authToken, mvk: mvk)
           : await _listLegacyVaultSecureItems(
               vaultName: '',

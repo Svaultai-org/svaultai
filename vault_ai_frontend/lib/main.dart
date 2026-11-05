@@ -13925,7 +13925,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
 
     try {
-      final pin = kEnableKeylessSavedItemRead &&
+      final pin = (kEnableKeylessSavedItemRead ||
+                  kEnableZkPinFreeSavedItemIndex) &&
               zk_mvk_store.ZkActiveMvk.current() != null
           ? ''
           : await _VaultCrypto.currentPinOrThrow();
