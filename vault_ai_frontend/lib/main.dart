@@ -1128,6 +1128,11 @@ Future<void> main() async {
 const String _kAppLocaleStorageKeyV1 = 'app_locale';
 const String _kAppLocaleStorageKeyV2 = 'app_locale_v2';
 
+/// Legacy KDF rotation sends the PIN to the server. OPAQUE vaults must never
+/// enter that flow after a successful private unlock.
+bool shouldRotateLegacyVaultKdfAfterUnlock(String? vaultHandle) =>
+    vaultHandle == null || vaultHandle.isEmpty;
+
 class AppState extends ChangeNotifier {
   AppState({
     Future<Map<String, dynamic>> Function(String token)? sessionValidator,
@@ -2695,6 +2700,8 @@ class AppState extends ChangeNotifier {
         'iterations': iterations,
       });
 
+      // Legacy-only: this endpoint accepts a raw PIN. OPAQUE vaults keep
+      // the key derived from the metadata already fetched above and skip it.
       // 2026-07-21 (c2f917e first-chat regression fix): the previous
       // shape wrapped the rotate call, a rotated-flag inspection,
       // and the re-derive in ONE try block that silently swallowed
@@ -2720,59 +2727,59 @@ class AppState extends ChangeNotifier {
       //   * If the fresh salt/iter differ from what K1 was derived
       //     from, re-derive K2 and REPLACE the cached key so the
       //     next /chat's server-side re-derive matches.
-      Object? _rotateError;
-      try {
-        await client.rotateVaultKdf(
+      if (shouldRotateLegacyVaultKdfAfterUnlock(activeVaultHandle)) {
+        Object? _rotateError;
+        try {
+          await client.rotateVaultKdf(
+            vaultName: activeVaultName,
+            pin: pin,
+            authToken: activeToken,
+          );
+        } catch (e) {
+          _rotateError = e;
+        }
+        vlog('pin.rotate.attempt', {
+          'ok': _rotateError == null,
+          if (_rotateError != null)
+            'error_type': _rotateError.runtimeType.toString(),
+          if (_rotateError != null) 'error': _rotateError.toString(),
+        });
+
+        final freshMeta = await _API.getVaultMeta(
           vaultName: activeVaultName,
-          pin: pin,
           authToken: activeToken,
         );
-      } catch (e) {
-        _rotateError = e;
-      }
-      vlog('pin.rotate.attempt', {
-        'ok': _rotateError == null,
-        if (_rotateError != null)
-          'error_type': _rotateError.runtimeType.toString(),
-        if (_rotateError != null) 'error': _rotateError.toString(),
-      });
-
-      final freshMeta = await _API.getVaultMeta(
-        vaultName: activeVaultName,
-        authToken: activeToken,
-      );
-      final freshSalt = freshMeta['pin_salt']?.toString();
-      final freshIter =
-          (freshMeta['kdf_iterations'] as num?)?.toInt() ?? iterations;
-      final saltChanged =
-          freshSalt != null && freshSalt.isNotEmpty && freshSalt != pinSalt;
-      final iterChanged = freshIter != iterations;
-      vlog('pin.rotate.post_meta', {
-        'salt_changed': saltChanged,
-        'iter_changed': iterChanged,
-        'new_iterations': freshIter,
-      });
-      if (freshSalt != null &&
-          freshSalt.isNotEmpty &&
-          (saltChanged || iterChanged)) {
-        // Authoritative salt/iter differ from what K1 was derived
-        // from. Re-derive K2 with the fresh values and install as a
-        // new context (bumping the generation). Legacy _VaultCrypto
-        // caches are mirrored inside deriveAndInstallCryptoContext.
-        final _postRotateCtx = await deriveAndInstallCryptoContext(
-          vaultId: activeVaultId,
-          vaultName: activeVaultName,
-          pin: pin,
-          pinSaltBase64: freshSalt,
-          iterations: freshIter,
-          source: 'verify_pin.post_rotate',
-        );
-        if (_postRotateCtx == null) {
-          vlog('pin.verify.derive.superseded', {
-            'phase': 'post_rotate',
-            'vaultName': activeVaultName,
-          });
-          return false;
+        final freshSalt = freshMeta['pin_salt']?.toString();
+        final freshIter =
+            (freshMeta['kdf_iterations'] as num?)?.toInt() ?? iterations;
+        final saltChanged =
+            freshSalt != null && freshSalt.isNotEmpty && freshSalt != pinSalt;
+        final iterChanged = freshIter != iterations;
+        vlog('pin.rotate.post_meta', {
+          'salt_changed': saltChanged,
+          'iter_changed': iterChanged,
+          'new_iterations': freshIter,
+        });
+        if (freshSalt != null &&
+            freshSalt.isNotEmpty &&
+            (saltChanged || iterChanged)) {
+          // Re-derive the legacy key if a concurrent rotation changed the
+          // authoritative server metadata. Never do this on an OPAQUE vault.
+          final _postRotateCtx = await deriveAndInstallCryptoContext(
+            vaultId: activeVaultId,
+            vaultName: activeVaultName,
+            pin: pin,
+            pinSaltBase64: freshSalt,
+            iterations: freshIter,
+            source: 'verify_pin.post_rotate',
+          );
+          if (_postRotateCtx == null) {
+            vlog('pin.verify.derive.superseded', {
+              'phase': 'post_rotate',
+              'vaultName': activeVaultName,
+            });
+            return false;
+          }
         }
       }
       vlog('pin.timing.rotate_kdf', {'elapsed_ms': tick()});
