@@ -28,10 +28,14 @@
 //     verification checklist).
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/main.dart';
 import 'package:vault_ai_frontend/route_guard.dart';
+import 'package:vault_ai_frontend/services/native_secure_store.dart';
+import 'package:vault_ai_frontend/services/session_termination.dart' as st;
 
 // Testing hook — mirrors the exact sequence SignupPage._submit runs
 // after zk.registerVault returns successfully. Does NOT touch the
@@ -58,7 +62,14 @@ Future<void> _simulatePostSignupStateTransition(
 
 void main() {
   setUp(() {
+    st.SessionTermination.instance.resetForTests();
+    NativeSecureStore.useSharedPreferencesForTesting = true;
     SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
+  tearDown(() {
+    NativeSecureStore.useSharedPreferencesForTesting = false;
+    st.SessionTermination.instance.resetForTests();
   });
 
   group('resolveLandingRedirect state-machine table', () {
@@ -212,27 +223,66 @@ void main() {
       expect(app.authed, isFalse);
     });
 
-    test(
-        'a session_token in prefs whose /auth/me fails is safely '
-        'nulled out — the pre-2026-07-20 pattern where a stale token '
-        'left the app half-authenticated is gone', () async {
+    test('transient /auth/me failure keeps the token but blocks vault access',
+        () async {
       SharedPreferences.setMockInitialValues(<String, Object>{
-        'session_token': 'stale-token-that-does-not-work',
+        'session_token': 'synthetic-session',
       });
-      final app = AppState();
+      final app = AppState(sessionValidator: (_) async {
+        throw StateError('Synthetic connection failure');
+      });
+      addTearDown(app.dispose);
       await app.hydrate().timeout(
             const Duration(seconds: 5),
             onTimeout: () {},
           );
-      expect(app.sessionToken, isNull,
-          reason: 'hydrate must clear a session token that /auth/me '
-              'cannot validate — otherwise the app renders as '
-              'authenticated while the backend has already forgotten '
-              'the session');
+      expect(app.sessionToken, 'synthetic-session');
       expect(app.authed, isFalse);
+      expect(app.sessionVerificationBlocked, isTrue);
+      expect(app.sessionVerificationUnavailable, isTrue);
+      expect(app.unlocked, isFalse);
+      final sp = await SharedPreferences.getInstance();
+      expect(sp.getString('session_token'), 'synthetic-session');
+    });
+
+    test('explicit /auth/me revocation clears the restored token', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'session_token': 'synthetic-revoked-session',
+      });
+      final app = AppState(sessionValidator: (token) async {
+        throw SessionTerminatedException(
+          code: st.SessionTerminationCode.revoked,
+          message: st.userMessageFor(st.SessionTerminationCode.revoked),
+          requestScope: st.SessionTermination.instance.captureRequest(token),
+        );
+      })..installSessionTerminationHandler();
+      addTearDown(app.dispose);
+      await app.hydrate();
+      expect(app.sessionToken, isNull);
+      expect(app.authed, isFalse);
+      expect(app.signedOutCode, st.SessionTerminationCode.revoked);
       final sp = await SharedPreferences.getInstance();
       expect(sp.getString('session_token'), isNull);
     });
+
+    if (kIsWeb) {
+      test('web refresh purges an old SharedPreferences auth token', () async {
+        SharedPreferences.setMockInitialValues(<String, Object>{
+          'session_token': 'synthetic-old-web-session',
+          'last_vault_name': 'Synthetic old name',
+        });
+        final app = AppState(sessionValidator: (_) async {
+          throw StateError('No validation request expected');
+        });
+        addTearDown(app.dispose);
+        await app.hydrate();
+        expect(app.sessionToken, isNull);
+        expect(app.vaultName, isNull);
+        final sp = await SharedPreferences.getInstance();
+        expect(sp.getString('session_token'), isNull);
+        expect(sp.getString('last_vault_name'), isNull);
+      });
+    }
 
     test(
         'hydrate populates lastVaultName so UnlockPage can identify '
