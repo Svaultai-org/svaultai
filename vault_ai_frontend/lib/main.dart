@@ -836,6 +836,39 @@ const bool kEnableLegacyContentStage = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// Temporary, opt-in browser-only trace for the stage-only rollout. The
+// formatter accepts an enum, never a PIN, identifier, key, token or error.
+const bool kEnableLegacyStageDiagnostics = bool.fromEnvironment(
+  'VAULTAI_ENABLE_LEGACY_STAGE_DIAGNOSTICS',
+  defaultValue: false,
+) && kEnableLegacyContentStage && kIsWeb;
+
+enum LegacyStageDiagnosticCode {
+  schedulerEnter,
+  schedulerMissingContext,
+  schedulerQueued,
+  workerEnter,
+  workerMissingHandle,
+  workerMissingKey,
+  workerReady,
+  workerLeaseExpired,
+  workerNotUnlocked,
+  workerSessionChanged,
+  proofAttempt,
+  proofComplete,
+  stageComplete,
+  stageDeferred,
+}
+
+@visibleForTesting
+String legacyStageDiagnosticMessage(LegacyStageDiagnosticCode code) =>
+    '[zk-stage-diag] ${code.name}';
+
+void _legacyStageDiagnostic(LegacyStageDiagnosticCode code) {
+  if (!kEnableLegacyStageDiagnostics) return;
+  releaseWebDiagnosticPrint(legacyStageDiagnosticMessage(code));
+}
+
 // Requires backend VAULTAI_ZK_LEGACY_STAGE_RECOVERY_ENABLED. A fresh OPAQUE
 // proof resets only a stale, unfinished stage; old ciphertext is retained.
 const bool kEnableLegacyStageRecovery = bool.fromEnvironment(
@@ -5239,14 +5272,17 @@ void _scheduleLegacyContentStage({
 }) {
   if (kPrivateOnlyUnlockEnabled) return;
   if (!kEnableLegacyContentStage) return;
+  _legacyStageDiagnostic(LegacyStageDiagnosticCode.schedulerEnter);
   final token = app.sessionToken;
   final vaultId = app.vaultId;
   final vaultName = app.vaultName;
   final mvk = zk_mvk_store.ZkActiveMvk.current();
   if (token == null || vaultId == null || vaultName == null || mvk == null) {
+    _legacyStageDiagnostic(LegacyStageDiagnosticCode.schedulerMissingContext);
     return;
   }
   final pinLease = LegacyStagePinLease(pin);
+  _legacyStageDiagnostic(LegacyStageDiagnosticCode.schedulerQueued);
   unawaited(_stageLegacyContentBestEffort(
     app: app,
     pinLease: pinLease,
@@ -5267,17 +5303,35 @@ Future<void> _stageLegacyContentBestEffort({
 }) async {
   if (kPrivateOnlyUnlockEnabled) return;
   if (!kEnableLegacyContentStage) return;
+  _legacyStageDiagnostic(LegacyStageDiagnosticCode.workerEnter);
   final handle = app.vaultHandle;
   final legacyKey =
       _VaultCrypto._keyCache[_VaultCrypto._ck(vaultId, vaultName)];
-  if (handle == null || handle.isEmpty || legacyKey == null) return;
+  if (handle == null || handle.isEmpty) {
+    _legacyStageDiagnostic(LegacyStageDiagnosticCode.workerMissingHandle);
+    return;
+  }
+  if (legacyKey == null) {
+    _legacyStageDiagnostic(LegacyStageDiagnosticCode.workerMissingKey);
+    return;
+  }
+  _legacyStageDiagnostic(LegacyStageDiagnosticCode.workerReady);
 
   void checkSession() {
-    pinLease.requireActive();
-    if (!app.unlocked ||
-        app.sessionToken != token ||
+    try {
+      pinLease.requireActive();
+    } catch (_) {
+      _legacyStageDiagnostic(LegacyStageDiagnosticCode.workerLeaseExpired);
+      rethrow;
+    }
+    if (!app.unlocked) {
+      _legacyStageDiagnostic(LegacyStageDiagnosticCode.workerNotUnlocked);
+      throw StateError('Vault session changed during migration');
+    }
+    if (app.sessionToken != token ||
         app.vaultId != vaultId ||
         !identical(zk_mvk_store.ZkActiveMvk.current(), mvk)) {
+      _legacyStageDiagnostic(LegacyStageDiagnosticCode.workerSessionChanged);
       throw StateError('Vault session changed during migration');
     }
   }
@@ -5319,6 +5373,7 @@ Future<void> _stageLegacyContentBestEffort({
   try {
     final export = legacy_export.LegacyCiphertextExportClient(
       proofProvider: () async {
+        _legacyStageDiagnostic(LegacyStageDiagnosticCode.proofAttempt);
         checkSession();
         final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
           vaultHandle: handle,
@@ -5326,6 +5381,7 @@ Future<void> _stageLegacyContentBestEffort({
           sessionToken: token,
         );
         checkSession();
+        _legacyStageDiagnostic(LegacyStageDiagnosticCode.proofComplete);
         return proof.token;
       },
       post: (path, body) async {
@@ -5347,6 +5403,7 @@ Future<void> _stageLegacyContentBestEffort({
       ),
       request: request,
     ).stageAndVerify();
+    _legacyStageDiagnostic(LegacyStageDiagnosticCode.stageComplete);
     vlog('legacy_content_stage.summary', {
       'items_verified': stageResult.itemsVerified,
       'files_verified': stageResult.filesVerified,
@@ -5354,6 +5411,7 @@ Future<void> _stageLegacyContentBestEffort({
       'files_deferred_for_size': stageResult.filesDeferredForSize,
     });
   } catch (error) {
+    _legacyStageDiagnostic(LegacyStageDiagnosticCode.stageDeferred);
     // A failed stage retains the complete legacy row. Never log error bodies,
     // decrypted content, ciphertext, or the active PIN.
     vlog('legacy_content_stage.deferred', {
