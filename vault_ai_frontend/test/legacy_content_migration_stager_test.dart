@@ -50,6 +50,8 @@ LegacyCiphertextExportClient _export({
           'export_token': 'synthetic-grant-$grants',
           'next_sequence': 0,
           'pages_remaining': 16,
+          'bytes_remaining': LegacyCiphertextExportClient.grantMaxBytes,
+          'expires_at': '2099-01-01T00:00:00Z',
         };
       }
       expect(body['sequence'], nextSequence);
@@ -57,6 +59,8 @@ LegacyCiphertextExportClient _export({
       final common = <String, dynamic>{
         'next_sequence': nextSequence,
         'pages_remaining': 16 - nextSequence,
+        'bytes_remaining': LegacyCiphertextExportClient.grantMaxBytes -
+            nextSequence * 1024,
       };
       switch (body['mode']) {
         case 'list_items':
@@ -172,6 +176,39 @@ void main() {
     expect(result.itemsVerified, 0);
     expect(result.filesVerified, 0);
     expect(called, isFalse);
+  });
+
+  test('oversize records are explicitly deferred before content export',
+      () async {
+    final calls = <String>[];
+    final result = await LegacyContentMigrationStager(
+      enabled: true,
+      export: _export(
+        itemRows: <Map<String, dynamic>>[
+          {'item_id': 9,
+           'ciphertext_chars':
+               LegacyContentMigrationStager.maxAutomaticCiphertextChars + 1},
+        ],
+        fileRows: <Map<String, dynamic>>[
+          {'file_id': 'synthetic-large-file',
+           'ciphertext_chars':
+               LegacyContentMigrationStager.maxAutomaticCiphertextChars + 1},
+        ],
+        itemCiphertexts: const <int, String>{},
+        fileCiphertexts: const <String, String>{},
+        calls: calls,
+      ),
+      codec: LegacyCiphertextMigrationCodec(
+        legacyKey: _legacyKey, mvk: _mvk,
+      ),
+      request: (_, __, [___]) async =>
+          throw StateError('oversize record reached a stage route'),
+    ).stageAndVerify();
+    expect(result.itemsVerified, 0);
+    expect(result.filesVerified, 0);
+    expect(result.itemsDeferredForSize, 1);
+    expect(result.filesDeferredForSize, 1);
+    expect(calls.where((path) => path.endsWith('/page')), hasLength(2));
   });
 
   test('wallet-engine row is not generically staged or counted', () async {

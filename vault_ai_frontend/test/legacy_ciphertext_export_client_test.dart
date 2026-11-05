@@ -1,6 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vault_ai_frontend/services/legacy_ciphertext_export_client.dart';
 
+const _grantExpiry = '2099-01-01T00:00:00Z';
+const _grantBytes = LegacyCiphertextExportClient.grantMaxBytes;
+
 void main() {
   test('staging rejects a source that changes between export chunks', () async {
     final firstSnapshot = List<String>.filled(43, 'A').join();
@@ -16,6 +19,8 @@ void main() {
             'export_token': 'synthetic-grant-$grants',
             'next_sequence': 0,
             'pages_remaining': 16,
+            'bytes_remaining': _grantBytes,
+            'expires_at': _grantExpiry,
           };
         }
         pages++;
@@ -23,6 +28,7 @@ void main() {
           return <String, dynamic>{
             'next_sequence': 1,
             'pages_remaining': 15,
+            'bytes_remaining': _grantBytes - 1024,
             'records': <Map<String, dynamic>>[],
             'has_more': false,
           };
@@ -31,6 +37,8 @@ void main() {
         return <String, dynamic>{
           'next_sequence': body['sequence'] + 1,
           'pages_remaining': 16 - (body['sequence'] as int) - 1,
+          'bytes_remaining': _grantBytes -
+              ((body['sequence'] as int) + 1) * 1024,
           'item_id': 11,
           'offset': offset,
           'ciphertext_chunk': offset == 0 ? 'abc' : 'def',
@@ -71,6 +79,8 @@ void main() {
             'export_token': 'synthetic-grant-$grantNumber',
             'next_sequence': 0,
             'pages_remaining': 2,
+            'bytes_remaining': _grantBytes,
+            'expires_at': _grantExpiry,
           };
         }
         expect(path, '/vault/legacy-ciphertext/export/page');
@@ -81,6 +91,7 @@ void main() {
         final common = <String, dynamic>{
           'next_sequence': sequence + 1,
           'pages_remaining': remaining,
+          'bytes_remaining': _grantBytes - (sequence + 1) * 1024,
         };
         if (body['mode'] == 'list_items') {
           if (body['after_item_id'] == null) {
@@ -141,6 +152,8 @@ void main() {
             'export_token': 'synthetic-grant-$starts',
             'next_sequence': 0,
             'pages_remaining': 16,
+            'bytes_remaining': _grantBytes,
+            'expires_at': _grantExpiry,
           };
         }
         pages++;
@@ -148,6 +161,7 @@ void main() {
           return <String, dynamic>{
             'next_sequence': 1,
             'pages_remaining': 15,
+            'bytes_remaining': _grantBytes - 1024,
             'offset': 3,
             'ciphertext_chunk': 'abc',
             'total_chars': 3,
@@ -158,6 +172,7 @@ void main() {
         return <String, dynamic>{
           'next_sequence': 1,
           'pages_remaining': 15,
+          'bytes_remaining': _grantBytes - 1024,
           'records': <Map<String, dynamic>>[],
           'has_more': false,
         };
@@ -189,5 +204,75 @@ void main() {
       throwsA(isA<FormatException>()),
     );
     expect(called, isFalse);
+  });
+
+  test('large synthetic ciphertext renews byte-limited grant at exact offset',
+      () async {
+    const totalChars = 9 * LegacyCiphertextExportClient.maxReadChars;
+    final syntheticChunk =
+        'A' * LegacyCiphertextExportClient.maxReadChars;
+    var grants = 0;
+    var proofs = 0;
+    var nextSequence = 0;
+    var bytesLeft = 0;
+    var expectedOffset = 0;
+    final client = LegacyCiphertextExportClient(
+      proofProvider: () async => 'synthetic-proof-${++proofs}',
+      post: (path, body) async {
+        expect(body.containsKey('pin'), isFalse);
+        if (path.endsWith('/start')) {
+          grants++;
+          expect(body['zk_proof_token'], 'synthetic-proof-$grants');
+          nextSequence = 0;
+          bytesLeft = _grantBytes;
+          return <String, dynamic>{
+            'export_token': 'synthetic-grant-$grants',
+            'next_sequence': 0,
+            'pages_remaining': 16,
+            'bytes_remaining': bytesLeft,
+            'expires_at': _grantExpiry,
+          };
+        }
+        expect(body['export_token'], 'synthetic-grant-$grants');
+        expect(body['sequence'], nextSequence);
+        expect(body['mode'], 'read_file');
+        expect(body['offset'], expectedOffset);
+        expect(body['max_chars'], LegacyCiphertextExportClient.maxReadChars);
+        expect(bytesLeft,
+            greaterThanOrEqualTo(LegacyCiphertextExportClient.maxPageCharge));
+        final length = totalChars - expectedOffset < syntheticChunk.length
+            ? totalChars - expectedOffset
+            : syntheticChunk.length;
+        expectedOffset += length;
+        nextSequence++;
+        bytesLeft -= length + 1024;
+        return <String, dynamic>{
+          'next_sequence': nextSequence,
+          'pages_remaining': 16 - nextSequence,
+          'bytes_remaining': bytesLeft,
+          'file_id': 'synthetic-large-file',
+          'offset': expectedOffset - length,
+          'ciphertext_chunk': syntheticChunk.substring(0, length),
+          'total_chars': totalChars,
+          'next_offset': expectedOffset,
+          'done': expectedOffset == totalChars,
+          'source_snapshot': 'A' * 43,
+          'source_metadata': const <String, dynamic>{
+            'file_size': 1,
+            'saved_name': 'synthetic file',
+          },
+        };
+      },
+    );
+    final source = await client.readFileSource(
+      fileId: 'synthetic-large-file', ciphertextChars: totalChars,
+    );
+    expect(source.ciphertext.length, totalChars);
+    expect(source.ciphertext.startsWith('A' * 32), isTrue);
+    expect(source.ciphertext.endsWith('A' * 32), isTrue);
+    expect(expectedOffset, totalChars);
+    expect(grants, 2);
+    expect(proofs, 2);
+    client.clearGrant();
   });
 }

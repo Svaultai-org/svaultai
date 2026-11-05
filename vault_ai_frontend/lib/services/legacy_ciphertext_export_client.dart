@@ -26,6 +26,11 @@ class LegacyCiphertextSource {
 class LegacyCiphertextExportClient {
   static const int maxReadChars = 4 * 1024 * 1024;
   static const int maxTotalChars = 64 * 1024 * 1024;
+  // The server will refuse a page whose charge exceeds its remaining grant.
+  // Renew before a page when the old grant cannot cover its maximum charge.
+  static const int maxPageCharge = maxReadChars + 64 * 1024;
+  static const int grantMaxBytes = 32 * 1024 * 1024;
+  static const Duration grantExpiryMargin = Duration(seconds: 30);
 
   final LegacyExportPost post;
   final LegacyProofProvider proofProvider;
@@ -33,6 +38,8 @@ class LegacyCiphertextExportClient {
   String? _exportToken;
   int _sequence = 0;
   int _pagesRemaining = 0;
+  int _bytesRemaining = 0;
+  DateTime? _expiresAt;
 
   LegacyCiphertextExportClient({
     required this.post,
@@ -43,6 +50,8 @@ class LegacyCiphertextExportClient {
     _exportToken = null;
     _sequence = 0;
     _pagesRemaining = 0;
+    _bytesRemaining = 0;
+    _expiresAt = null;
   }
 
   Future<List<Map<String, dynamic>>> listItems() => _list(
@@ -105,22 +114,39 @@ class LegacyCiphertextExportClient {
     final token = response['export_token'];
     final sequence = response['next_sequence'];
     final remaining = response['pages_remaining'];
+    final bytesRemaining = response['bytes_remaining'];
+    final expiresAt = DateTime.tryParse('${response['expires_at']}')?.toUtc();
     if (token is! String ||
         token.isEmpty ||
         sequence != 0 ||
         remaining is! int ||
-        remaining <= 0) {
+        remaining <= 0 ||
+        bytesRemaining is! int ||
+        bytesRemaining < maxPageCharge ||
+        bytesRemaining > grantMaxBytes ||
+        expiresAt == null ||
+        !expiresAt.isAfter(DateTime.now().toUtc().add(grantExpiryMargin))) {
       throw const FormatException('Invalid export grant');
     }
     _exportToken = token;
     _sequence = 0;
     _pagesRemaining = remaining;
+    _bytesRemaining = bytesRemaining;
+    _expiresAt = expiresAt;
   }
 
   Future<Map<String, dynamic>> _page(Map<String, dynamic> body) async {
-    if (_exportToken == null || _pagesRemaining <= 0) await _startGrant();
+    if (_exportToken == null ||
+        _pagesRemaining <= 0 ||
+        _bytesRemaining < maxPageCharge ||
+        _expiresAt == null ||
+        !_expiresAt!.isAfter(DateTime.now().toUtc().add(grantExpiryMargin))) {
+      clearGrant();
+      await _startGrant();
+    }
     final token = _exportToken!;
     final sequence = _sequence;
+    final priorBytes = _bytesRemaining;
     try {
       final response = await post(
         '/vault/legacy-ciphertext/export/page',
@@ -132,11 +158,15 @@ class LegacyCiphertextExportClient {
       );
       final next = response['next_sequence'];
       final remaining = response['pages_remaining'];
-      if (next != sequence + 1 || remaining is! int || remaining < 0) {
+      final bytesRemaining = response['bytes_remaining'];
+      if (next != sequence + 1 || remaining is! int || remaining < 0 ||
+          bytesRemaining is! int || bytesRemaining < 0 ||
+          bytesRemaining >= priorBytes) {
         throw const FormatException('Invalid export page cursor');
       }
       _sequence = next;
       _pagesRemaining = remaining;
+      _bytesRemaining = bytesRemaining;
       return response;
     } catch (_) {
       // A response might have been committed server-side before the network

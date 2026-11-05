@@ -38,14 +38,23 @@ typedef MigrationRequest = Future<MigrationReply> Function(
 class LegacyStageResult {
   final int itemsVerified;
   final int filesVerified;
+  final int itemsDeferredForSize;
+  final int filesDeferredForSize;
 
   const LegacyStageResult({
     required this.itemsVerified,
     required this.filesVerified,
+    this.itemsDeferredForSize = 0,
+    this.filesDeferredForSize = 0,
   });
 }
 
 class LegacyContentMigrationStager {
+  // The current codec holds old ciphertext, plaintext, prepared V2 chunks,
+  // and fetched readback chunks at once. Keep automatic unlock-time work
+  // below a conservative per-record memory budget until it streams.
+  static const int maxAutomaticCiphertextChars = 8 * 1024 * 1024;
+
   final bool enabled;
   final bool recoveryEnabled;
   final LegacyCiphertextExportClient export;
@@ -66,19 +75,33 @@ class LegacyContentMigrationStager {
     }
     var itemsVerified = 0;
     var filesVerified = 0;
+    var itemsDeferredForSize = 0;
+    var filesDeferredForSize = 0;
     try {
       final items = await export.listItems();
       for (final item in items) {
+        if (item['ciphertext_chars'] is int &&
+            (item['ciphertext_chars'] as int) > maxAutomaticCiphertextChars) {
+          itemsDeferredForSize++;
+          continue;
+        }
         if (await _stageItem(item)) itemsVerified++;
       }
       final files = await export.listFiles();
       for (final file in files) {
+        if (file['ciphertext_chars'] is int &&
+            (file['ciphertext_chars'] as int) > maxAutomaticCiphertextChars) {
+          filesDeferredForSize++;
+          continue;
+        }
         await _stageFile(file);
         filesVerified++;
       }
       return LegacyStageResult(
         itemsVerified: itemsVerified,
         filesVerified: filesVerified,
+        itemsDeferredForSize: itemsDeferredForSize,
+        filesDeferredForSize: filesDeferredForSize,
       );
     } finally {
       export.clearGrant();

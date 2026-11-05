@@ -40,6 +40,7 @@ import 'services/metadata_migration_client.dart' as mmc;
 import 'services/legacy_ciphertext_export_client.dart' as legacy_export;
 import 'services/legacy_ciphertext_migration_codec.dart' as legacy_codec;
 import 'services/legacy_content_migration_stager.dart' as legacy_stage;
+import 'services/legacy_stage_pin_lease.dart';
 import 'services/file_v2_writer.dart';
 import 'services/native_secure_store.dart';
 import 'services/session_persistence_lock.dart'
@@ -5245,19 +5246,20 @@ void _scheduleLegacyContentStage({
   if (token == null || vaultId == null || vaultName == null || mvk == null) {
     return;
   }
+  final pinLease = LegacyStagePinLease(pin);
   unawaited(_stageLegacyContentBestEffort(
     app: app,
-    pin: pin,
+    pinLease: pinLease,
     token: token,
     vaultId: vaultId,
     vaultName: vaultName,
     mvk: mvk,
-  ));
+  ).whenComplete(pinLease.clear));
 }
 
 Future<void> _stageLegacyContentBestEffort({
   required AppState app,
-  required String pin,
+  required LegacyStagePinLease pinLease,
   required String token,
   required String vaultId,
   required String vaultName,
@@ -5271,6 +5273,7 @@ Future<void> _stageLegacyContentBestEffort({
   if (handle == null || handle.isEmpty || legacyKey == null) return;
 
   void checkSession() {
+    pinLease.requireActive();
     if (!app.unlocked ||
         app.sessionToken != token ||
         app.vaultId != vaultId ||
@@ -5319,7 +5322,7 @@ Future<void> _stageLegacyContentBestEffort({
         checkSession();
         final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
           vaultHandle: handle,
-          pin: pin,
+          pin: pinLease.requirePin(),
           sessionToken: token,
         );
         checkSession();
@@ -5334,7 +5337,7 @@ Future<void> _stageLegacyContentBestEffort({
         return response.data as Map<String, dynamic>;
       },
     );
-    await legacy_stage.LegacyContentMigrationStager(
+    final stageResult = await legacy_stage.LegacyContentMigrationStager(
       enabled: true,
       recoveryEnabled: kEnableLegacyStageRecovery,
       export: export,
@@ -5344,6 +5347,12 @@ Future<void> _stageLegacyContentBestEffort({
       ),
       request: request,
     ).stageAndVerify();
+    vlog('legacy_content_stage.summary', {
+      'items_verified': stageResult.itemsVerified,
+      'files_verified': stageResult.filesVerified,
+      'items_deferred_for_size': stageResult.itemsDeferredForSize,
+      'files_deferred_for_size': stageResult.filesDeferredForSize,
+    });
   } catch (error) {
     // A failed stage retains the complete legacy row. Never log error bodies,
     // decrypted content, ciphertext, or the active PIN.
