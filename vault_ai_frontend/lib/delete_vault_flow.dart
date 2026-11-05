@@ -1,4 +1,5 @@
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -208,6 +209,7 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
               TextField(
                 key: const Key('delete_vault_pin_field'),
                 controller: _pinCtrl,
+                autofillHints: kIsWeb ? null : const <String>[],
                 enabled: !_submitting,
                 obscureText: true,
                 keyboardType: TextInputType.number,

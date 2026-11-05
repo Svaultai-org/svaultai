@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pointycastle/digests/keccak.dart';
@@ -4239,6 +4240,7 @@ class _EthSendPinDialogState extends State<_EthSendPinDialog> {
           TextField(
             key: const Key('eth_send_panel_pin_input'),
             controller: _pinCtrl,
+            autofillHints: kIsWeb ? null : const <String>[],
             obscureText: true,
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],

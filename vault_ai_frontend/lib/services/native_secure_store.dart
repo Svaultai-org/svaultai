@@ -12,6 +12,32 @@ import 'package:shared_preferences/shared_preferences.dart';
 class NativeSecureStore {
   NativeSecureStore._();
 
+  // Web auth is session-only: identifiers and bearer tokens must not survive
+  // a refresh in localStorage (the web SharedPreferences backend). Native
+  // platforms still use their secure store and retain PIN-only return.
+  static const _webSessionOnlyKeys = <String>{
+    'session_token',
+    'session_signed_out_code',
+    'last_vault_name',
+    'last_vault_handle',
+    'last_display_name',
+    'last_display_username',
+    'last_canonical_username',
+    'last_vault_ai_name',
+    'vaultai.zk.vault_handle',
+  };
+
+  /// Remove credentials and identifiers left by older web releases. This
+  /// touches only auth keys, not vault data or unrelated preferences.
+  static Future<void> clearPreviouslySavedWebAuth() async {
+    if (!kIsWeb) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    for (final key in _webSessionOnlyKeys) {
+      await prefs.remove(key);
+    }
+  }
+
   static const AndroidOptions _androidOptions = AndroidOptions(
     encryptedSharedPreferences: true,
   );
@@ -93,7 +119,14 @@ class NativeSecureStore {
 
   static Future<String?> readString(String key) async {
     final prefs = await SharedPreferences.getInstance();
-    if (kIsWeb || useSharedPreferencesForTesting) return prefs.getString(key);
+    if (kIsWeb) {
+      if (_webSessionOnlyKeys.contains(key)) {
+        await prefs.remove(key);
+        return null;
+      }
+      return prefs.getString(key);
+    }
+    if (useSharedPreferencesForTesting) return prefs.getString(key);
 
     final secureValue = await _trySecureRead(key);
     if (secureValue != null && secureValue.isNotEmpty) {
@@ -112,6 +145,10 @@ class NativeSecureStore {
 
   static Future<void> writeString(String key, String value) async {
     final prefs = await SharedPreferences.getInstance();
+    if (kIsWeb && _webSessionOnlyKeys.contains(key)) {
+      await prefs.remove(key);
+      return;
+    }
     if (kIsWeb || useSharedPreferencesForTesting) {
       await prefs.setString(key, value);
       return;

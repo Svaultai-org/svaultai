@@ -926,6 +926,7 @@ Future<String?> _promptForActionPin(BuildContext context, String title) async {
           child: TextFormField(
             key: const Key('zk_action_pin_field'),
             controller: controller,
+            autofillHints: kIsWeb ? null : const <String>[],
             obscureText: true,
             keyboardType: TextInputType.number,
             maxLength: 64,
@@ -2248,6 +2249,9 @@ class AppState extends ChangeNotifier {
   Future<void> hydrate() async {
     final epoch = _sessionEpoch;
     final sp = await SharedPreferences.getInstance();
+    // Older web builds stored auth identity in localStorage. Web sessions now
+    // live only in memory, so forget those values before reading restore state.
+    await NativeSecureStore.clearPreviouslySavedWebAuth();
     final savedToken = await NativeSecureStore.readString('session_token');
     final savedName = await NativeSecureStore.readString('last_vault_name');
     final persistedDisplay =
@@ -2426,7 +2430,7 @@ class AppState extends ChangeNotifier {
     displayName = null;
     authed = false;
     unlocked = false;
-    if (!keepLastVaultName) lastVaultName = null;
+    if (kIsWeb || !keepLastVaultName) lastVaultName = null;
     // Hide private screens/keys immediately; persistent cleanup is serialized
     // behind any existing write and before a replacement login's write.
     notifyListeners();
@@ -2444,7 +2448,7 @@ class AppState extends ChangeNotifier {
       } else {
         await NativeSecureStore.deleteString('session_signed_out_code');
       }
-      if (!keepLastVaultName) {
+      if (kIsWeb || !keepLastVaultName) {
         await NativeSecureStore.deleteString('last_vault_name');
         await NativeSecureStore.deleteString('last_vault_handle');
         await NativeSecureStore.deleteString('last_display_name');
@@ -2452,6 +2456,7 @@ class AppState extends ChangeNotifier {
         await sp.remove('last_display_username');
         await sp.remove('last_canonical_username');
         await sp.remove('last_vault_ai_name');
+        if (kIsWeb) await legacy_adopt.clearCachedVaultHandle();
       }
     }, requireTokenOwnership: true, expectedToken: departingToken);
   }
@@ -3989,7 +3994,8 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                       }
                       if (v == 'sign_out') {
                         final app = context.read<AppState>();
-                        final hadLastVaultName = app.lastVaultName != null;
+                        final hadLastVaultName =
+                            !kIsWeb && app.lastVaultName != null;
                         await app.signOutEverywhere();
                         if (app.sessionToken != null) return;
                         if (context.mounted) {
@@ -5102,10 +5108,16 @@ void _notifyNewDeviceTrustedIfNeeded(bool flag) {
 Widget _authAutofillScaffold({
   required PreferredSizeWidget appBar,
   required Widget body,
-}) => AutofillGroup(
-      onDisposeAction: AutofillContextAction.cancel,
-      child: Scaffold(appBar: appBar, body: body),
-    );
+}) {
+  final scaffold = Scaffold(appBar: appBar, body: body);
+  // Web PIN input is not a browser password. Native autofill stays unchanged.
+  return kIsWeb
+      ? scaffold
+      : AutofillGroup(
+          onDisposeAction: AutofillContextAction.cancel,
+          child: scaffold,
+        );
+}
 
 // Auth cards keep their portrait centering while their contents can scroll
 // inside the height left by the app bar, safe area and on-screen keyboard.
@@ -5654,6 +5666,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
   }
 
   Future<void> _autofillCachedHandle() async {
+    if (kIsWeb) return; // Web never suggests a remembered vault identifier.
     // Prefer the persisted vault name (last_vault_name) — that's
     // what the user actually types to sign in. Fall back to the
     // Never fall back to the internal VLT handle. That identifier is
@@ -5753,6 +5766,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     appRouteObserver.unsubscribe(this);
     _guardAppState?.removeListener(_onGuardStateChanged);
     vaultNameCtrl.removeListener(_maybeMarkZkHandle);
+    vaultNameCtrl.clear();
     vaultNameCtrl.dispose();
     pinCtrl.clear();
     pinCtrl.dispose();
@@ -5763,6 +5777,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     if (loading) return;
     final vaultName = vaultNameCtrl.text.trim();
     final pin = pinCtrl.text.trim();
+    if (kIsWeb) pinCtrl.clear();
     if (vaultName.isEmpty) {
       setState(() => err = 'Enter your vault name.');
       return;
@@ -5780,7 +5795,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       setState(() => err = 'PIN must be 64 digits or fewer.');
       return;
     }
-    pinCtrl.clear();
+    if (!kIsWeb) pinCtrl.clear();
     setState(() {
       loading = true;
       err = null;
@@ -6277,7 +6292,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                   child: TextField(
                     key: const Key('auth_vault_name_field'),
                     controller: vaultNameCtrl,
-                    autofillHints: const [AutofillHints.username],
+                    autofillHints: kIsWeb
+                        ? null
+                        : const [AutofillHints.username],
                     autocorrect: false,
                     enabled: !loading,
                     decoration: const InputDecoration(labelText: 'Vault name'),
@@ -6291,7 +6308,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                   child: TextField(
                     key: const Key('auth_pin_field'),
                     controller: pinCtrl,
-                    autofillHints: const [AutofillHints.password],
+                    autofillHints: kIsWeb
+                        ? null
+                        : const [AutofillHints.password],
                     keyboardType: TextInputType.number,
                     obscureText: true,
                     maxLength: 64,
@@ -6376,6 +6395,8 @@ class _SignupPageState extends State<SignupPage> {
     confirmPinCtrl.clear();
     pinCtrl.dispose();
     confirmPinCtrl.dispose();
+    vaultNameCtrl.clear();
+    displayNameCtrl.clear();
     vaultNameCtrl.dispose();
     displayNameCtrl.dispose();
     super.dispose();
@@ -6387,6 +6408,10 @@ class _SignupPageState extends State<SignupPage> {
     final displayName = displayNameCtrl.text.trim();
     final pin = pinCtrl.text.trim();
     final confirm = confirmPinCtrl.text.trim();
+    if (kIsWeb) {
+      pinCtrl.clear();
+      confirmPinCtrl.clear();
+    }
 
     setState(() {
       err = null;
@@ -6420,8 +6445,10 @@ class _SignupPageState extends State<SignupPage> {
       return;
     }
 
-    pinCtrl.clear();
-    confirmPinCtrl.clear();
+    if (!kIsWeb) {
+      pinCtrl.clear();
+      confirmPinCtrl.clear();
+    }
     setState(() => loading = true);
     final app = context.read<AppState>();
 
@@ -6704,7 +6731,9 @@ class _SignupPageState extends State<SignupPage> {
                   TextField(
                     key: const Key('signup_vault_name_field'),
                     controller: vaultNameCtrl,
-                    autofillHints: const [AutofillHints.newUsername],
+                    autofillHints: kIsWeb
+                        ? null
+                        : const [AutofillHints.newUsername],
                     autocorrect: false,
                     enabled: !loading,
                     decoration: InputDecoration(
@@ -6727,7 +6756,9 @@ class _SignupPageState extends State<SignupPage> {
                   TextField(
                     key: const Key('signup_pin_field'),
                     controller: pinCtrl,
-                    autofillHints: const [AutofillHints.newPassword],
+                    autofillHints: kIsWeb
+                        ? null
+                        : const [AutofillHints.newPassword],
                     keyboardType: TextInputType.number,
                     obscureText: true,
                     maxLength: _maxPinLength,
@@ -6743,7 +6774,9 @@ class _SignupPageState extends State<SignupPage> {
                   TextField(
                     key: const Key('signup_confirm_pin_field'),
                     controller: confirmPinCtrl,
-                    autofillHints: const [AutofillHints.newPassword],
+                    autofillHints: kIsWeb
+                        ? null
+                        : const [AutofillHints.newPassword],
                     keyboardType: TextInputType.number,
                     obscureText: true,
                     maxLength: _maxPinLength,
@@ -6851,6 +6884,7 @@ class _UnlockPageState extends State<UnlockPage> {
       return;
     }
     final pin = pinCtrl.text.trim();
+    if (kIsWeb) pinCtrl.clear();
     final digitsOnly = RegExp(r'^\d+$');
     if (!digitsOnly.hasMatch(pin)) {
       setState(() => err = 'PIN can only contain digits.');
@@ -6864,7 +6898,7 @@ class _UnlockPageState extends State<UnlockPage> {
       setState(() => err = 'PIN must be 64 digits or fewer.');
       return;
     }
-    pinCtrl.clear();
+    if (!kIsWeb) pinCtrl.clear();
     setState(() {
       loading = true;
       err = null;
@@ -7290,7 +7324,9 @@ class _UnlockPageState extends State<UnlockPage> {
                   child: TextField(
                     key: const Key('auth_unlock_pin_field'),
                     controller: pinCtrl,
-                    autofillHints: const [AutofillHints.password],
+                    autofillHints: kIsWeb
+                        ? null
+                        : const [AutofillHints.password],
                     keyboardType: TextInputType.number,
                     obscureText: true,
                     autofocus: true,
@@ -7464,6 +7500,7 @@ class _PinGatePageState extends State<PinGatePage> {
     final mode = creating;
     if (mode == null) return;
     final pin = _pin;
+    if (kIsWeb) pinController.clear();
     final minLen = _minPinLengthUnlock;
     final digitsOnly = RegExp(r'^\d+$');
     if (!digitsOnly.hasMatch(pin)) {
@@ -7485,7 +7522,7 @@ class _PinGatePageState extends State<PinGatePage> {
       return;
     }
 
-    pinController.clear();
+    if (!kIsWeb) pinController.clear();
     setState(() {
       _submitting = true;
       err = null;
@@ -7709,7 +7746,9 @@ class _PinGatePageState extends State<PinGatePage> {
                 TextField(
                   key: const Key('pin_gate_pin_field'),
                   controller: pinController,
-                  autofillHints: [mode ? AutofillHints.newPassword : AutofillHints.password],
+                  autofillHints: kIsWeb
+                      ? null
+                      : [mode ? AutofillHints.newPassword : AutofillHints.password],
                   keyboardType: TextInputType.number,
                   obscureText: true,
                   maxLength: _maxPinLength,
@@ -10246,7 +10285,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   TextFormField(
                     key: const Key('inheritance_cred_username_field'),
                     controller: usernameCtrl,
-                    autofillHints: const [AutofillHints.username],
+                    autofillHints: kIsWeb
+                        ? null
+                        : const [AutofillHints.username],
                     decoration: const InputDecoration(
                       hintText: 'Autofilled from your account',
                       isDense: true,
@@ -10263,6 +10304,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   TextFormField(
                     key: const Key('inheritance_cred_pin_field'),
                     controller: pinCtrl,
+                    autofillHints: kIsWeb ? null : const <String>[],
                     obscureText: true,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
@@ -11340,6 +11382,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           child: TextFormField(
             key: const Key('inheritance_reveal_reauth_pin_field'),
             controller: ctrl,
+            autofillHints: kIsWeb ? null : const <String>[],
             obscureText: true,
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(

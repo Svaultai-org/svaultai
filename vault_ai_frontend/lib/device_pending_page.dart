@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:provider/provider.dart';
@@ -102,12 +103,14 @@ class _DevicePendingPageState extends State<DevicePendingPage> {
           children: [
             TextField(
               controller: vaultCtrl,
+              autofillHints: kIsWeb ? null : const <String>[],
               decoration: const InputDecoration(labelText: 'Vault name'),
               autofocus: true,
             ),
             const SizedBox(height: 8),
             TextField(
               controller: pinCtrl,
+              autofillHints: kIsWeb ? null : const <String>[],
               decoration: const InputDecoration(labelText: 'PIN'),
               obscureText: true,
               keyboardType: TextInputType.number,
@@ -149,6 +152,7 @@ class _DevicePendingPageState extends State<DevicePendingPage> {
         title: Text(title),
         content: TextField(
           controller: pinCtrl,
+          autofillHints: kIsWeb ? null : const <String>[],
           decoration: const InputDecoration(labelText: 'PIN'),
           autofocus: true,
           obscureText: true,

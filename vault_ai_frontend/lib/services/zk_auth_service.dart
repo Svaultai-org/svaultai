@@ -736,8 +736,8 @@ class ZkAuthService {
   /// Rationale: the deterministic derivation makes ``username`` the
   /// only credential the user needs to type. The ``vaultHandle``
   /// argument stays because a handful of internal call sites still
-  /// pass a saved handle (e.g. adopted legacy accounts that persisted
-  /// their handle in SharedPreferences).
+  /// pass a saved handle (e.g. adopted legacy accounts that cached
+  /// their handle on native devices).
   ///
   /// [onStep] is a step-completion callback for diagnostic tracing.
   /// After each risky sub-step finishes cleanly, the callback is

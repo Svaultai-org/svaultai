@@ -329,12 +329,14 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
           children: [
             TextField(
               controller: vaultCtl,
+              autofillHints: kIsWeb ? null : const <String>[],
               decoration: const InputDecoration(labelText: 'Vault name'),
               autofocus: true,
             ),
             const SizedBox(height: 12),
             TextField(
               controller: pinCtl,
+              autofillHints: kIsWeb ? null : const <String>[],
               decoration: const InputDecoration(labelText: 'PIN'),
               obscureText: true,
               keyboardType: TextInputType.number,

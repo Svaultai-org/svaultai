@@ -13,8 +13,8 @@
 //      MVK (zero data re-encryption), wrap it under the new KEK
 //      derived from OPAQUE export_key, wrap the display name under
 //      the MVK-derived display key, upload via /auth/zk-adopt.
-//   3. Store the new Vault Handle in shared_preferences so future
-//      logins on this trusted device can autofill it.
+//   3. Cache the new Vault Handle in native secure storage for PIN-only
+//      return. Web sign-in never persists or autofills this identifier.
 //
 // This module contains no cryptography — everything delegates to
 // zk_auth_service.dart (which delegates to opaque_client.dart which
