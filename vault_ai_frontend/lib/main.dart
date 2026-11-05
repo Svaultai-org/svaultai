@@ -1697,6 +1697,14 @@ class AppState extends ChangeNotifier {
   }
 
   set unlocked(bool value) {
+    if (!value) {
+      // Legacy lock paths clear their PIN cache/context. Also discard the ZK
+      // keys so a locked screen does not retain decrypt-capable material.
+      // Keep PrivateZkPinTransportSession bound to the current session: it
+      // must continue blocking legacy PIN-bearing HTTP while locked.
+      zk_mvk_store.ZkActiveMvk.clear();
+      zk_sk_store.ZkActiveSkVault.clear();
+    }
     if (_unlocked == value) return;
     _unlocked = value;
     if (value) {

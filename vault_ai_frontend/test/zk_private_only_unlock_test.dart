@@ -117,6 +117,51 @@ void main() {
     });
   }
 
+  test('locking drops decrypt keys but keeps the PIN transport guard',
+      () async {
+    final app = AppState();
+    const token = 'synthetic-lock-session';
+    const vaultId = 'synthetic-lock-vault';
+    const vaultName = 'Synthetic lock vault';
+    const handle = 'VLT-synthetic-lock';
+    try {
+      await app.setSession(
+        token: token,
+        vaultIdValue: vaultId,
+        vaultNameValue: vaultName,
+        vaultHandleValue: handle,
+      );
+      installZkPrivateOnlyUnlockKeys(
+        app: app,
+        origin: ZkPrivateUnlockOrigin.login,
+        sessionToken: token,
+        vaultId: vaultId,
+        vaultName: vaultName,
+        vaultHandle: handle,
+        mvk: SecretKey(List<int>.filled(32, 77)),
+        skVault: SecretKey(List<int>.filled(32, 88)),
+      );
+      app.markUnlocked();
+      expect(app.unlocked, isTrue);
+      expect(PrivateZkPinTransportSession.active, isTrue);
+
+      app.unlocked = false;
+      expect(app.unlocked, isFalse);
+      expect(ZkActiveMvk.current(), isNull);
+      expect(ZkActiveSkVault.current(), isNull);
+      expect(PrivateZkPinTransportSession.active, isTrue,
+          reason: 'Legacy PIN-bearing HTTP must remain blocked while locked.');
+      expect(zkPrivateUnlockCredentialStateForTesting(), {
+        'pin_cache_entries': 0,
+        'legacy_key_entries': 0,
+        'has_pbkdf2_context': false,
+      });
+    } finally {
+      await app.clearSession();
+      app.dispose();
+    }
+  });
+
   test('private install rejects a superseded session without publishing keys',
       () async {
     final app = AppState();
