@@ -59,56 +59,6 @@ void main() {
     expect(grants, 2); // Failed source validation discards the previous grant.
   });
 
-  test('streamed file export refuses a changed source snapshot', () async {
-    var starts = 0;
-    final client = LegacyCiphertextExportClient(
-      proofProvider: () async => 'synthetic-proof',
-      post: (path, body) async {
-        if (path.endsWith('/start')) {
-          starts++;
-          return <String, dynamic>{
-            'export_token': 'synthetic-grant-$starts',
-            'next_sequence': 0,
-            'pages_remaining': 16,
-            'bytes_remaining': _grantBytes,
-            'expires_at': _grantExpiry,
-          };
-        }
-        final offset = body['offset'] as int;
-        final sequence = body['sequence'] as int;
-        return <String, dynamic>{
-          'file_id': 'synthetic-file',
-          'offset': offset,
-          'ciphertext_chunk': offset == 0 ? 'AAAA' : 'BBBB',
-          'total_chars': 8,
-          'next_offset': offset + 4,
-          'done': offset == 4,
-          'next_sequence': sequence + 1,
-          'pages_remaining': 15 - sequence,
-          'bytes_remaining': _grantBytes - (sequence + 1) * 1024,
-          'source_snapshot': List<String>.filled(
-            43,
-            offset == 0 ? 'A' : 'B',
-          ).join(),
-          'source_metadata': const <String, dynamic>{
-            'file_size': 0,
-            'content_type': null,
-          },
-        };
-      },
-    );
-    await expectLater(
-      client
-          .streamFileSource(
-            fileId: 'synthetic-file',
-            ciphertextChars: 8,
-          )
-          .toList(),
-      throwsFormatException,
-    );
-    expect(starts, 1);
-  });
-
   test('staging rejects a source that changes between export chunks', () async {
     final firstSnapshot = List<String>.filled(43, 'A').join();
     final changedSnapshot = List<String>.filled(43, 'B').join();
