@@ -126,6 +126,18 @@ def test_bound_trusted_device_passes(monkeypatch):
     )) is principal
 
 
+def test_trusted_device_admin_gate_rejects_spoofed_header(monkeypatch):
+    lookup = MagicMock(return_value="trusted")
+    monkeypatch.setattr(device_gate, "_lookup_device_status", lookup)
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(device_gate.verify_caller_is_trusted_device(
+            _request(TRUSTED, "/devices/approve"), _principal(PENDING),
+        ))
+    assert raised.value.status_code == 403
+    assert raised.value.detail["code"] == "device_session_mismatch"
+    lookup.assert_not_called()
+
+
 @pytest.mark.parametrize("status", ["pending", "revoked"])
 def test_opaque_file_and_item_reads_stop_before_database(monkeypatch, status):
     monkeypatch.setattr(device_gate, "_gate_enabled", lambda: True)
