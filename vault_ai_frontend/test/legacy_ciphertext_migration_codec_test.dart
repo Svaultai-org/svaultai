@@ -244,5 +244,63 @@ void main() {
         isTrue,
       );
     });
+
+    test('rewraps legacy file text and path only inside a V2 manifest',
+        () async {
+      final codec = LegacyCiphertextMigrationCodec(
+        legacyKey: _legacyKey, mvk: _mvk,
+      );
+      final legacy = await _legacyEncrypt(const <int>[1, 2, 3, 4]);
+      const extras = <String, String?>{
+        'relative_path': 'private/folder/report.txt',
+        'extracted_text': 'synthetic private report text',
+      };
+      final staged = await codec.stageFile(
+        fileId: 'synthetic-file-extra',
+        legacyCiphertext: legacy,
+        declaredFileSize: 4,
+        contentType: 'text/plain',
+        encryptedMetadata: const <String, String?>{},
+        legacyExtra: extras,
+      );
+      final outgoing = jsonEncode(staged.toManifestBody());
+      expect(staged.migrationMetadataVersion, 2);
+      expect(outgoing, isNot(contains(extras['relative_path'])));
+      expect(outgoing, isNot(contains(extras['extracted_text'])));
+      expect(await codec.verifyStagedFile(
+        fileId: staged.fileId,
+        legacyCiphertext: legacy,
+        declaredFileSize: 4,
+        contentType: 'text/plain',
+        encryptedMetadata: const <String, String?>{},
+        legacyExtra: extras,
+        chunkSize: staged.chunkSize,
+        chunkCount: staged.chunkCiphertexts.length,
+        manifestCiphertext: staged.manifestCiphertext,
+        chunkCiphertexts: staged.chunkCiphertexts,
+      ), isTrue);
+      expect(await codec.verifyStagedFileManifest(
+        fileId: staged.fileId,
+        declaredFileSize: 4,
+        contentType: 'text/plain',
+        encryptedMetadata: const <String, String?>{},
+        legacyExtra: const <String, String?>{
+          'relative_path': 'changed/path.txt',
+          'extracted_text': 'synthetic private report text',
+        },
+        chunkSize: staged.chunkSize,
+        chunkCount: staged.chunkCiphertexts.length,
+        manifestCiphertext: staged.manifestCiphertext,
+      ), isFalse);
+      expect(await codec.verifyStagedFileManifest(
+        fileId: staged.fileId,
+        declaredFileSize: 4,
+        contentType: 'text/plain',
+        encryptedMetadata: const <String, String?>{},
+        chunkSize: staged.chunkSize,
+        chunkCount: staged.chunkCiphertexts.length,
+        manifestCiphertext: staged.manifestCiphertext,
+      ), isFalse);
+    });
   });
 }

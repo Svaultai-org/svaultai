@@ -4,10 +4,11 @@
 
 import 'dart:convert';
 
-typedef LegacyExportPost = Future<Map<String, dynamic>> Function(
-  String path,
-  Map<String, dynamic> body,
-);
+typedef LegacyExportPost =
+    Future<Map<String, dynamic>> Function(
+      String path,
+      Map<String, dynamic> body,
+    );
 
 typedef LegacyProofProvider = Future<String> Function();
 
@@ -55,26 +56,30 @@ class LegacyCiphertextExportClient {
   }
 
   Future<List<Map<String, dynamic>>> listItems() => _list(
-        mode: 'list_items',
-        afterKey: 'after_item_id',
-        nextKey: 'next_after_item_id',
-        idKey: 'item_id',
-      );
+    mode: 'list_items',
+    afterKey: 'after_item_id',
+    nextKey: 'next_after_item_id',
+    idKey: 'item_id',
+  );
 
   Future<List<Map<String, dynamic>>> listFiles() => _list(
-        mode: 'list_files',
-        afterKey: 'after_file_id',
-        nextKey: 'next_after_file_id',
-        idKey: 'file_id',
-      );
+    mode: 'list_files',
+    afterKey: 'after_file_id',
+    nextKey: 'next_after_file_id',
+    idKey: 'file_id',
+  );
 
   Future<String> readItemCiphertext({
     required int itemId,
     required int ciphertextChars,
   }) async {
     if (itemId <= 0) throw const FormatException('Invalid item ID');
-    return (await _read('read_item', 'item_id', itemId, ciphertextChars))
-        .ciphertext;
+    return (await _read(
+      'read_item',
+      'item_id',
+      itemId,
+      ciphertextChars,
+    )).ciphertext;
   }
 
   Future<String> readFileCiphertext({
@@ -82,8 +87,12 @@ class LegacyCiphertextExportClient {
     required int ciphertextChars,
   }) async {
     if (fileId.isEmpty) throw const FormatException('Invalid file ID');
-    return (await _read('read_file', 'file_id', fileId, ciphertextChars))
-        .ciphertext;
+    return (await _read(
+      'read_file',
+      'file_id',
+      fileId,
+      ciphertextChars,
+    )).ciphertext;
   }
 
   Future<LegacyCiphertextSource> readItemSource({
@@ -91,8 +100,13 @@ class LegacyCiphertextExportClient {
     required int ciphertextChars,
   }) {
     if (itemId <= 0) throw const FormatException('Invalid item ID');
-    return _read('read_item', 'item_id', itemId, ciphertextChars,
-        requireSource: true);
+    return _read(
+      'read_item',
+      'item_id',
+      itemId,
+      ciphertextChars,
+      requireSource: true,
+    );
   }
 
   Future<LegacyCiphertextSource> readFileSource({
@@ -100,8 +114,56 @@ class LegacyCiphertextExportClient {
     required int ciphertextChars,
   }) {
     if (fileId.isEmpty) throw const FormatException('Invalid file ID');
-    return _read('read_file', 'file_id', fileId, ciphertextChars,
-        requireSource: true);
+    return _read(
+      'read_file',
+      'file_id',
+      fileId,
+      ciphertextChars,
+      requireSource: true,
+    );
+  }
+
+  /// Read legacy file-only fields once under the same OPAQUE proof grant.
+  /// The source snapshot must match the ciphertext export exactly; these
+  /// plaintext fields are then encrypted locally into the V2 manifest.
+  Future<Map<String, String?>> readFileExtras({
+    required String fileId,
+    required String sourceSnapshot,
+  }) async {
+    if (fileId.isEmpty ||
+        !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(sourceSnapshot)) {
+      throw const FormatException('Invalid legacy file extra request');
+    }
+    try {
+      final response = await _page(<String, dynamic>{
+        'mode': 'read_file_extra',
+        'file_id': fileId,
+      });
+      final extras = response['legacy_extra'];
+      if (response['file_id'] != fileId ||
+          response['source_snapshot'] != sourceSnapshot ||
+          extras is! Map<String, dynamic> ||
+          extras.length != 2 ||
+          !extras.containsKey('relative_path') ||
+          !extras.containsKey('extracted_text')) {
+        throw const FormatException('Legacy file extra source changed');
+      }
+      final path = extras['relative_path'];
+      final text = extras['extracted_text'];
+      if ((path != null && path is! String) ||
+          (text != null && text is! String) ||
+          (path is String && utf8.encode(path).length > 4096) ||
+          (text is String && utf8.encode(text).length > 64 * 1024)) {
+        throw const FormatException('Invalid legacy file extra shape');
+      }
+      return <String, String?>{
+        'relative_path': path as String?,
+        'extracted_text': text as String?,
+      };
+    } catch (_) {
+      clearGrant();
+      rethrow;
+    }
   }
 
   Future<void> _startGrant() async {
@@ -150,11 +212,7 @@ class LegacyCiphertextExportClient {
     try {
       final response = await post(
         '/vault/legacy-ciphertext/export/page',
-        <String, dynamic>{
-          'export_token': token,
-          'sequence': sequence,
-          ...body,
-        },
+        <String, dynamic>{'export_token': token, 'sequence': sequence, ...body},
       );
       final next = response['next_sequence'];
       final remaining = response['pages_remaining'];
@@ -220,9 +278,9 @@ class LegacyCiphertextExportClient {
     String mode,
     String idKey,
     Object id,
-    int expectedChars,
-    {bool requireSource = false}
-  ) async {
+    int expectedChars, {
+    bool requireSource = false,
+  }) async {
     if (expectedChars <= 0 || expectedChars > maxTotalChars) {
       throw const FormatException('Invalid ciphertext length');
     }

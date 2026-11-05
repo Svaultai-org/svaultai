@@ -19,6 +19,7 @@ MAX_FILE_BYTES = 64 * 1024 * 1024
 MAX_CHUNK_BYTES = 1024 * 1024
 MAX_CHUNKS = 4096
 MAX_MANIFEST_CIPHERTEXT_BYTES = 64 * 1024
+MAX_EXTRA_MANIFEST_CIPHERTEXT_BYTES = 512 * 1024
 MAX_ENCRYPTED_SAVED_NAME_BYTES = 4096
 GCM_FRAMING_BYTES = 12 + 16
 FORBIDDEN = ('filename','filename_plaintext','file_content','file_content_plaintext',
@@ -132,18 +133,21 @@ class Manifest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     file_id: str = Field(min_length=1, max_length=128)
     crypto_version: str = Field(pattern='^client_mvk_v2$')
-    manifest_ciphertext: str = Field(min_length=1, max_length=90_000)
+    manifest_ciphertext: str = Field(min_length=1, max_length=700_000)
     total_bytes: int = Field(ge=0, le=MAX_FILE_BYTES)
     chunk_size: int = Field(gt=0, le=MAX_CHUNK_BYTES)
     chunk_count: int = Field(ge=0, le=MAX_CHUNKS)
     migrating_legacy: bool = False
     source_snapshot: str | None = Field(default=None, min_length=43, max_length=43)
+    migration_metadata_version: int = Field(default=1, ge=1, le=2)
 
     @model_validator(mode='after')
     def validate_framing(self):
         expected = (self.total_bytes + self.chunk_size - 1) // self.chunk_size
         if self.chunk_count != expected:
             raise ValueError('file_v2_chunk_count_mismatch')
+        if self.migration_metadata_version == 2 and not self.migrating_legacy:
+            raise ValueError('file_v2_legacy_metadata_requires_migration')
         return self
 
 class Chunk(BaseModel):
@@ -178,7 +182,10 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
     if not payload.migrating_legacy and payload.source_snapshot is not None:
         raise HTTPException(400, detail='unexpected_source_snapshot')
     ct = _decode(payload.manifest_ciphertext)
-    if len(ct) > MAX_MANIFEST_CIPHERTEXT_BYTES:
+    manifest_limit = (MAX_EXTRA_MANIFEST_CIPHERTEXT_BYTES
+                      if payload.migration_metadata_version == 2
+                      else MAX_MANIFEST_CIPHERTEXT_BYTES)
+    if len(ct) > manifest_limit:
         raise HTTPException(413, detail='file_v2_manifest_too_large')
     conn = get_db(); cur = conn.cursor()
     try:
@@ -220,10 +227,10 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
             ) != payload.source_snapshot:
                 conn.rollback()
                 raise HTTPException(409, detail='legacy_source_changed')
-        cur.execute('''INSERT INTO file_v2_records(file_id,vault_id,crypto_version,manifest_ciphertext,total_bytes,chunk_size,chunk_count,migrating_legacy)
-                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
+        cur.execute('''INSERT INTO file_v2_records(file_id,vault_id,crypto_version,manifest_ciphertext,total_bytes,chunk_size,chunk_count,migrating_legacy,migration_metadata_version)
+                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
                        ON CONFLICT (file_id) DO NOTHING
-                       RETURNING file_id''', (payload.file_id, principal['vault_id'], payload.crypto_version, ct, payload.total_bytes, payload.chunk_size, payload.chunk_count, payload.migrating_legacy))
+                       RETURNING file_id''', (payload.file_id, principal['vault_id'], payload.crypto_version, ct, payload.total_bytes, payload.chunk_size, payload.chunk_count, payload.migrating_legacy, payload.migration_metadata_version))
         inserted = cur.fetchone()
         if inserted is None:
             # Idempotent retry is allowed only for the exact same logical
@@ -234,11 +241,13 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
                              AND crypto_version=%s AND total_bytes=%s
                              AND chunk_size=%s AND chunk_count=%s
                              AND migrating_legacy=%s
+                             AND migration_metadata_version=%s
                              AND manifest_ciphertext=%s''',
                         (payload.file_id, principal['vault_id'],
                          payload.crypto_version, payload.total_bytes,
                          payload.chunk_size, payload.chunk_count,
-                         payload.migrating_legacy, ct))
+                         payload.migrating_legacy,
+                         payload.migration_metadata_version, ct))
             if cur.fetchone() is None:
                 conn.rollback()
                 raise HTTPException(409, detail='file_v2_manifest_conflict')
@@ -301,7 +310,7 @@ def list_files(principal: SessionPrincipal = Depends(verify_trusted_device)):
 def get_manifest(file_id: str, principal: SessionPrincipal = Depends(verify_trusted_device)):
     _enabled(False); conn = get_db(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        cur.execute('''SELECT file_id,crypto_version,manifest_ciphertext,total_bytes,chunk_size,chunk_count,lifecycle_state,verification_state,saved_name_override_ciphertext,name_version FROM file_v2_records WHERE file_id=%s AND vault_id=%s''', (file_id, principal['vault_id'])); r=cur.fetchone()
+        cur.execute('''SELECT file_id,crypto_version,manifest_ciphertext,total_bytes,chunk_size,chunk_count,lifecycle_state,verification_state,saved_name_override_ciphertext,name_version,migration_metadata_version FROM file_v2_records WHERE file_id=%s AND vault_id=%s''', (file_id, principal['vault_id'])); r=cur.fetchone()
         if not r: raise HTTPException(404, detail='file_v2_not_found')
         require_file_read(principal, int(r['total_bytes']))
         r['manifest_ciphertext']=base64.urlsafe_b64encode(bytes(r['manifest_ciphertext'])).decode().rstrip('=')

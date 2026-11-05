@@ -882,6 +882,20 @@ const bool kEnableLegacyStageRecovery = bool.fromEnvironment(
   defaultValue: false,
 ) && kEnableLegacyContentStage;
 
+// Requires backend 0056 and the proof-bound read_file_extra export mode.
+// Keep off until V2 readers on all supported clients can read V2 manifests.
+const bool kEnableLegacyFileExtraStage = bool.fromEnvironment(
+  'VAULTAI_ENABLE_LEGACY_FILE_EXTRA_STAGE',
+  defaultValue: false,
+) && kEnableLegacyStageRecovery;
+
+// Transitional native action only. Large legacy files need an explicit owner
+// action and a bounded streaming pass; the browser implementation is too slow.
+const bool kEnableLargeLegacyFileStageNative = bool.fromEnvironment(
+  'VAULTAI_ENABLE_LEGACY_LARGE_FILE_STAGE_NATIVE',
+  defaultValue: false,
+) && kEnableLegacyContentStage;
+
 const bool kEnableFileV2UiRead = bool.fromEnvironment(
   'VAULTAI_ENABLE_FILE_V2_UI_READ',
   defaultValue: false,
@@ -5427,6 +5441,7 @@ Future<void> _stageLegacyContentBestEffort({
       enabled: true,
       recoveryEnabled: kEnableLegacyStageRecovery,
       prioritizeUnstagedFiles: true,
+      extraFileMetadataEnabled: kEnableLegacyFileExtraStage,
       export: export,
       codec: legacy_codec.LegacyCiphertextMigrationCodec(
         legacyKey: legacyKey,

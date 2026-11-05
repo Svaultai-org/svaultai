@@ -26,11 +26,11 @@ class StagedLegacyItem {
   });
 
   Map<String, Object> toStageBody() => <String, Object>{
-        'item_id': itemId,
-        'item_type_ciphertext': itemTypeCiphertext,
-        'service_ciphertext': serviceCiphertext,
-        'payload_ciphertext': payloadCiphertext,
-      };
+    'item_id': itemId,
+    'item_type_ciphertext': itemTypeCiphertext,
+    'service_ciphertext': serviceCiphertext,
+    'payload_ciphertext': payloadCiphertext,
+  };
 }
 
 class StagedLegacyFile {
@@ -39,6 +39,7 @@ class StagedLegacyFile {
   final int chunkSize;
   final String manifestCiphertext;
   final List<String> chunkCiphertexts;
+  final int migrationMetadataVersion;
 
   const StagedLegacyFile({
     required this.fileId,
@@ -46,22 +47,25 @@ class StagedLegacyFile {
     required this.chunkSize,
     required this.manifestCiphertext,
     required this.chunkCiphertexts,
+    this.migrationMetadataVersion = 1,
   });
 
   Map<String, Object> toManifestBody() => <String, Object>{
-        'file_id': fileId,
-        'crypto_version': 'client_mvk_v2',
-        'manifest_ciphertext': manifestCiphertext,
-        'total_bytes': totalBytes,
-        'chunk_size': chunkSize,
-        'chunk_count': chunkCiphertexts.length,
-      };
+    'file_id': fileId,
+    'crypto_version': 'client_mvk_v2',
+    'manifest_ciphertext': manifestCiphertext,
+    'total_bytes': totalBytes,
+    'chunk_size': chunkSize,
+    'chunk_count': chunkCiphertexts.length,
+    if (migrationMetadataVersion == 2)
+      'migration_metadata_version': migrationMetadataVersion,
+  };
 
   Map<String, Object> chunkBody(int index) => <String, Object>{
-        'file_id': fileId,
-        'chunk_index': index,
-        'ciphertext': chunkCiphertexts[index],
-      };
+    'file_id': fileId,
+    'chunk_index': index,
+    'ciphertext': chunkCiphertexts[index],
+  };
 }
 
 class LegacyCiphertextMigrationCodec {
@@ -89,15 +93,17 @@ class LegacyCiphertextMigrationCodec {
       itemId: itemId,
       itemTypeCiphertext: await wrap(itemType),
       serviceCiphertext: await wrap(service),
-      payloadCiphertext: await wrap(jsonEncode(<String, Object?>{
-        'fields': fields,
-        if (legacyRecord['notes'] is String) 'notes': legacyRecord['notes'],
-        if (legacyRecord['draft_id'] is String)
-          'draft_id': legacyRecord['draft_id'],
-        // Preserve the complete old shape under MVK for exact readback and
-        // future schema handling. Only `fields` is shown in the current UI.
-        'legacy_record': legacyRecord,
-      })),
+      payloadCiphertext: await wrap(
+        jsonEncode(<String, Object?>{
+          'fields': fields,
+          if (legacyRecord['notes'] is String) 'notes': legacyRecord['notes'],
+          if (legacyRecord['draft_id'] is String)
+            'draft_id': legacyRecord['draft_id'],
+          // Preserve the complete old shape under MVK for exact readback and
+          // future schema handling. Only `fields` is shown in the current UI.
+          'legacy_record': legacyRecord,
+        }),
+      ),
     );
   }
 
@@ -116,9 +122,8 @@ class LegacyCiphertextMigrationCodec {
       final legacyRecord = await _legacyItemFields(legacyCiphertext);
       final fields = _visibleLegacyFields(legacyRecord);
       final key = await VaultKeyHierarchy(mvk).metadataKey();
-      Future<String> unwrap(String encoded) async => utf8.decode(
-            await aesGcmUnwrap(key, b64urlDecode(encoded)),
-          );
+      Future<String> unwrap(String encoded) async =>
+          utf8.decode(await aesGcmUnwrap(key, b64urlDecode(encoded)));
       if (await unwrap(itemTypeCiphertext) != itemType ||
           await unwrap(serviceCiphertext) != service) {
         return false;
@@ -138,6 +143,7 @@ class LegacyCiphertextMigrationCodec {
     required int declaredFileSize,
     required String? contentType,
     required Map<String, String?> encryptedMetadata,
+    Map<String, String?>? legacyExtra,
     int chunkSize = 256 * 1024,
   }) async {
     if (fileId.isEmpty || chunkSize <= 0) {
@@ -158,23 +164,27 @@ class LegacyCiphertextMigrationCodec {
         throw const FormatException('Legacy file metadata cannot be read');
       }
     }
+    _validateLegacyExtra(legacyExtra);
     final chunks = <String>[];
     for (var offset = 0; offset < plain.length; offset += chunkSize) {
-      final end =
-          offset + chunkSize < plain.length ? offset + chunkSize : plain.length;
-      chunks.add(b64urlEncode(await aesGcmWrap(
-        contentKey,
-        plain.sublist(offset, end),
-      )));
+      final end = offset + chunkSize < plain.length
+          ? offset + chunkSize
+          : plain.length;
+      chunks.add(
+        b64urlEncode(await aesGcmWrap(contentKey, plain.sublist(offset, end))),
+      );
     }
     final manifest = <String, Object?>{
-      'schema': 'vaultai.file.migrated.v1',
+      'schema': legacyExtra == null
+          ? 'vaultai.file.migrated.v1'
+          : 'vaultai.file.migrated.v2',
       'file_id': fileId,
       'file_size': plain.length,
       'content_type': contentType,
       'chunk_size': chunkSize,
       'chunk_count': chunks.length,
       'encrypted_metadata': encryptedMetadata,
+      if (legacyExtra != null) 'legacy_extra': legacyExtra,
     };
     return StagedLegacyFile(
       fileId: fileId,
@@ -184,6 +194,7 @@ class LegacyCiphertextMigrationCodec {
         await aesGcmWrap(metadataKey, utf8.encode(jsonEncode(manifest))),
       ),
       chunkCiphertexts: List<String>.unmodifiable(chunks),
+      migrationMetadataVersion: legacyExtra == null ? 1 : 2,
     );
   }
 
@@ -195,6 +206,7 @@ class LegacyCiphertextMigrationCodec {
     required int declaredFileSize,
     required String? contentType,
     required Map<String, String?> encryptedMetadata,
+    Map<String, String?>? legacyExtra,
     required int chunkSize,
     required int chunkCount,
     required String manifestCiphertext,
@@ -204,19 +216,29 @@ class LegacyCiphertextMigrationCodec {
         return false;
       }
       final metadataKey = await VaultKeyHierarchy(mvk).metadataKey();
-      final manifest = jsonDecode(utf8.decode(await aesGcmUnwrap(
-        metadataKey,
-        b64urlDecode(manifestCiphertext),
-      )));
+      final manifest = jsonDecode(
+        utf8.decode(
+          await aesGcmUnwrap(metadataKey, b64urlDecode(manifestCiphertext)),
+        ),
+      );
+      _validateLegacyExtra(legacyExtra);
       return manifest is Map &&
-          manifest['schema'] == 'vaultai.file.migrated.v1' &&
+          manifest['schema'] ==
+              (legacyExtra == null
+                  ? 'vaultai.file.migrated.v1'
+                  : 'vaultai.file.migrated.v2') &&
           manifest['file_id'] == fileId &&
           manifest['file_size'] == declaredFileSize &&
           manifest['content_type'] == contentType &&
           manifest['chunk_size'] == chunkSize &&
           manifest['chunk_count'] == chunkCount &&
+          (legacyExtra == null
+              ? !manifest.containsKey('legacy_extra')
+              : _sameJson(manifest['legacy_extra'], legacyExtra)) &&
           await _sameEncryptedMetadata(
-            manifest['encrypted_metadata'], encryptedMetadata, metadataKey,
+            manifest['encrypted_metadata'],
+            encryptedMetadata,
+            metadataKey,
           );
     } catch (_) {
       return false;
@@ -235,8 +257,12 @@ class LegacyCiphertextMigrationCodec {
       final newValue = entry.value;
       if (oldValue == null && newValue == null) continue;
       if (oldValue is! String || newValue is! String) return false;
-      final oldPlain = utf8.decode(await aesGcmUnwrap(key, b64urlDecode(oldValue)));
-      final newPlain = utf8.decode(await aesGcmUnwrap(key, b64urlDecode(newValue)));
+      final oldPlain = utf8.decode(
+        await aesGcmUnwrap(key, b64urlDecode(oldValue)),
+      );
+      final newPlain = utf8.decode(
+        await aesGcmUnwrap(key, b64urlDecode(newValue)),
+      );
       if (oldPlain != newPlain) return false;
     }
     return true;
@@ -248,6 +274,7 @@ class LegacyCiphertextMigrationCodec {
     required int declaredFileSize,
     required String? contentType,
     required Map<String, String?> encryptedMetadata,
+    Map<String, String?>? legacyExtra,
     required int chunkSize,
     required int chunkCount,
     required String manifestCiphertext,
@@ -265,6 +292,7 @@ class LegacyCiphertextMigrationCodec {
         declaredFileSize: declaredFileSize,
         contentType: contentType,
         encryptedMetadata: encryptedMetadata,
+        legacyExtra: legacyExtra,
         chunkSize: chunkSize,
         chunkCount: chunkCount,
         manifestCiphertext: manifestCiphertext,
@@ -280,6 +308,19 @@ class LegacyCiphertextMigrationCodec {
       return _sameBytes(plain, verified.toBytes());
     } catch (_) {
       return false;
+    }
+  }
+
+  void _validateLegacyExtra(Map<String, String?>? extra) {
+    if (extra == null) return;
+    if (extra.length != 2 ||
+        !extra.containsKey('relative_path') ||
+        !extra.containsKey('extracted_text') ||
+        (extra['relative_path'] != null &&
+            utf8.encode(extra['relative_path']!).length > 4096) ||
+        (extra['extracted_text'] != null &&
+            utf8.encode(extra['extracted_text']!).length > 64 * 1024)) {
+      throw const FormatException('Invalid legacy file extra shape');
     }
   }
 
@@ -316,10 +357,9 @@ class LegacyCiphertextMigrationCodec {
       nonce: combined.sublist(0, 12),
       mac: Mac(combined.sublist(combined.length - 16)),
     );
-    return Uint8List.fromList(await _legacyAesGcm.decrypt(
-      box,
-      secretKey: legacyKey,
-    ));
+    return Uint8List.fromList(
+      await _legacyAesGcm.decrypt(box, secretKey: legacyKey),
+    );
   }
 }
 

@@ -51,6 +51,9 @@ GRANT_MAX_BYTES = 32 * 1024 * 1024
 PAGE_MAX_BYTES = 4 * 1024 * 1024 + 64 * 1024
 CHUNK_MAX_CHARS = 4 * 1024 * 1024
 LIST_MAX_RECORDS = 50
+# Extra legacy fields can contain document text. Export them in a separate,
+# proof-bound page so they are never repeated with every ciphertext chunk.
+MAX_FILE_EXTRA_BYTES = 64 * 1024
 
 
 def _enabled() -> bool:
@@ -131,7 +134,7 @@ class LegacyExportPageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     export_token: str = Field(..., min_length=1, max_length=128)
     sequence: int = Field(..., ge=0)
-    mode: Literal["list_items", "list_files", "read_item", "read_file"]
+    mode: Literal["list_items", "list_files", "read_item", "read_file", "read_file_extra"]
     limit: int = Field(default=20, ge=1, le=LIST_MAX_RECORDS)
     after_item_id: int = Field(default=0, ge=0)
     after_file_id: str = Field(default="", max_length=128)
@@ -251,7 +254,9 @@ def _list_files(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
                file_name_ciphertext, saved_name_ciphertext,
                content_type_ciphertext, detected_type_ciphertext,
                detected_service_ciphertext, asset_type_ciphertext,
-               LENGTH(encrypted_file_data) AS ciphertext_chars
+               LENGTH(encrypted_file_data) AS ciphertext_chars,
+               OCTET_LENGTH(extracted_text) AS extra_text_bytes,
+               OCTET_LENGTH(relative_path) AS extra_path_bytes
           FROM uploaded_files
          WHERE vault_id = %s AND storage_mode = 'inline'
            AND upload_status = 'complete'
@@ -273,6 +278,8 @@ def _list_files(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
             "file_size": int(row["file_size"]),
             "content_type": content_type,
             "ciphertext_chars": int(row["ciphertext_chars"]),
+            "extra_text_bytes": int(row["extra_text_bytes"] or 0),
+            "extra_path_bytes": int(row["extra_path_bytes"] or 0),
             **{
                 field: _metadata_b64(row[field])
                 for field in (
@@ -350,6 +357,10 @@ def _read_chunk(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
         # those latest labels to re-encrypt them before retiring the old row.
         metadata = {
             "file_size": int(row["file_size"]),
+            "has_legacy_extra_data": (
+                row["relative_path"] is not None or
+                row["extracted_text"] is not None
+            ),
             **{field: row[field] for field in (
                 "file_name", "saved_name", "content_type",
                 "detected_type", "detected_service", "asset_type",
@@ -381,6 +392,54 @@ def _read_chunk(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
             kind, row, vault_id=vault_id, record_id=record_id,
         ),
         "source_metadata": metadata,
+    }
+
+
+def _read_file_extra(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
+    if payload.file_id is None:
+        raise HTTPException(status_code=400, detail="file_id_required")
+    cur.execute(
+        "SELECT LENGTH(encrypted_file_data) AS legacy_chars, "
+        "OCTET_LENGTH(relative_path) AS path_bytes, "
+        "OCTET_LENGTH(extracted_text) AS text_bytes "
+        "FROM uploaded_files WHERE vault_id=%s AND id=%s "
+        "AND storage_mode='inline' AND upload_status='complete' "
+        "AND encrypted_file_data IS NOT NULL",
+        (vault_id, payload.file_id),
+    )
+    lengths = cur.fetchone()
+    if lengths is None:
+        raise HTTPException(status_code=404, detail="legacy_record_not_found")
+    if int(lengths["legacy_chars"]) > MAX_SOURCE_CIPHERTEXT_CHARS:
+        raise HTTPException(status_code=413, detail="legacy_streaming_required")
+    if (int(lengths["path_bytes"] or 0) > 4096 or
+            int(lengths["text_bytes"] or 0) > MAX_FILE_EXTRA_BYTES):
+        raise HTTPException(status_code=413, detail="legacy_file_extra_streaming_required")
+    cur.execute(
+        f"SELECT {', '.join(FILE_SOURCE_FIELDS)} FROM uploaded_files "
+        "WHERE vault_id=%s AND id=%s AND storage_mode='inline' "
+        "AND upload_status='complete' AND encrypted_file_data IS NOT NULL",
+        (vault_id, payload.file_id),
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="legacy_record_not_found")
+    # A concurrent mutation can occur between the size check and full read.
+    path = row["relative_path"]
+    text = row["extracted_text"]
+    path_bytes = len(path.encode("utf-8")) if path is not None else 0
+    text_bytes = len(text.encode("utf-8")) if text is not None else 0
+    if path_bytes > 4096 or text_bytes > MAX_FILE_EXTRA_BYTES:
+        raise HTTPException(status_code=413, detail="legacy_file_extra_streaming_required")
+    return {
+        "file_id": payload.file_id,
+        "source_snapshot": legacy_source_snapshot(
+            "file", row, vault_id=vault_id, record_id=payload.file_id,
+        ),
+        "legacy_extra": {
+            "relative_path": path,
+            "extracted_text": text,
+        },
     }
 
 
@@ -427,6 +486,8 @@ def legacy_export_page(
             data = _list_items(cur, principal["vault_id"], payload)
         elif payload.mode == "list_files":
             data = _list_files(cur, principal["vault_id"], payload)
+        elif payload.mode == "read_file_extra":
+            data = _read_file_extra(cur, principal["vault_id"], payload)
         else:
             data = _read_chunk(cur, principal["vault_id"], payload)
         response = {

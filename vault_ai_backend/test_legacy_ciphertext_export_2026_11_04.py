@@ -73,6 +73,23 @@ class FakeCursor:
                 "item_type_ciphertext": None,
                 "service_ciphertext": None,
             }] if vault_id == VAULT and item_id == 7 else []
+        elif normalized.startswith("SELECT LENGTH(encrypted_file_data) AS total_chars"):
+            vault_id, file_id = params
+            self.rows = [{
+                "total_chars": len(self.db.file["encrypted_file_data"]),
+            }] if vault_id == VAULT and file_id == self.db.file["id"] else []
+        elif normalized.startswith("SELECT LENGTH(encrypted_file_data) AS legacy_chars"):
+            vault_id, file_id = params
+            self.rows = [{
+                "legacy_chars": len(self.db.file["encrypted_file_data"]),
+                "path_bytes": len((self.db.file["relative_path"] or "").encode()),
+                "text_bytes": len((self.db.file["extracted_text"] or "").encode()),
+            }] if vault_id == VAULT and file_id == self.db.file["id"] else []
+        elif normalized.startswith("SELECT encrypted_file_data, file_size,"):
+            vault_id, file_id = params
+            self.rows = [dict(self.db.file)] if (
+                vault_id == VAULT and file_id == self.db.file["id"]
+            ) else []
         else:
             raise AssertionError(f"Unexpected SQL shape: {normalized[:80]}")
 
@@ -107,6 +124,25 @@ class FakeDb:
     def __init__(self):
         self.grants = {}
         self.connections = []
+        self.file = {
+            "id": "synthetic-file",
+            "encrypted_file_data": "SYNTHETIC_B64_FILE",
+            "file_size": 3,
+            "file_name": "synthetic.txt",
+            "saved_name": None,
+            "content_type": "text/plain",
+            "detected_type": None,
+            "detected_service": None,
+            "asset_type": None,
+            "relative_path": "synthetic/folder/file.txt",
+            "extracted_text": "synthetic private document text",
+            "file_name_ciphertext": None,
+            "saved_name_ciphertext": None,
+            "content_type_ciphertext": None,
+            "detected_type_ciphertext": None,
+            "detected_service_ciphertext": None,
+            "asset_type_ciphertext": None,
+        }
 
     def connect(self):
         conn = FakeConnection(self)
@@ -221,3 +257,53 @@ def test_item_chunk_returns_only_ciphertext_and_enforces_budget(runtime):
         )
     assert exc.value.status_code == 413
     assert json.loads(db.grants[token]["state"].decode())["sequence"] == 1
+
+
+def test_file_extras_are_one_proof_bound_page_with_source_snapshot(runtime):
+    db, consumed = runtime
+    token = _start(db, consumed)["export_token"]
+    result = export.legacy_export_page(export.LegacyExportPageRequest(
+        export_token=token, sequence=0, mode="read_file_extra",
+        file_id=db.file["id"],
+    ), PRINCIPAL)
+    assert result["legacy_extra"] == {
+        "relative_path": "synthetic/folder/file.txt",
+        "extracted_text": "synthetic private document text",
+    }
+    assert len(result["source_snapshot"]) == 43
+    assert "encrypted_file_data" not in result
+    assert "pin" not in result
+    with pytest.raises(HTTPException) as replay:
+        export.legacy_export_page(export.LegacyExportPageRequest(
+            export_token=token, sequence=0, mode="read_file_extra",
+            file_id=db.file["id"],
+        ), PRINCIPAL)
+    assert replay.value.status_code == 409
+
+
+def test_normal_file_page_discloses_only_extra_presence(runtime):
+    db, consumed = runtime
+    token = _start(db, consumed)["export_token"]
+    result = export.legacy_export_page(export.LegacyExportPageRequest(
+        export_token=token, sequence=0, mode="read_file",
+        file_id=db.file["id"], offset=0, max_chars=100,
+    ), PRINCIPAL)
+    assert result["source_metadata"]["has_legacy_extra_data"] is True
+    assert "extracted_text" not in result["source_metadata"]
+    assert "relative_path" not in result["source_metadata"]
+    assert result["ciphertext_chunk"] == db.file["encrypted_file_data"]
+
+
+def test_oversized_extra_text_is_rejected_before_full_row_read(runtime):
+    db, consumed = runtime
+    db.file["extracted_text"] = "x" * (export.MAX_FILE_EXTRA_BYTES + 1)
+    token = _start(db, consumed)["export_token"]
+    with pytest.raises(HTTPException) as large:
+        export.legacy_export_page(export.LegacyExportPageRequest(
+            export_token=token, sequence=0, mode="read_file_extra",
+            file_id=db.file["id"],
+        ), PRINCIPAL)
+    assert large.value.status_code == 413
+    executed = db.connections[-1].cursor_obj.executed
+    assert not any(sql.startswith("SELECT encrypted_file_data, file_size,")
+                   for sql, _ in executed)

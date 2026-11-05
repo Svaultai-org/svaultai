@@ -148,4 +148,50 @@ void main() {
     );
     await expectLater(reader.download(staged.fileId), throwsA(anything));
   });
+
+  test('reads owner-rewrapped legacy text and path from V2 only', () async {
+    const extras = <String, String?>{
+      'relative_path': 'private/folder/report.txt',
+      'extracted_text': 'synthetic private report text',
+    };
+    final staged = await LegacyCiphertextMigrationCodec(
+      legacyKey: _legacyKey, mvk: _mvk,
+    ).stageFile(
+      fileId: 'synthetic-file-extra',
+      legacyCiphertext: await _legacyEncrypt(const <int>[7, 8]),
+      declaredFileSize: 2,
+      contentType: 'text/plain',
+      encryptedMetadata: const <String, String?>{},
+      legacyExtra: extras,
+    );
+    final reader = FileV2Reader(
+      mvk: _mvk,
+      get: (path) async => path.endsWith('/manifest')
+          ? <String, dynamic>{
+              ...staged.toManifestBody(),
+              'lifecycle_state': 'legacy_migration_retired',
+              'verification_state': 'client_verified',
+            }
+          : <String, dynamic>{
+              'file_id': staged.fileId,
+              'chunk_index': 0,
+              'ciphertext': staged.chunkCiphertexts.single,
+            },
+    );
+    final opened = await reader.download(staged.fileId, requireRetired: true);
+    expect(opened.bytes, <int>[7, 8]);
+    expect(opened.manifest.relativePath, extras['relative_path']);
+    expect(opened.manifest.extractedText, extras['extracted_text']);
+    final mismatchedVersion = FileV2Reader(
+      mvk: _mvk,
+      get: (_) async => <String, dynamic>{
+        ...staged.toManifestBody(),
+        'migration_metadata_version': 1,
+      },
+    );
+    await expectLater(
+      mismatchedVersion.readManifest(staged.fileId),
+      throwsFormatException,
+    );
+  });
 }

@@ -31,6 +31,8 @@ class FileV2Manifest {
   final String? assetType;
   final String? detectedType;
   final String? detectedService;
+  final String? relativePath;
+  final String? extractedText;
   final bool retired;
   final bool readyForUse;
   final int nameVersion;
@@ -46,6 +48,8 @@ class FileV2Manifest {
     required this.assetType,
     required this.detectedType,
     required this.detectedService,
+    this.relativePath,
+    this.extractedText,
     required this.retired,
     required this.readyForUse,
     this.nameVersion = 0,
@@ -54,8 +58,8 @@ class FileV2Manifest {
   String get displayName => (savedName?.trim().isNotEmpty ?? false)
       ? savedName!
       : (fileName?.trim().isNotEmpty ?? false)
-          ? fileName!
-          : 'File';
+      ? fileName!
+      : 'File';
 }
 
 class FileV2Download {
@@ -87,11 +91,13 @@ class FileV2Reader {
       }
       if (retiredOnly && !_isRetired(row)) continue;
       if (readyOnly && !_isReady(row)) continue;
-      result.add(await readManifest(
-        row['file_id'] as String,
-        requireRetired: retiredOnly,
-        requireReady: readyOnly,
-      ));
+      result.add(
+        await readManifest(
+          row['file_id'] as String,
+          requireRetired: retiredOnly,
+          requireReady: readyOnly,
+        ),
+      );
     }
     return result;
   }
@@ -137,13 +143,45 @@ class FileV2Reader {
       b64urlDecode(response['manifest_ciphertext'] as String),
     );
     final decoded = jsonDecode(utf8.decode(plaintext));
+    final migrationMetadataVersion =
+        response['migration_metadata_version'] ?? 1;
     if (decoded is! Map ||
-        decoded['schema'] != 'vaultai.file.migrated.v1' ||
+        migrationMetadataVersion is! int ||
+        migrationMetadataVersion < 1 ||
+        migrationMetadataVersion > 2 ||
+        decoded['schema'] !=
+            (migrationMetadataVersion == 2
+                ? 'vaultai.file.migrated.v2'
+                : 'vaultai.file.migrated.v1') ||
         decoded['file_id'] != fileId ||
         decoded['file_size'] != total ||
         decoded['chunk_size'] != chunkSize ||
         decoded['chunk_count'] != chunkCount) {
       throw const FormatException('V2 file manifest mismatch');
+    }
+    String? relativePath;
+    String? extractedText;
+    if (migrationMetadataVersion == 2) {
+      final extra = decoded['legacy_extra'];
+      if (extra is! Map ||
+          extra.length != 2 ||
+          !extra.containsKey('relative_path') ||
+          !extra.containsKey('extracted_text') ||
+          (extra['relative_path'] != null &&
+              extra['relative_path'] is! String) ||
+          (extra['extracted_text'] != null &&
+              extra['extracted_text'] is! String)) {
+        throw const FormatException('Invalid V2 legacy file extras');
+      }
+      relativePath = extra['relative_path'] as String?;
+      extractedText = extra['extracted_text'] as String?;
+      if ((relativePath != null && utf8.encode(relativePath).length > 4096) ||
+          (extractedText != null &&
+              utf8.encode(extractedText).length > 64 * 1024)) {
+        throw const FormatException('V2 legacy file extras too large');
+      }
+    } else if (decoded.containsKey('legacy_extra')) {
+      throw const FormatException('Unexpected V2 legacy file extras');
     }
     final metadata = decoded['encrypted_metadata'];
     if (metadata is! Map) {
@@ -162,7 +200,8 @@ class FileV2Reader {
 
     final nameVersion = response['name_version'] ?? 0;
     final nameOverride = response['saved_name_override_ciphertext'];
-    if (nameVersion is! int || nameVersion < 0 ||
+    if (nameVersion is! int ||
+        nameVersion < 0 ||
         (nameVersion == 0 && nameOverride != null) ||
         (nameVersion > 0 &&
             (nameOverride is! String || nameOverride.isEmpty))) {
@@ -170,11 +209,10 @@ class FileV2Reader {
     }
     String? savedNameOverride;
     if (nameOverride is String) {
-      savedNameOverride = utf8.decode(await aesGcmUnwrap(
-        metadataKey, b64urlDecode(nameOverride),
-      ));
-      if (savedNameOverride.trim().isEmpty ||
-          savedNameOverride.length > 255) {
+      savedNameOverride = utf8.decode(
+        await aesGcmUnwrap(metadataKey, b64urlDecode(nameOverride)),
+      );
+      if (savedNameOverride.trim().isEmpty || savedNameOverride.length > 255) {
         throw const FormatException('Invalid encrypted file name');
       }
     }
@@ -190,12 +228,14 @@ class FileV2Reader {
       chunkSize: chunkSize,
       chunkCount: chunkCount,
       fileName: await unwrapMetadata('file_name_ciphertext'),
-      savedName: savedNameOverride ??
-          await unwrapMetadata('saved_name_ciphertext'),
+      savedName:
+          savedNameOverride ?? await unwrapMetadata('saved_name_ciphertext'),
       contentType: contentType as String?,
       assetType: await unwrapMetadata('asset_type_ciphertext'),
       detectedType: await unwrapMetadata('detected_type_ciphertext'),
       detectedService: await unwrapMetadata('detected_service_ciphertext'),
+      relativePath: relativePath,
+      extractedText: extractedText,
       retired: retired,
       readyForUse: ready,
       nameVersion: nameVersion,

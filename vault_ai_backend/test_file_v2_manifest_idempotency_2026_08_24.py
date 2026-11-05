@@ -26,20 +26,24 @@ class _Cursor:
             self.result = None
             return
         if normalized.startswith("insert into file_v2_records"):
-            file_id, vault_id, crypto, ciphertext, total, chunk, count = params
+            (file_id, vault_id, crypto, ciphertext, total, chunk, count,
+             migrating, metadata_version) = params
             if file_id in self.store:
                 self.result = None
             else:
                 self.store[file_id] = (
-                    str(vault_id), crypto, total, chunk, count, ciphertext
+                    str(vault_id), crypto, total, chunk, count,
+                    migrating, metadata_version, ciphertext,
                 )
                 self.result = (file_id,)
             return
         if normalized.startswith("select 1 from file_v2_records"):
-            file_id, vault_id, crypto, total, chunk, count, ciphertext = params
+            (file_id, vault_id, crypto, total, chunk, count,
+             migrating, metadata_version, ciphertext) = params
             row = self.store.get(file_id)
             self.result = (1,) if row and row == (
-                str(vault_id), crypto, total, chunk, count, ciphertext
+                str(vault_id), crypto, total, chunk, count,
+                migrating, metadata_version, ciphertext,
             ) else None
             return
         raise AssertionError(f"unexpected SQL: {normalized}")

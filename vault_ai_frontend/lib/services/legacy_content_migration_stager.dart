@@ -4,7 +4,8 @@
 
 import 'dart:convert';
 
-import 'package:cryptography/cryptography.dart' show SecretBoxAuthenticationError;
+import 'package:cryptography/cryptography.dart'
+    show SecretBoxAuthenticationError;
 
 import 'legacy_ciphertext_export_client.dart';
 import 'legacy_ciphertext_migration_codec.dart';
@@ -31,11 +32,12 @@ class MigrationReply {
   const MigrationReply(this.statusCode, this.data);
 }
 
-typedef MigrationRequest = Future<MigrationReply> Function(
-  String method,
-  String path, [
-  Map<String, dynamic>? body,
-]);
+typedef MigrationRequest =
+    Future<MigrationReply> Function(
+      String method,
+      String path, [
+      Map<String, dynamic>? body,
+    ]);
 
 /// Closed-set phase markers for temporary, content-free migration diagnosis.
 enum LegacyStagePhase {
@@ -72,6 +74,7 @@ class LegacyContentMigrationStager {
   final bool enabled;
   final bool recoveryEnabled;
   final bool prioritizeUnstagedFiles;
+  final bool extraFileMetadataEnabled;
   final LegacyCiphertextExportClient export;
   final LegacyCiphertextMigrationCodec codec;
   final MigrationRequest request;
@@ -81,6 +84,7 @@ class LegacyContentMigrationStager {
     this.enabled = false,
     this.recoveryEnabled = false,
     this.prioritizeUnstagedFiles = false,
+    this.extraFileMetadataEnabled = false,
     required this.export,
     required this.codec,
     required this.request,
@@ -112,6 +116,18 @@ class LegacyContentMigrationStager {
       onPhase?.call(LegacyStagePhase.filesListed);
       final eligibleFiles = <Map<String, dynamic>>[];
       for (final file in files) {
+        if (extraFileMetadataEnabled) {
+          final textBytes = file['extra_text_bytes'];
+          final pathBytes = file['extra_path_bytes'];
+          if (textBytes is! int || textBytes < 0 ||
+              pathBytes is! int || pathBytes < 0) {
+            throw const FormatException('Legacy file extra size unavailable');
+          }
+          if (textBytes > 64 * 1024 || pathBytes > 4096) {
+            filesDeferredForSize++;
+            continue;
+          }
+        }
         if (file['ciphertext_chars'] is int &&
             (file['ciphertext_chars'] as int) > maxAutomaticCiphertextChars) {
           filesDeferredForSize++;
@@ -204,13 +220,15 @@ class LegacyContentMigrationStager {
     );
     final metadata = source.sourceMetadata;
     final itemType = await _itemLabel(
-      metadata['item_type'], metadata['item_type_ciphertext'],
+      metadata['item_type'],
+      metadata['item_type_ciphertext'],
     );
     // Wallet-engine accounts have a dedicated migration and reader contract.
     // Generic saved-item V2 staging would obstruct that cutover.
     if (itemType == 'crypto_wallet_account') return false;
     final service = await _itemLabel(
-      metadata['service'], metadata['service_ciphertext'],
+      metadata['service'],
+      metadata['service_ciphertext'],
     );
     final legacy = source.ciphertext;
     var expectedSnapshot = source.sourceSnapshot;
@@ -255,13 +273,13 @@ class LegacyContentMigrationStager {
       throw const FormatException('Invalid staged item readback');
     }
     if (!await codec.verifyStagedItem(
-          itemType: itemType,
-          service: service,
-          legacyCiphertext: legacy,
-          itemTypeCiphertext: body['item_type_ciphertext'] as String,
-          serviceCiphertext: body['service_ciphertext'] as String,
-          payloadCiphertext: body['payload_ciphertext'] as String,
-        )) {
+      itemType: itemType,
+      service: service,
+      legacyCiphertext: legacy,
+      itemTypeCiphertext: body['item_type_ciphertext'] as String,
+      serviceCiphertext: body['service_ciphertext'] as String,
+      payloadCiphertext: body['payload_ciphertext'] as String,
+    )) {
       throw const _StageConflict();
     }
     return true;
@@ -287,7 +305,8 @@ class LegacyContentMigrationStager {
     final proof = await export.proofProvider();
     if (proof.isEmpty) throw StateError('PIN proof is unavailable');
     final response = await request(
-      'POST', '/vault/legacy-ciphertext/migrate/item-reset-stage',
+      'POST',
+      '/vault/legacy-ciphertext/migrate/item-reset-stage',
       <String, dynamic>{
         'item_id': itemId,
         'source_snapshot': source.sourceSnapshot,
@@ -357,7 +376,8 @@ class LegacyContentMigrationStager {
     final proof = await export.proofProvider();
     if (proof.isEmpty) throw StateError('PIN proof is unavailable');
     final response = await request(
-      'POST', '/vault/legacy-ciphertext/migrate/file-reset-stage',
+      'POST',
+      '/vault/legacy-ciphertext/migrate/file-reset-stage',
       <String, dynamic>{
         'file_id': fileId,
         'source_snapshot': source.sourceSnapshot,
@@ -375,9 +395,7 @@ class LegacyContentMigrationStager {
   Future<void> _stageFileOnce(Map<String, dynamic> record) async {
     final id = record['file_id'];
     final chars = record['ciphertext_chars'];
-    if (id is! String ||
-        id.isEmpty ||
-        chars is! int) {
+    if (id is! String || id.isEmpty || chars is! int) {
       throw const FormatException('Invalid legacy file listing');
     }
     final source = await export.readFileSource(
@@ -388,9 +406,26 @@ class LegacyContentMigrationStager {
     final metadata = source.sourceMetadata;
     final size = metadata['file_size'];
     final contentType = metadata['content_type'];
-    if (size is! int || size < 0 ||
+    if (size is! int ||
+        size < 0 ||
         (contentType != null && contentType is! String)) {
       throw const _UnreadableLegacyFileSource();
+    }
+    Map<String, String?>? legacyExtra;
+    if (extraFileMetadataEnabled) {
+      final hasExtra = metadata['has_legacy_extra_data'];
+      if (hasExtra is! bool) {
+        throw const FormatException('Legacy file extra contract unavailable');
+      }
+      if (hasExtra) {
+        legacyExtra = await export.readFileExtras(
+          fileId: id,
+          sourceSnapshot: source.sourceSnapshot,
+        );
+        if (legacyExtra.values.every((value) => value == null)) {
+          throw const FormatException('Legacy file extra source changed');
+        }
+      }
     }
     late final Map<String, String?> encryptedMetadata;
     try {
@@ -411,6 +446,7 @@ class LegacyContentMigrationStager {
         declaredFileSize: size,
         contentType: contentType as String?,
         encryptedMetadata: encryptedMetadata,
+        legacyExtra: legacyExtra,
       );
     } on FormatException {
       throw const _UnreadableLegacyFileSource();
@@ -422,24 +458,24 @@ class LegacyContentMigrationStager {
     final stagePath = '/vault/legacy-ciphertext/migrate/file-staged/$encodedId';
     var staged = await request('GET', stagePath);
     if (_hasExtraLegacyFileData(staged)) {
+      if (legacyExtra != null) throw const _StageConflict();
       throw const _ExtraLegacyFileData();
     }
     if (staged.statusCode == 409 &&
-        <String>{'file_v2_not_staged', 'file_v2_chunks_incomplete'}
-            .contains(_detailCode(staged))) {
+        <String>{
+          'file_v2_not_staged',
+          'file_v2_chunks_incomplete',
+        }.contains(_detailCode(staged))) {
       final manifestPath = '/vault/file-v2/$encodedId/manifest';
       final manifest = await request('GET', manifestPath);
       if (manifest.statusCode == 404 &&
           _detailCode(manifest) == 'file_v2_not_found') {
-        final ack = await request(
-          'POST',
-          '/vault/file-v2/manifest',
-          <String, dynamic>{
-            ...prepared.toManifestBody(),
-            'migrating_legacy': true,
-            'source_snapshot': source.sourceSnapshot,
-          },
-        );
+        final ack =
+            await request('POST', '/vault/file-v2/manifest', <String, dynamic>{
+              ...prepared.toManifestBody(),
+              'migrating_legacy': true,
+              'source_snapshot': source.sourceSnapshot,
+            });
         if (ack.statusCode == 409 &&
             _detailCode(ack) == 'file_v2_manifest_conflict') {
           throw const _StageConflict();
@@ -452,7 +488,9 @@ class LegacyContentMigrationStager {
             body['total_bytes'] is! int ||
             body['chunk_size'] is! int ||
             body['chunk_count'] is! int ||
-            body['manifest_ciphertext'] is! String) {
+            body['manifest_ciphertext'] is! String ||
+            (body['migration_metadata_version'] ?? 1) !=
+                prepared.migrationMetadataVersion) {
           throw const FormatException('Invalid existing file manifest');
         }
         if (body['total_bytes'] != size ||
@@ -463,6 +501,7 @@ class LegacyContentMigrationStager {
               declaredFileSize: size,
               contentType: contentType,
               encryptedMetadata: encryptedMetadata,
+              legacyExtra: legacyExtra,
               chunkSize: prepared.chunkSize,
               chunkCount: prepared.chunkCiphertexts.length,
               manifestCiphertext: body['manifest_ciphertext'] as String,
@@ -488,6 +527,7 @@ class LegacyContentMigrationStager {
       staged = await request('GET', stagePath);
     }
     if (_hasExtraLegacyFileData(staged)) {
+      if (legacyExtra != null) throw const _StageConflict();
       throw const _ExtraLegacyFileData();
     }
     _require200(staged);
@@ -496,7 +536,9 @@ class LegacyContentMigrationStager {
         readback['source_snapshot'] != source.sourceSnapshot ||
         readback['total_bytes'] is! int ||
         readback['chunk_count'] is! int ||
-        readback['manifest_ciphertext'] is! String) {
+        readback['manifest_ciphertext'] is! String ||
+        (readback['migration_metadata_version'] ?? 1) !=
+            prepared.migrationMetadataVersion) {
       throw const FormatException('Invalid staged file readback');
     }
     if (readback['total_bytes'] != size ||
@@ -524,6 +566,7 @@ class LegacyContentMigrationStager {
       declaredFileSize: size,
       contentType: contentType,
       encryptedMetadata: encryptedMetadata,
+      legacyExtra: legacyExtra,
       chunkSize: prepared.chunkSize,
       chunkCount: prepared.chunkCiphertexts.length,
       manifestCiphertext: readback['manifest_ciphertext'] as String,
@@ -533,6 +576,7 @@ class LegacyContentMigrationStager {
     }
     final finalSource = await request('GET', stagePath);
     if (_hasExtraLegacyFileData(finalSource)) {
+      if (legacyExtra != null) throw const _StageConflict();
       throw const _ExtraLegacyFileData();
     }
     _require200(finalSource);
@@ -568,7 +612,9 @@ class LegacyContentMigrationStager {
       final usePlain = plain is String && plain.isNotEmpty;
       result[entry.key] = usePlain
           ? b64urlEncode(await aesGcmWrap(key, utf8.encode(plain)))
-          : encrypted is String && encrypted.isNotEmpty ? encrypted : null;
+          : encrypted is String && encrypted.isNotEmpty
+          ? encrypted
+          : null;
     }
     return result;
   }
@@ -615,8 +661,11 @@ Map<String, dynamic> _requireMap(MigrationReply reply) {
 }
 
 void _require200(MigrationReply reply) {
-  if (reply.statusCode == 409 && _detailCode(reply) == 'legacy_source_changed') {
-    throw StateError('Legacy source changed. Restart migration to use the latest record.');
+  if (reply.statusCode == 409 &&
+      _detailCode(reply) == 'legacy_source_changed') {
+    throw StateError(
+      'Legacy source changed. Restart migration to use the latest record.',
+    );
   }
   if (reply.statusCode != 200) {
     // Never attach server response bodies, ciphertext, or identifiers.

@@ -35,6 +35,7 @@ LegacyCiphertextExportClient _export({
   Map<String, String>? fileSnapshots,
   Map<int, Map<String, dynamic>>? itemSourceMetadata,
   Map<String, Map<String, dynamic>>? fileSourceMetadata,
+  Map<String, Map<String, String?>>? fileExtras,
   LegacyProofProvider? proofProvider,
   List<String>? fileReadOrder,
 }) {
@@ -124,6 +125,14 @@ LegacyCiphertextExportClient _export({
                     'detected_service_ciphertext', 'asset_type_ciphertext',
                   ]) key: listed[key],
                 },
+          };
+        case 'read_file_extra':
+          final fileId = body['file_id'] as String;
+          return <String, dynamic>{
+            ...common,
+            'file_id': fileId,
+            'source_snapshot': fileSnapshots?[fileId] ?? _snapshotA,
+            'legacy_extra': fileExtras?[fileId],
           };
       }
       fail('Unexpected export mode');
@@ -288,6 +297,37 @@ void main() {
     expect(result.itemsVerified, 0);
     expect(result.filesVerified, 0);
     expect(result.itemsDeferredForSize, 1);
+    expect(result.filesDeferredForSize, 1);
+    expect(calls.where((path) => path.endsWith('/page')), hasLength(2));
+  });
+
+  test('oversize legacy text is deferred before owner content export',
+      () async {
+    final calls = <String>[];
+    final result = await LegacyContentMigrationStager(
+      enabled: true,
+      extraFileMetadataEnabled: true,
+      export: _export(
+        itemRows: const <Map<String, dynamic>>[],
+        fileRows: const <Map<String, dynamic>>[
+          <String, dynamic>{
+            'file_id': 'synthetic-oversize-extra',
+            'ciphertext_chars': 40,
+            'extra_text_bytes': 64 * 1024 + 1,
+            'extra_path_bytes': 0,
+          },
+        ],
+        itemCiphertexts: const <int, String>{},
+        fileCiphertexts: const <String, String>{},
+        calls: calls,
+      ),
+      codec: LegacyCiphertextMigrationCodec(
+        legacyKey: _legacyKey, mvk: _mvk,
+      ),
+      request: (_, __, [___]) async =>
+          throw StateError('oversize extra reached staging'),
+    ).stageAndVerify();
+    expect(result.filesVerified, 0);
     expect(result.filesDeferredForSize, 1);
     expect(calls.where((path) => path.endsWith('/page')), hasLength(2));
   });
@@ -939,6 +979,120 @@ void main() {
         metadataKey, b64urlDecode(labels[entry.key] as String),
       )), entry.value);
     }
+  });
+
+  test('stages legacy text and path in an opaque V2 manifest', () async {
+    final legacy = await _legacyEncrypt(const <int>[1, 2, 3]);
+    const fileId = 'synthetic-extra-file';
+    const extras = <String, String?>{
+      'relative_path': 'private/folder/file.txt',
+      'extracted_text': 'synthetic private document text',
+    };
+    final calls = <String>[];
+    Map<String, dynamic>? manifest;
+    String? chunk;
+    var oldSidecar = true;
+    final result = await LegacyContentMigrationStager(
+      enabled: true,
+      recoveryEnabled: true,
+      extraFileMetadataEnabled: true,
+      export: _export(
+        itemRows: const <Map<String, dynamic>>[],
+        fileRows: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'file_id': fileId,
+            'ciphertext_chars': legacy.length,
+            'extra_text_bytes': utf8.encode(extras['extracted_text']!).length,
+            'extra_path_bytes': utf8.encode(extras['relative_path']!).length,
+          },
+        ],
+        itemCiphertexts: const <int, String>{},
+        fileCiphertexts: <String, String>{fileId: legacy},
+        fileSourceMetadata: <String, Map<String, dynamic>>{
+          fileId: <String, dynamic>{
+            'file_size': 3,
+            'file_name': 'synthetic.txt',
+            'content_type': 'text/plain',
+            'has_legacy_extra_data': true,
+          },
+        },
+        fileExtras: const <String, Map<String, String?>>{fileId: extras},
+        calls: calls,
+      ),
+      codec: LegacyCiphertextMigrationCodec(
+        legacyKey: _legacyKey, mvk: _mvk,
+      ),
+      request: (method, path, [body]) async {
+        calls.add('$method $path');
+        if (path.endsWith('/file-staged/$fileId')) {
+          if (oldSidecar) {
+            return const MigrationReply(409, <String, dynamic>{
+              'detail': 'file_extra_legacy_data_requires_migration',
+            });
+          }
+          if (manifest == null) {
+            return const MigrationReply(
+              409, <String, dynamic>{'detail': 'file_v2_not_staged'},
+            );
+          }
+          return MigrationReply(200, <String, dynamic>{
+            'file_id': fileId,
+            'source_snapshot': _snapshotA,
+            'total_bytes': 3,
+            'chunk_count': 1,
+            'manifest_ciphertext': manifest!['manifest_ciphertext'],
+            'migration_metadata_version': 2,
+          });
+        }
+        if (method == 'POST' && path.endsWith('/file-reset-stage')) {
+          expect(body!['source_snapshot'], _snapshotA);
+          expect(body['zk_proof_token'], 'synthetic-opaque-proof');
+          oldSidecar = false;
+          return const MigrationReply(200, <String, dynamic>{
+            'file_id': fileId,
+            'stage_reset': true,
+          });
+        }
+        if (method == 'GET' && path.endsWith('/manifest')) {
+          return const MigrationReply(
+            404, <String, dynamic>{'detail': 'file_v2_not_found'},
+          );
+        }
+        if (method == 'POST' && path == '/vault/file-v2/manifest') {
+          expect(body!['migration_metadata_version'], 2);
+          expect(body['migrating_legacy'], isTrue);
+          expect(jsonEncode(body), isNot(contains(extras['extracted_text'])));
+          expect(jsonEncode(body), isNot(contains(extras['relative_path'])));
+          manifest = body;
+          return const MigrationReply(200, <String, dynamic>{});
+        }
+        if (method == 'GET' && path.endsWith('/chunk/0')) {
+          return chunk == null
+              ? const MigrationReply(404,
+                  <String, dynamic>{'detail': 'file_v2_chunk_not_found'})
+              : MigrationReply(200, <String, dynamic>{
+                  'file_id': fileId,
+                  'chunk_index': 0,
+                  'ciphertext': chunk,
+                });
+        }
+        if (method == 'PUT' && path == '/vault/file-v2/chunk') {
+          chunk = body!['ciphertext'] as String;
+          return const MigrationReply(200, <String, dynamic>{});
+        }
+        fail('Unexpected synthetic migration request');
+      },
+    ).stageAndVerify();
+    expect(result.filesVerified, 1);
+    expect(result.filesDeferredForExtraLegacyData, 0);
+    expect(calls.where((call) => call.endsWith('/file-reset-stage')), hasLength(1));
+    expect(calls.any((call) => call.contains('retire')), isFalse);
+    final key = await VaultKeyHierarchy(_mvk).metadataKey();
+    final decoded = jsonDecode(utf8.decode(await aesGcmUnwrap(
+      key, b64urlDecode(manifest!['manifest_ciphertext'] as String),
+    ))) as Map<String, dynamic>;
+    expect(decoded['schema'], 'vaultai.file.migrated.v2');
+    expect(decoded['legacy_extra'], extras);
   });
 
   test('stale source rejection aborts without deleting legacy item', () async {

@@ -54,6 +54,7 @@ def _file():
         "chunk_count": 2,
         "crypto_version": "client_mvk_v2",
         "verification_state": "not_verified",
+        "migration_metadata_version": 1,
     }
 
 
@@ -116,6 +117,7 @@ class FakeCursor:
                     encrypted_file_data=None, file_name=None, saved_name=None,
                     content_type=None, detected_type=None,
                     detected_service=None, asset_type=None,
+                    extracted_text=None, relative_path=None,
                 )
                 self.rowcount = 1
             self.result = []
@@ -343,6 +345,54 @@ def test_file_retire_rejects_missing_client_verification(runtime):
     assert exc.value.status_code == 400
     proof.assert_not_called()
     assert db.file["encrypted_file_data"] is not None
+
+
+def test_extra_fields_require_version_two_and_same_source_receipt(runtime, monkeypatch):
+    db, proof = runtime
+    db.file["extracted_text"] = "synthetic private document text"
+    db.file["relative_path"] = "synthetic/folder/file.txt"
+    with pytest.raises(HTTPException) as blocked:
+        migration.readback_staged_file(db.file["id"], PRINCIPAL)
+    assert blocked.value.status_code == 409
+    assert blocked.value.detail == "file_extra_legacy_data_requires_migration"
+    assert db.file["encrypted_file_data"] is not None
+
+    db.file["migration_metadata_version"] = 2
+    readback = migration.readback_staged_file(db.file["id"], PRINCIPAL)
+    assert readback["migration_metadata_version"] == 2
+    assert "extracted_text" not in readback
+    request = migration.FileRetireRequest(
+        file_id=db.file["id"],
+        readback_receipt=readback["readback_receipt"],
+        zk_proof_token="synthetic-extra-proof",
+        client_verified_exact_bytes=True,
+        source_snapshot=readback["source_snapshot"],
+    )
+    with pytest.raises(HTTPException) as extra_flag_off:
+        migration.retire_legacy_file(request, PRINCIPAL)
+    assert extra_flag_off.value.detail == "file_extra_retire_disabled"
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_RETIRE_ENABLED", "true")
+    with pytest.raises(HTTPException) as missing_extra_proof:
+        migration.retire_legacy_file(request, PRINCIPAL)
+    assert missing_extra_proof.value.detail == "client_extra_readback_required"
+    assert db.file["encrypted_file_data"] is not None
+    request = request.model_copy(update={"client_verified_extra_fields": True})
+    db.file["extracted_text"] = "new synthetic text"
+    with pytest.raises(HTTPException) as changed:
+        migration.retire_legacy_file(request, PRINCIPAL)
+    assert changed.value.detail == "legacy_source_changed"
+    proof.assert_not_called()
+    assert db.file["encrypted_file_data"] is not None
+
+    fresh = migration.readback_staged_file(db.file["id"], PRINCIPAL)
+    result = migration.retire_legacy_file(request.model_copy(update={
+        "readback_receipt": fresh["readback_receipt"],
+        "source_snapshot": fresh["source_snapshot"],
+    }), PRINCIPAL)
+    assert result["retired"] is True
+    assert db.file["extracted_text"] is None
+    assert db.file["relative_path"] is None
+    assert db.file["encrypted_file_data"] is None
 
 
 def test_file_rename_after_export_cannot_use_new_receipt_for_old_copy(runtime):
