@@ -540,24 +540,10 @@ void main() {
       );
     });
 
-    test('authSignup maps HTTP 429 to RateLimitedException', () {
+    test('retired plaintext signup client is unavailable', () {
       final src = _readLib('api_client.dart');
-      final idx = src.indexOf('Future<Map<String, dynamic>> authSignup');
-      expect(idx, greaterThan(-1));
-      
-      
-      final body = src.substring(idx, (idx + 5000).clamp(0, src.length));
-      expect(
-        body,
-        contains('statusCode == 429'),
-        reason: 'authSignup must branch on the 429 status',
-      );
-      expect(
-        body,
-        contains('_rateLimitedFromBody'),
-        reason: 'authSignup must throw via the shared helper so the '
-                'reset_in_seconds field is parsed',
-      );
+      expect(src, isNot(contains('Future<Map<String, dynamic>> authSignup')));
+      expect(src, isNot(contains('/auth/signup')));
     });
 
     test('authLogin maps HTTP 429 to RateLimitedException', () {
