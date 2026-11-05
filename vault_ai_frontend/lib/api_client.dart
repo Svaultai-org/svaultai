@@ -1128,12 +1128,18 @@ class VaultAIClient {
   }
 
   Future<void> authLogout({required String authToken}) async {
+    if (authToken.isEmpty) return;
     final uri = Uri.parse('$baseUrl/auth/logout');
+    // Sign-out clears the local session first. The regular bound transport
+    // correctly rejects that retired token, so send this one revocation
+    // request directly to its fixed logout route with the captured token.
+    // No other endpoint can use this unbound path.
+    final headers = _defaultHeaders()..['Authorization'] = 'Bearer $authToken';
     final response = await _runWithNetLog(
       'auth.logout',
       uri,
-      () => _sessionHttp.post(uri,
-          headers: _defaultHeaders(authToken: authToken)),
+      () => _httpClient?.post(uri, headers: headers) ??
+          http.post(uri, headers: headers),
     );
     if (response.statusCode != 204 && response.statusCode != 200) {
       if (response.statusCode != 401) {

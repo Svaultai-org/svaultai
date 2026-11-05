@@ -2616,7 +2616,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> signOut({
-    Future<void> Function(String token)? remoteLogout,
+    VaultAIClient? logoutClient,
   }) async {
     final token = sessionToken;
     final currentVaultId = vaultId;
@@ -2630,12 +2630,8 @@ class AppState extends ChangeNotifier {
     } finally {
       if (token != null) {
         try {
-          if (remoteLogout != null) {
-            await remoteLogout(token);
-          } else {
-            await VaultAIClient(baseUrl: backendBaseUrl)
-                .authLogout(authToken: token);
-          }
+          await (logoutClient ?? VaultAIClient(baseUrl: backendBaseUrl))
+              .authLogout(authToken: token);
         } catch (_) {}
       }
     }

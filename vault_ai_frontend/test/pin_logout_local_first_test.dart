@@ -4,7 +4,10 @@ import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/main.dart';
 import 'package:vault_ai_frontend/services/native_secure_store.dart';
 import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
@@ -32,8 +35,8 @@ void main() {
     const token = 'synthetic-logout-session';
     const vaultId = 'synthetic-logout-vault';
     const vaultName = 'Synthetic logout vault';
-    final remoteEntered = Completer<String>();
-    final releaseRemote = Completer<void>();
+    final requestSent = Completer<http.Request>();
+    final releaseRemote = Completer<http.Response>();
     try {
       await app.setSession(
         token: token,
@@ -69,11 +72,27 @@ void main() {
             zkPrivateUnlockCredentialStateForTesting()['pin_cache_entries'], 1);
       }
 
-      final signOut = app.signOut(remoteLogout: (capturedToken) {
-        remoteEntered.complete(capturedToken);
-        return releaseRemote.future;
-      });
-      expect(await remoteEntered.future, token);
+      bool? localClearedWhenSent;
+      final logoutClient = VaultAIClient(
+        baseUrl: 'https://synthetic.invalid',
+        httpClient: MockClient((request) async {
+          localClearedWhenSent = app.sessionToken == null &&
+              !app.unlocked &&
+              ZkActiveMvk.current() == null &&
+              ZkActiveSkVault.current() == null &&
+              zkPrivateUnlockCredentialStateForTesting()['pin_cache_entries'] ==
+                  0;
+          requestSent.complete(request);
+          return releaseRemote.future;
+        }),
+      );
+      final signOut = app.signOut(logoutClient: logoutClient);
+      final request = await requestSent.future;
+      expect(localClearedWhenSent, isTrue);
+      expect(request.method, 'POST');
+      expect(request.url.path, '/auth/logout');
+      expect(request.headers['Authorization'], 'Bearer $token');
+      expect(request.body, isEmpty);
       expect(app.sessionToken, isNull);
       expect(app.unlocked, isFalse);
       expect(app.vaultName, isNull);
@@ -87,10 +106,12 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('session_token'), isNull);
 
-      releaseRemote.complete();
+      releaseRemote.complete(http.Response('', 204));
       await signOut;
     } finally {
-      if (!releaseRemote.isCompleted) releaseRemote.complete();
+      if (!releaseRemote.isCompleted) {
+        releaseRemote.complete(http.Response('', 204));
+      }
       await app.clearSession();
       app.dispose();
     }
