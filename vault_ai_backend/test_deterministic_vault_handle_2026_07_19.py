@@ -396,7 +396,7 @@ class DictPrincipalRegressionTests(unittest.TestCase):
 
     def test_zk_adopt_uses_subscript_access(self) -> None:
         from routes import auth_zk_routes
-        src = inspect.getsource(auth_zk_routes.zk_adopt)
+        src = inspect.getsource(auth_zk_routes._zk_adopt_sync)
         self.assertNotIn("principal.vault_id", src)
         self.assertIn('principal["vault_id"]', src)
 

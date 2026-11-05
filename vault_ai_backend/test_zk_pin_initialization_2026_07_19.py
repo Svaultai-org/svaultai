@@ -328,7 +328,7 @@ class AdoptPreservesPinTests(unittest.TestCase):
         # non-write and would require a real DB round-trip to observe.
         import inspect
         from routes import auth_zk_routes as m
-        src = inspect.getsource(m.zk_adopt)
+        src = inspect.getsource(m._zk_adopt_sync)
         # The UPDATE block runs against the ``vaults`` row.
         self.assertNotIn("pin_salt                      = ''", src)
         self.assertNotIn("pin_verifier                  = ''", src)

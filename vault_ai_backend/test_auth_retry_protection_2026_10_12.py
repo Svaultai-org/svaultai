@@ -365,7 +365,6 @@ def test_distinct_modern_handle_and_legacy_lookup_share_lookup_budget(monkeypatc
 
     clock[0] = 160.01
     monkeypatch.setattr(legacy, "decrypt_message", lambda *args: legacy.PIN_VERIFIER_PLAINTEXT)
-    monkeypatch.setattr(legacy, "_upsert_trusted_device", lambda **kwargs: False)
     monkeypatch.setattr(legacy, "issue_session_token", lambda **kwargs: {
         "token": "synthetic-test-session", "token_id": "synthetic-test-token-id",
         "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),

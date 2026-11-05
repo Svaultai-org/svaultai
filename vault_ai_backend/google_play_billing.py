@@ -483,10 +483,18 @@ class GooglePlayPublisherClient:
                 f"Google Play acknowledgement failed ({response.status_code})"
             )
 
-    def verify_catalog(self) -> Mapping[str, Any]:
+    def verify_catalog(
+        self, product_id: str = GOOGLE_PLAY_PRODUCT_50GB,
+    ) -> Mapping[str, Any]:
+        if not isinstance(product_id, str) or (
+            product_id, GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
+        ) not in GOOGLE_PLAY_STORAGE_CATALOG:
+            raise GooglePlayVerificationError(
+                "Google Play product is not in the fixed catalog"
+            )
         result = self._bridge_request(
             "/v1/catalog:verify",
-            {"product_id": GOOGLE_PLAY_PRODUCT_50GB},
+            {"product_id": product_id},
         )
         expected = {
             "adc_resolution": "PASS",
@@ -496,7 +504,7 @@ class GooglePlayPublisherClient:
             ).strip().lower(),
             "android_publisher_api_auth": "PASS",
             "package_name": GOOGLE_PLAY_PACKAGE_NAME,
-            "product_id": GOOGLE_PLAY_PRODUCT_50GB,
+            "product_id": product_id,
             "base_plan_id": GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
             "base_plan_type": GOOGLE_PLAY_BASE_PLAN_TYPE,
             "billing_period": GOOGLE_PLAY_BILLING_PERIOD,
