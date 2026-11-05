@@ -71,6 +71,7 @@ class LegacyContentMigrationStager {
 
   final bool enabled;
   final bool recoveryEnabled;
+  final bool prioritizeUnstagedFiles;
   final LegacyCiphertextExportClient export;
   final LegacyCiphertextMigrationCodec codec;
   final MigrationRequest request;
@@ -79,6 +80,7 @@ class LegacyContentMigrationStager {
   const LegacyContentMigrationStager({
     this.enabled = false,
     this.recoveryEnabled = false,
+    this.prioritizeUnstagedFiles = false,
     required this.export,
     required this.codec,
     required this.request,
@@ -108,12 +110,23 @@ class LegacyContentMigrationStager {
       onPhase?.call(LegacyStagePhase.itemsComplete);
       final files = await export.listFiles();
       onPhase?.call(LegacyStagePhase.filesListed);
+      final eligibleFiles = <Map<String, dynamic>>[];
       for (final file in files) {
         if (file['ciphertext_chars'] is int &&
             (file['ciphertext_chars'] as int) > maxAutomaticCiphertextChars) {
           filesDeferredForSize++;
           continue;
         }
+        eligibleFiles.add(file);
+      }
+      // A short owner PIN lease must not repeatedly spend its whole budget
+      // rechecking the same early sidecars while later files remain unstaged.
+      // This status-only preflight never counts a sidecar as verified: both
+      // groups still undergo the full source and V2 readback checks below.
+      final orderedFiles = prioritizeUnstagedFiles
+          ? await _unstagedFilesFirst(eligibleFiles)
+          : eligibleFiles;
+      for (final file in orderedFiles) {
         try {
           await _stageFile(file);
           filesVerified++;
@@ -139,6 +152,32 @@ class LegacyContentMigrationStager {
     } finally {
       export.clearGrant();
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _unstagedFilesFirst(
+      List<Map<String, dynamic>> files) async {
+    final unstaged = <Map<String, dynamic>>[];
+    final existing = <Map<String, dynamic>>[];
+    for (final file in files) {
+      final id = file['file_id'];
+      final chars = file['ciphertext_chars'];
+      if (id is! String || id.isEmpty || id.length > 128 ||
+          chars is! int || chars <= 0) {
+        throw const FormatException('Invalid legacy file listing');
+      }
+      final response = await request(
+        'GET', '/vault/file-v2/${Uri.encodeComponent(id)}/manifest',
+      );
+      if (response.statusCode == 404 &&
+          _detailCode(response) == 'file_v2_not_found') {
+        unstaged.add(file);
+      } else {
+        _require200(response);
+        _requireMap(response);
+        existing.add(file);
+      }
+    }
+    return <Map<String, dynamic>>[...unstaged, ...existing];
   }
 
   Future<bool> _stageItem(Map<String, dynamic> record) async {

@@ -36,6 +36,7 @@ LegacyCiphertextExportClient _export({
   Map<int, Map<String, dynamic>>? itemSourceMetadata,
   Map<String, Map<String, dynamic>>? fileSourceMetadata,
   LegacyProofProvider? proofProvider,
+  List<String>? fileReadOrder,
 }) {
   var nextSequence = 0;
   var grants = 0;
@@ -100,6 +101,7 @@ LegacyCiphertextExportClient _export({
         case 'read_file':
           final text = fileCiphertexts[body['file_id']];
           final fileId = body['file_id'] as String;
+          fileReadOrder?.add(fileId);
           final listed = fileRows.firstWhere((row) => row['file_id'] == fileId);
           expect(text, isNotNull);
           return <String, dynamic>{
@@ -176,6 +178,85 @@ void main() {
     expect(result.itemsVerified, 0);
     expect(result.filesVerified, 0);
     expect(called, isFalse);
+  });
+
+  test('remaining unstaged files are tried before previously staged sidecars',
+      () async {
+    final ciphertext = await _legacyEncrypt(<int>[7]);
+    final calls = <String>[];
+    final fileReadOrder = <String>[];
+    final manifestLookups = <String>[];
+    final result = await LegacyContentMigrationStager(
+      enabled: true,
+      prioritizeUnstagedFiles: true,
+      export: _export(
+        itemRows: const <Map<String, dynamic>>[],
+        fileRows: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'file_id': 'synthetic-existing',
+            'ciphertext_chars': ciphertext.length,
+            'file_size': 1,
+          },
+          <String, dynamic>{
+            'file_id': 'synthetic-new',
+            'ciphertext_chars': ciphertext.length,
+            'file_size': 1,
+          },
+        ],
+        itemCiphertexts: const <int, String>{},
+        fileCiphertexts: <String, String>{
+          'synthetic-existing': ciphertext,
+          'synthetic-new': ciphertext,
+        },
+        calls: calls,
+        fileReadOrder: fileReadOrder,
+      ),
+      codec: LegacyCiphertextMigrationCodec(
+        legacyKey: _legacyKey, mvk: _mvk,
+      ),
+      request: (method, path, [body]) async {
+        expect(method, 'GET');
+        expect(path, endsWith('/manifest'));
+        manifestLookups.add(path);
+        if (path.contains('/synthetic-new/')) {
+          return const MigrationReply(404, {'detail': 'file_v2_not_found'});
+        }
+        return const MigrationReply(200, {'manifest_ciphertext': 'synthetic'});
+      },
+    ).stageAndVerify();
+    expect(manifestLookups, hasLength(2));
+    expect(fileReadOrder, <String>['synthetic-new', 'synthetic-existing']);
+    // Both synthetic sources deliberately lack a name, so neither is counted
+    // as verified and no legacy source is retired.
+    expect(result.filesVerified, 0);
+    expect(result.filesDeferredForUnreadableSource, 2);
+  });
+
+  test('unexpected manifest preflight failure stops before source export',
+      () async {
+    final calls = <String>[];
+    final fileReadOrder = <String>[];
+    final stager = LegacyContentMigrationStager(
+      enabled: true,
+      prioritizeUnstagedFiles: true,
+      export: _export(
+        itemRows: const <Map<String, dynamic>>[],
+        fileRows: <Map<String, dynamic>>[
+          <String, dynamic>{'file_id': 'synthetic-file', 'ciphertext_chars': 40},
+        ],
+        itemCiphertexts: const <int, String>{},
+        fileCiphertexts: const <String, String>{},
+        calls: calls,
+        fileReadOrder: fileReadOrder,
+      ),
+      codec: LegacyCiphertextMigrationCodec(
+        legacyKey: _legacyKey, mvk: _mvk,
+      ),
+      request: (_, __, [___]) async =>
+          const MigrationReply(403, {'detail': 'device_untrusted'}),
+    );
+    await expectLater(stager.stageAndVerify(), throwsStateError);
+    expect(fileReadOrder, isEmpty);
   });
 
   test('oversize records are explicitly deferred before content export',

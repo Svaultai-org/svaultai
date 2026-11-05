@@ -5426,6 +5426,7 @@ Future<void> _stageLegacyContentBestEffort({
     final stageResult = await legacy_stage.LegacyContentMigrationStager(
       enabled: true,
       recoveryEnabled: kEnableLegacyStageRecovery,
+      prioritizeUnstagedFiles: true,
       export: export,
       codec: legacy_codec.LegacyCiphertextMigrationCodec(
         legacyKey: legacyKey,
