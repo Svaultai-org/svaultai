@@ -17,6 +17,7 @@ export 'services/saved_item_mutation_feedback.dart'
 import 'services/vault_handle.dart' as vault_handle;
 import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
+import 'services/zk_private_chat.dart' as zk_private_chat;
 
 void _vlog(String tag, [Map<String, Object?>? data]) {
   if (kReleaseMode) return;
@@ -1756,6 +1757,42 @@ class VaultAIClient {
       throw Exception('Invalid cancel-self-approval response format');
     }
     return decoded;
+  }
+
+  /// Separate PIN-free general chat. Call only after the local ZK router
+  /// returns `general`; vault records and private lookup results stay local.
+  Future<String> zkGeneralChat({
+    required String authToken,
+    required String message,
+    List<zk_private_chat.ZkGeneralChatTurn> history = const [],
+  }) async {
+    final uri = Uri.parse('$baseUrl/chat/zk/general');
+    final body = zk_private_chat.buildZkGeneralChatBody(
+      message: message,
+      history: history,
+    );
+    final response = await _sessionHttp.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(body),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'General chat failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic> ||
+        decoded['mode'] != 'general' ||
+        decoded['reply'] is! String ||
+        (decoded['reply'] as String).trim().isEmpty) {
+      throw const FormatException('Invalid general chat response');
+    }
+    return (decoded['reply'] as String).trim();
   }
 
   Stream<String> chatStream({

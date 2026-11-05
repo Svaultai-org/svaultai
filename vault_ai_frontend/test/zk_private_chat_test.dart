@@ -1,0 +1,179 @@
+import 'dart:convert';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:vault_ai_frontend/api_client.dart';
+import 'package:vault_ai_frontend/services/zk_private_chat.dart';
+
+void main() {
+  const recoveryFile = ZkLocalChatRecord(
+    kind: ZkLocalChatKind.file,
+    id: 'synthetic-file-1',
+    title: 'github-recovery-codes.txt',
+  );
+  const login = ZkLocalChatRecord(
+    kind: ZkLocalChatKind.savedItem,
+    id: 'synthetic-item-1',
+    title: 'GitHub login',
+  );
+
+  test('vault file lookup stays local and selects the best title match', () {
+    final result = ZkLocalChatRouter.resolve(
+      prompt: 'Find my GitHub recovery codes',
+      savedItems: const [login],
+      files: const [recoveryFile],
+    );
+    expect(result.disposition, ZkLocalChatDisposition.found);
+    expect(result.selection?.id, recoveryFile.id);
+    expect(result.maySendToGeneralAi, isFalse);
+  });
+
+  test('follow-up show it keeps the selected local file', () {
+    final result = ZkLocalChatRouter.resolve(
+      prompt: 'show it',
+      savedItems: const [login],
+      files: const [recoveryFile],
+      previousSelection: recoveryFile,
+    );
+    expect(result.selection, same(recoveryFile));
+    expect(result.maySendToGeneralAi, isFalse);
+  });
+
+  test('private miss does not fall through to general AI', () {
+    final result = ZkLocalChatRouter.resolve(
+      prompt: 'Where is my passport?',
+      savedItems: const [login],
+      files: const [recoveryFile],
+    );
+    expect(result.disposition, ZkLocalChatDisposition.notFound);
+    expect(result.maySendToGeneralAi, isFalse);
+  });
+
+  test('unindexed visual description reports the missing private index', () {
+    final result = ZkLocalChatRouter.resolve(
+      prompt: 'Find a photo of me in red cloth and black shoes',
+      savedItems: const [],
+      files: const [recoveryFile],
+    );
+    expect(result.disposition, ZkLocalChatDisposition.needsPrivateIndex);
+    expect(result.maySendToGeneralAi, isFalse);
+  });
+
+  test('two equally matching local records stay ambiguous', () {
+    const other = ZkLocalChatRecord(
+      kind: ZkLocalChatKind.savedItem,
+      id: 'synthetic-item-2',
+      title: 'GitHub recovery login',
+    );
+    final result = ZkLocalChatRouter.resolve(
+      prompt: 'Find my GitHub recovery',
+      savedItems: const [other],
+      files: const [recoveryFile],
+    );
+    expect(result.disposition, ZkLocalChatDisposition.ambiguous);
+    expect(result.matches.length, 2);
+    expect(result.maySendToGeneralAi, isFalse);
+  });
+
+  test('general follow-up can use the separate AI route', () {
+    final result = ZkLocalChatRouter.resolve(
+      prompt: 'How does two-factor authentication work?',
+      savedItems: const [login],
+      files: const [recoveryFile],
+    );
+    expect(result.disposition, ZkLocalChatDisposition.general);
+    expect(result.maySendToGeneralAi, isTrue);
+  });
+
+  test('general how-to question is not mistaken for vault lookup', () {
+    final result = ZkLocalChatRouter.resolve(
+      prompt: 'How do I change my password?',
+      savedItems: const [login],
+      files: const [recoveryFile],
+    );
+    expect(result.disposition, ZkLocalChatDisposition.general);
+  });
+
+  test('unbound show-it follow-up does not reach general AI', () {
+    final result = ZkLocalChatRouter.resolve(
+      prompt: 'show it',
+      savedItems: const [login],
+      files: const [recoveryFile],
+    );
+    expect(result.disposition, ZkLocalChatDisposition.notFound);
+    expect(result.maySendToGeneralAi, isFalse);
+  });
+
+  test('general chat wire body contains only user text and bounded history',
+      () {
+    final body = buildZkGeneralChatBody(
+      message: 'Could you explain that again?',
+      history: const [
+        ZkGeneralChatTurn(role: 'user', content: 'What is 2FA?'),
+        ZkGeneralChatTurn(role: 'assistant', content: 'A second login check.'),
+      ],
+    );
+    expect(body.keys.toSet(), {'message', 'history'});
+    expect(body.toString(), isNot(contains('synthetic-file-1')));
+    expect(body.toString(), isNot(contains('synthetic-item-1')));
+    expect(body.toString(), isNot(contains('pin')));
+    expect(body.toString(), isNot(contains('vault_key')));
+  });
+
+  test('general chat transport sends no PIN or vault record to server',
+      () async {
+    var requests = 0;
+    final mock = MockClient((request) async {
+      requests++;
+      expect(request.method, 'POST');
+      expect(request.url.path, '/chat/zk/general');
+      expect(request.headers['Authorization'], 'Bearer synthetic-token');
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      expect(body.keys.toSet(), {'message', 'history'});
+      expect(request.body, isNot(contains('synthetic-file-1')));
+      expect(request.body, isNot(contains('synthetic-item-1')));
+      expect(request.body, isNot(contains('"pin"')));
+      return http.Response(
+          '{"reply":"A general answer","mode":"general"}', 200);
+    });
+    final client = VaultAIClient(
+      baseUrl: 'https://example.invalid',
+      httpClient: mock,
+    );
+    final reply = await client.zkGeneralChat(
+      authToken: 'synthetic-token',
+      message: 'How does two-factor authentication work?',
+    );
+    expect(reply, 'A general answer');
+    expect(requests, 1);
+  });
+
+  test('dispatch never sends saved-item or file lookup to general AI',
+      () async {
+    var sent = 0;
+    Future<String> sendGeneral(String message) async {
+      sent++;
+      return 'general answer';
+    }
+
+    final local = await ZkLocalChatRouter.dispatch(
+      prompt: 'Find my GitHub recovery codes',
+      savedItems: const [login],
+      files: const [recoveryFile],
+      sendGeneral: sendGeneral,
+    );
+    expect(local.local.selection?.id, recoveryFile.id);
+    expect(local.generalReply, isNull);
+    expect(sent, 0);
+
+    final general = await ZkLocalChatRouter.dispatch(
+      prompt: 'How does two-factor authentication work?',
+      savedItems: const [login],
+      files: const [recoveryFile],
+      sendGeneral: sendGeneral,
+    );
+    expect(general.generalReply, 'general answer');
+    expect(sent, 1);
+  });
+}
