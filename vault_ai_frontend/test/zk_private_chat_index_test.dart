@@ -112,7 +112,9 @@ void main() {
                 {
                   'file_id': id,
                   'verification_state': 'client_verified',
-                  'lifecycle_state': 'legacy_migration_retired'
+                  'lifecycle_state': id == 'text-1'
+                      ? 'client_v2_ready'
+                      : 'legacy_migration_retired'
                 },
               {
                 'file_id': 'staged-1',

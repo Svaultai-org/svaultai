@@ -160,11 +160,12 @@ class ZkPrivateChatIndexLoader {
         incomplete = true;
         continue;
       }
-      // Only these records have a guaranteed PIN-free file viewer path.
+      // Only verified records have a guaranteed PIN-free file viewer path.
       // A staged record must never become a card that can fall back to a
       // legacy raw-PIN download when tapped.
       if (row['verification_state'] != 'client_verified' ||
-          row['lifecycle_state'] != 'legacy_migration_retired') {
+          (row['lifecycle_state'] != 'legacy_migration_retired' &&
+              row['lifecycle_state'] != 'client_v2_ready')) {
         incomplete = true;
         continue;
       }
