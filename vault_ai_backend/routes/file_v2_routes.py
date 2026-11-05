@@ -176,10 +176,10 @@ def _reject(data: dict):
 
 @router.post('/vault/file-v2/manifest')
 def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(verify_trusted_device)):
-    require_content_write(principal)
-    _enabled(True); _reject(payload.model_dump())
     if payload.migration_metadata_version == 2 and not _extra_file_stage_enabled():
         raise HTTPException(404, detail='file_v2_extra_stage_disabled')
+    require_content_write(principal)
+    _enabled(True); _reject(payload.model_dump())
     if not payload.migrating_legacy and not _new_files_enabled():
         raise HTTPException(404, detail='new_file_v2_disabled')
     if payload.migrating_legacy and payload.source_snapshot is None:

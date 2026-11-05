@@ -129,7 +129,10 @@ def test_same_logical_manifest_with_different_ciphertext_is_conflict(monkeypatch
 def test_extra_manifest_write_is_default_off_before_database(monkeypatch):
     monkeypatch.delenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED", raising=False)
     monkeypatch.setattr(routes, "_enabled", lambda write=False: None)
-    monkeypatch.setattr(routes, "require_content_write", lambda _: None)
+    monkeypatch.setattr(
+        routes, "require_content_write",
+        lambda _: pytest.fail("billing database reached"),
+    )
     monkeypatch.setattr(routes, "get_db", lambda: pytest.fail("database reached"))
     candidate = routes.Manifest(
         file_id="synthetic-legacy-extra",
