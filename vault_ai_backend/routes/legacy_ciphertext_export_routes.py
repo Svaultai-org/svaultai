@@ -27,7 +27,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 from psycopg2.extras import RealDictCursor
 
@@ -167,6 +167,7 @@ def _assert_zk_vault(conn, vault_id: str) -> None:
 def legacy_export_start(
     payload: LegacyExportStartRequest,
     principal: SessionPrincipal = Depends(verify_trusted_device),
+    http_response: Response = None,
 ) -> dict:
     _require_enabled()
     # Do not burn the one-time proof if the account is ineligible.
@@ -199,6 +200,8 @@ def legacy_export_start(
         raise
     finally:
         conn.close()
+    if http_response is not None:
+        http_response.headers["Cache-Control"] = "no-store"
     return {
         "export_token": token,
         "expires_at": expires_at,
@@ -454,6 +457,7 @@ def _read_file_extra(cur, vault_id: str, payload: LegacyExportPageRequest) -> di
 def legacy_export_page(
     payload: LegacyExportPageRequest,
     principal: SessionPrincipal = Depends(verify_trusted_device),
+    http_response: Response = None,
 ) -> dict:
     _require_enabled()
     if payload.mode == "read_file_extra":
@@ -527,6 +531,8 @@ def legacy_export_page(
         )
         conn.commit()
         response["bytes_remaining"] = state["bytes_left"]
+        if http_response is not None:
+            http_response.headers["Cache-Control"] = "no-store"
         return response
     except Exception:
         conn.rollback()

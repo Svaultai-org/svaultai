@@ -7,7 +7,8 @@ import time
 from unittest import mock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 from routes import legacy_ciphertext_export_routes as export
 
@@ -190,6 +191,34 @@ def test_start_consumes_one_opaque_proof_and_binds_grant(runtime):
     assert not export._grant_belongs_to_session(
         token, PRINCIPAL, now_ts=int(time.time()) + 301,
     )
+
+
+def test_export_http_responses_are_not_stored(runtime, monkeypatch):
+    app = FastAPI()
+    app.include_router(export.router)
+    app.dependency_overrides[export.verify_trusted_device] = lambda: PRINCIPAL
+    client = TestClient(app)
+    started = client.post(
+        "/vault/legacy-ciphertext/export/start",
+        json={"zk_proof_token": "synthetic-proof"},
+    )
+    assert started.status_code == 200
+    assert started.headers["cache-control"] == "no-store"
+    grant = started.json()["export_token"]
+    page = client.post(
+        "/vault/legacy-ciphertext/export/page",
+        json={"export_token": grant, "sequence": 0, "mode": "list_items"},
+    )
+    assert page.status_code == 200
+    assert page.headers["cache-control"] == "no-store"
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED", "true")
+    extra = client.post(
+        "/vault/legacy-ciphertext/export/page",
+        json={"export_token": grant, "sequence": 1,
+              "mode": "read_file_extra", "file_id": "synthetic-file"},
+    )
+    assert extra.status_code == 200
+    assert extra.headers["cache-control"] == "no-store"
 
 
 def test_page_is_bounded_and_sequence_replay_fails(runtime):

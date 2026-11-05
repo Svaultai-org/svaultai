@@ -19,7 +19,9 @@ It has not been deployed or run against a real vault.
    a streaming design. The V2 manifest limit is 512 KiB for this version;
    existing V1 manifests keep their 64 KiB limit. The plaintext extra export
    and new version-2 manifest writes require the dedicated default-off backend
-   flag `VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED`.
+   flag `VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED`. Successful export-start
+   and export-page HTTP responses send `Cache-Control: no-store`, including
+   the page that returns the owner's plaintext legacy extras.
 2. The unlocked owner client wraps those fields inside an AES-GCM encrypted
    MVK file manifest with schema `vaultai.file.migrated.v2`. The public V2
    request body carries only ciphertext and a structural
