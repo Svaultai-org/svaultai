@@ -33,6 +33,7 @@ class FileV2Manifest {
   final String? detectedService;
   final bool retired;
   final bool readyForUse;
+  final int nameVersion;
 
   const FileV2Manifest({
     required this.fileId,
@@ -47,6 +48,7 @@ class FileV2Manifest {
     required this.detectedService,
     required this.retired,
     required this.readyForUse,
+    this.nameVersion = 0,
   });
 
   String get displayName => (savedName?.trim().isNotEmpty ?? false)
@@ -158,6 +160,25 @@ class FileV2Reader {
       );
     }
 
+    final nameVersion = response['name_version'] ?? 0;
+    final nameOverride = response['saved_name_override_ciphertext'];
+    if (nameVersion is! int || nameVersion < 0 ||
+        (nameVersion == 0 && nameOverride != null) ||
+        (nameVersion > 0 &&
+            (nameOverride is! String || nameOverride.isEmpty))) {
+      throw const FormatException('Invalid V2 file name version');
+    }
+    String? savedNameOverride;
+    if (nameOverride is String) {
+      savedNameOverride = utf8.decode(await aesGcmUnwrap(
+        metadataKey, b64urlDecode(nameOverride),
+      ));
+      if (savedNameOverride.trim().isEmpty ||
+          savedNameOverride.length > 255) {
+        throw const FormatException('Invalid encrypted file name');
+      }
+    }
+
     final typeFromMetadata = await unwrapMetadata('content_type_ciphertext');
     final contentType = typeFromMetadata ?? decoded['content_type'];
     if (contentType != null && contentType is! String) {
@@ -169,13 +190,15 @@ class FileV2Reader {
       chunkSize: chunkSize,
       chunkCount: chunkCount,
       fileName: await unwrapMetadata('file_name_ciphertext'),
-      savedName: await unwrapMetadata('saved_name_ciphertext'),
+      savedName: savedNameOverride ??
+          await unwrapMetadata('saved_name_ciphertext'),
       contentType: contentType as String?,
       assetType: await unwrapMetadata('asset_type_ciphertext'),
       detectedType: await unwrapMetadata('detected_type_ciphertext'),
       detectedService: await unwrapMetadata('detected_service_ciphertext'),
       retired: retired,
       readyForUse: ready,
+      nameVersion: nameVersion,
     );
   }
 

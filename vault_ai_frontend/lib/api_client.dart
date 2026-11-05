@@ -20,6 +20,7 @@ import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/zk_private_chat.dart' as zk_private_chat;
 import 'services/file_v2_reader.dart';
+import 'services/file_v2_renamer.dart';
 import 'services/file_v2_writer.dart';
 
 // Only builds with the MVK V2 file reader advertise this capability. The
@@ -4249,6 +4250,59 @@ class VaultAIClient {
         fileId,
         requireReady: true,
       );
+
+  Future<FileV2Manifest> renameAvailableV2File({
+    required String authToken,
+    required String fileId,
+    required String savedName,
+    required String zkProofToken,
+    bool Function()? responseIsCurrent,
+  }) async {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    void checkAccess() {
+      if (!identical(mvk, zk_mvk_store.ZkActiveMvk.current()) ||
+          responseIsCurrent?.call() == false) {
+        throw StateError('File rename access changed. Select it again.');
+      }
+    }
+
+    checkAccess();
+    final reader = _fileV2Reader(authToken: authToken);
+    final renamer = FileV2Renamer(
+      mvk: mvk,
+      get: (path) async {
+        checkAccess();
+        final value = await reader.get(path);
+        checkAccess();
+        return value;
+      },
+      post: (path, body) async {
+        checkAccess();
+        final response = await _sessionHttpWithGuard(checkAccess).post(
+          Uri.parse('$baseUrl$path'),
+          headers: _defaultHeaders(authToken: authToken, json: true),
+          body: jsonEncode(body),
+        );
+        checkAccess();
+        if (response.statusCode != 200) {
+          _throwIfAuthExpired(response.statusCode, response.body);
+          _throwIfDeviceNotTrusted(response.statusCode, response.body);
+          throw FileV2ReadException(response.statusCode);
+        }
+        final decoded = jsonDecode(response.body);
+        if (decoded is! Map<String, dynamic>) {
+          throw const FormatException('Invalid private file rename response');
+        }
+        return decoded;
+      },
+    );
+    final renamed = await renamer.rename(
+      fileId: fileId, savedName: savedName, zkProofToken: zkProofToken,
+    );
+    checkAccess();
+    return renamed;
+  }
 
   Future<Map<String, dynamic>> deleteRetiredV2File({
     required String authToken,

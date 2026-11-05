@@ -832,6 +832,12 @@ const bool kEnableFileV2UiRead = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// Requires the backend encrypted rename route and V2 reader in this build.
+const bool kEnableZkFileV2Rename = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_FILE_V2_RENAME',
+  defaultValue: false,
+) && kEnableFileV2UiRead;
+
 // This path reads only MVK ciphertext and keeps private search on the client.
 // It stays off until file V2 viewing and all chat entry points are verified.
 const bool kEnableZkPrivateChat = bool.fromEnvironment(
@@ -14155,7 +14161,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   SavedFileRenameController? _captureSavedFileRename(String fileId) {
-    if (vaultFiles.any((file) => file.id == fileId && file.v2Available)) {
+    final isV2 = vaultFiles.any(
+      (file) => file.id == fileId && file.v2Available,
+    );
+    if ((!kEnableZkFileV2Rename && isV2) ||
+        (kEnableZkFileV2Rename &&
+            zk_mvk_store.ZkActiveMvk.current() != null && !isV2)) {
       return null;
     }
     final app = context.read<AppState>();
@@ -14241,13 +14252,47 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               !controller.accessIsCurrent()) {
             throw StateError('File rename session changed.');
           }
-          final pin = await _VaultCrypto.currentPinOrThrow();
-          await VaultAIClient(baseUrl: backendBaseUrl).nameVaultFile(
-            vaultName: vaultName, fileId: controller.fileId,
-            savedName: normalizedName, pin: pin, authToken: token,
-            requireCiphertext: true,
-            responseIsCurrent: controller.accessIsCurrent,
+          final client = VaultAIClient(baseUrl: backendBaseUrl);
+          final isV2 = vaultFiles.any(
+            (file) => file.id == controller.fileId && file.v2Available,
           );
+          if (kEnableZkFileV2Rename &&
+              zk_mvk_store.ZkActiveMvk.current() != null && !isV2) {
+            throw StateError('Private file changed. Refresh and try again.');
+          }
+          if (isV2) {
+            if (!kEnableZkFileV2Rename || !kEnableFileV2UiRead) {
+              throw StateError('Private file rename is unavailable.');
+            }
+            final handle = app.vaultHandle;
+            if (handle == null || handle.isEmpty) {
+              throw StateError('Vault verification is unavailable.');
+            }
+            final pin = await _VaultCrypto.currentPinOrThrow();
+            final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
+              vaultHandle: handle,
+              pin: pin,
+              sessionToken: token,
+            );
+            if (!controller.accessIsCurrent()) {
+              throw StateError('File rename session changed.');
+            }
+            await client.renameAvailableV2File(
+              authToken: token,
+              fileId: controller.fileId,
+              savedName: normalizedName,
+              zkProofToken: proof.token,
+              responseIsCurrent: controller.accessIsCurrent,
+            );
+          } else {
+            final pin = await _VaultCrypto.currentPinOrThrow();
+            await client.nameVaultFile(
+              vaultName: vaultName, fileId: controller.fileId,
+              savedName: normalizedName, pin: pin, authToken: token,
+              requireCiphertext: true,
+              responseIsCurrent: controller.accessIsCurrent,
+            );
+          }
         },
         onCommitted: (normalizedName) =>
             _applyCommittedFileRename(controller.fileId, normalizedName),
@@ -14259,8 +14304,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _openSavedFileRename(_VaultStoredFile file) async {
-    if (file.v2Available) {
+    if (file.v2Available && !kEnableZkFileV2Rename) {
       _showSnack('Renaming this file is not available yet.');
+      return;
+    }
+    if (kEnableZkFileV2Rename &&
+        zk_mvk_store.ZkActiveMvk.current() != null && !file.v2Available) {
+      _showSnack('This file needs a private file upgrade before renaming.');
       return;
     }
     if (_fileRenameDialogOpen || sending || _pendingLocalDelete != null ||
@@ -14325,9 +14375,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final retired = vaultFiles.any(
         (file) => file.id == match.entry.id && file.v2Available,
       );
-      _appendLocalVaultReply(text, retired
-          ? 'Renaming this file is not available yet.'
-          : 'Unlock your vault before renaming a file.');
+      _appendLocalVaultReply(text,
+          retired && !kEnableZkFileV2Rename
+              ? 'Renaming this file is not available yet.'
+              : kEnableZkFileV2Rename &&
+                      zk_mvk_store.ZkActiveMvk.current() != null && !retired
+                  ? 'This file needs a private file upgrade before renaming.'
+                  : 'Unlock your vault before renaming a file.');
       return true;
     }
     try {
@@ -18873,7 +18927,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               child: IconButton(
                 key: ValueKey('files_file_rename_${file.id}'),
                 tooltip: 'Rename',
-                onPressed: file.v2Available || sending || _pendingLocalDelete != null ||
+                onPressed: (file.v2Available && !kEnableZkFileV2Rename) ||
+                        (kEnableZkFileV2Rename &&
+                            zk_mvk_store.ZkActiveMvk.current() != null &&
+                            !file.v2Available) ||
+                        sending || _pendingLocalDelete != null ||
                         _fileDeletesInFlight.contains(file.id) ||
                         _fileRenamesInFlight.contains(file.id)
                     ? null : () => _openSavedFileRename(file),

@@ -197,7 +197,8 @@ void main() {
           final rename = tester.widget<IconButton>(
             find.byKey(const ValueKey('files_file_rename_synthetic-v2-file')),
           );
-          expect(rename.onPressed, isNull);
+          expect(rename.onPressed,
+              kEnableZkFileV2Rename ? isNotNull : isNull);
           await tester.tap(find.byKey(
             const ValueKey('files_file_ask_synthetic-v2-file'),
           ));
