@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from device_gate import verify_trusted_device
 from vault_core import get_db, verify_vault_pin                                          
@@ -18,7 +19,7 @@ router = APIRouter()
 
 class ImportBatchStartRequest(BaseModel):
     vault_name: str                                                  
-    pin: str
+    pin: Optional[str] = Field(default=None, min_length=1, max_length=64)
 
                                                                      
     root_folder_name: Optional[str] = None
@@ -30,11 +31,27 @@ class ImportBatchStartRequest(BaseModel):
 
 class ImportBatchActionRequest(BaseModel):
     vault_name: str                                                  
-    pin: str
+    pin: Optional[str] = Field(default=None, min_length=1, max_length=64)
 
                                                                     
     failed_count_delta: int = 0
     skipped_duplicate_count_delta: int = 0
+
+
+def _authorize_import_batch_action(principal: dict, pin: Optional[str]) -> bool:
+    """Return whether this is a PIN-free, trusted-device ZK action."""
+    vault_id = principal["vault_id"]
+    if os.getenv("VAULTAI_ZK_IMPORT_SESSION_ACTIONS_ENABLED", "false").strip().lower() == "true":
+        from vault_core import is_vault_zk_adopted
+
+        if is_vault_zk_adopted(vault_id):
+            if pin is not None:
+                raise HTTPException(409, detail="zk_client_update_required")
+            return True
+    if not pin:
+        raise HTTPException(400, detail="pin_required")
+    verify_vault_pin(vault_id, pin)
+    return False
 
 
 @router.post("/imports/start")
@@ -47,7 +64,9 @@ async def start_import_endpoint(
     from main import start_import_batch
 
     vault_id = principal["vault_id"]
-    verify_vault_pin(vault_id, payload.pin)
+    zk_session_only = _authorize_import_batch_action(principal, payload.pin)
+    if zk_session_only and payload.root_folder_name is not None:
+        raise HTTPException(409, detail="zk_plaintext_folder_name_not_supported")
 
     batch = start_import_batch(
         vault_id=vault_id,
@@ -87,7 +106,7 @@ async def cancel_import_endpoint(
     from main import cancel_import_batch
 
     vault_id = principal["vault_id"]
-    verify_vault_pin(vault_id, payload.pin)
+    _authorize_import_batch_action(principal, payload.pin)
 
     return cancel_import_batch(
         vault_id=vault_id,
@@ -104,7 +123,7 @@ async def complete_import_endpoint(
     from main import complete_import_batch
 
     vault_id = principal["vault_id"]
-    verify_vault_pin(vault_id, payload.pin)
+    _authorize_import_batch_action(principal, payload.pin)
 
     return complete_import_batch(
         vault_id=vault_id,
