@@ -2850,19 +2850,18 @@ class AppState extends ChangeNotifier {
     final token = sessionToken;
     if (currentVaultName == null || token == null) return;
 
-    final String pin;
     try {
-      pin = await _VaultCrypto.currentPinOrThrow();
-    } catch (_) {
-      return;
-    }
-
-    try {
-      final stats = await _API.getVaultStats(
-        vaultName: currentVaultName,
-        pin: pin,
-        authToken: token,
-      );
+      final Map<String, dynamic> stats;
+      if (vaultHandle != null && vaultHandle!.isNotEmpty) {
+        stats = await _API.getZkVaultStats(authToken: token);
+      } else {
+        final pin = await _VaultCrypto.currentPinOrThrow();
+        stats = await _API.getVaultStats(
+          vaultName: currentVaultName,
+          pin: pin,
+          authToken: token,
+        );
+      }
       applyBackendStats(stats);
     } catch (_) {}
 
@@ -3180,6 +3179,10 @@ class AppState extends ChangeNotifier {
 
 class _API {
   static final VaultAIClient _client = VaultAIClient(baseUrl: backendBaseUrl);
+
+  static Future<Map<String, dynamic>> getZkVaultStats({
+    required String authToken,
+  }) => _client.getZkVaultStats(authToken: authToken);
 
   static Future<Map<String, dynamic>> getVaultStats({
     required String vaultName,

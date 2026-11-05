@@ -11449,6 +11449,11 @@ async def vault_stats_endpoint(
     vault_id = principal["vault_id"]
 
     verify_vault_pin(vault_id, payload.pin)
+    return _collect_vault_stats(vault_id)
+
+
+def _collect_vault_stats(vault_id: str, *, require_zk: bool = False):
+    """Return storage counts without handling a PIN after authorization."""
 
     conn = get_db()
     try:
@@ -11456,13 +11461,15 @@ async def vault_stats_endpoint(
 
         cursor.execute(
             """
-            SELECT COALESCE(total_bytes, 0) AS total_bytes
+            SELECT COALESCE(total_bytes, 0) AS total_bytes, vault_handle
             FROM vaults
             WHERE vault_id = %s
             """,
             (vault_id,),
         )
         vault_row = cursor.fetchone()
+        if require_zk and (not vault_row or vault_row["vault_handle"] is None):
+            raise HTTPException(status_code=404, detail="zk_vault_not_found")
         storage_used_bytes = int(vault_row["total_bytes"]) if vault_row else 0
 
         cursor.execute(
@@ -11521,6 +11528,15 @@ async def vault_stats_endpoint(
         }
     finally:
         conn.close()
+
+
+@app.get("/vault-stats/zk")
+async def zk_vault_stats_endpoint(
+    principal=Depends(verify_trusted_device),
+):
+    # A trusted ZK session can read aggregate counts without revealing its
+    # PIN. Legacy clients retain the old POST route during migration.
+    return _collect_vault_stats(principal["vault_id"], require_zk=True)
 
 
 @app.post("/vault-name-available")

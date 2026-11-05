@@ -4166,6 +4166,30 @@ class VaultAIClient {
     return decoded;
   }
 
+  Future<Map<String, dynamic>> getZkVaultStats({
+    required String authToken,
+  }) async {
+    final response = await _sessionHttp.get(
+      Uri.parse('$baseUrl/vault-stats/zk'),
+      headers: _defaultHeaders(authToken: authToken),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Vault stats failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid vault stats response format');
+    }
+    return decoded;
+  }
+
   Future<Map<String, dynamic>> downloadVaultFile({
     required String vaultName,
     required String fileId,
