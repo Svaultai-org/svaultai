@@ -40,6 +40,7 @@ import 'services/metadata_migration_client.dart' as mmc;
 import 'services/legacy_ciphertext_export_client.dart' as legacy_export;
 import 'services/legacy_ciphertext_migration_codec.dart' as legacy_codec;
 import 'services/legacy_content_migration_stager.dart' as legacy_stage;
+import 'services/file_v2_writer.dart';
 import 'services/native_secure_store.dart';
 import 'services/session_persistence_lock.dart'
     if (dart.library.html) 'services/session_persistence_lock_web.dart' as session_store;
@@ -554,6 +555,8 @@ class _UploadContext {
   final String vaultName;
   final String pin;
   final String authToken;
+  final String? vaultId;
+  final SecretKey? v2Mvk;
   final List<int>? keyBytes;
   final String? accompanyingText;
   final bool isBatchUpload;
@@ -566,6 +569,8 @@ class _UploadContext {
     required this.vaultName,
     required this.pin,
     required this.authToken,
+    required this.vaultId,
+    required this.v2Mvk,
     required this.keyBytes,
     required this.accompanyingText,
     required this.isBatchUpload,
@@ -688,6 +693,9 @@ class _VaultStoredFile {
   final int fileSize;
   final bool needsNaming;
   final bool v2Retired;
+  final bool v2Ready;
+
+  bool get v2Available => v2Retired || v2Ready;
 
   final String? relativePath;
 
@@ -700,6 +708,7 @@ class _VaultStoredFile {
     this.assetType,
     this.needsNaming = false,
     this.v2Retired = false,
+    this.v2Ready = false,
     this.relativePath,
   });
 
@@ -713,6 +722,7 @@ class _VaultStoredFile {
       fileSize: (json['file_size'] as num?)?.toInt() ?? 0,
       needsNaming: json['needs_naming'] == true,
       v2Retired: json['v2_retired'] == true,
+      v2Ready: json['v2_ready'] == true,
       relativePath: json['relative_path']?.toString(),
     );
   }
@@ -861,6 +871,13 @@ Future<({String? pin, String? zkProofToken})> _beneficiaryCredential(
     zkProofToken: null,
   );
 }
+
+// Requires backend VAULTAI_ZK_NEW_FILE_V2_ENABLED and file-v2 read/write.
+// New-file upload is enabled only in coordinated builds.
+const bool kEnableNewFileV2Upload = bool.fromEnvironment(
+  'VAULTAI_ENABLE_NEW_FILE_V2_UPLOAD',
+  defaultValue: false,
+);
 
 bool legacyAuthFallbackPermitted({
   required bool opaqueLookupMissed,
@@ -13047,6 +13064,62 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
     }
 
+    if (ctx.v2Mvk != null) {
+      final app = context.read<AppState>();
+      bool accessIsCurrent() => mounted && app.unlocked &&
+          job.status != UploadJobStatus.cancelled &&
+          app.sessionToken == ctx.authToken &&
+          app.vaultId == ctx.vaultId &&
+          identical(zk_mvk_store.ZkActiveMvk.current(), ctx.v2Mvk);
+      if (!accessIsCurrent()) {
+        throw StateError('Private upload session changed');
+      }
+      if (job.relativePath != null || job.importId != null) {
+        throw StateError('Private folder upload is not available yet');
+      }
+      final writer = FileV2Writer(ctx.v2Mvk!);
+      final prepared = job.preparedNewV2 ??= await writer.prepare(
+        fileId: FileV2Writer.newFileId(),
+        fileName: job.name,
+        savedName: job.displayName,
+        contentType: job.mimeType,
+        bytes: bytes,
+      );
+      if (!accessIsCurrent()) {
+        throw StateError('Private upload session changed');
+      }
+      try {
+        await ctx.client.uploadNewV2File(
+          authToken: ctx.authToken,
+          prepared: prepared,
+          originalBytes: bytes,
+          mvk: ctx.v2Mvk!,
+          responseIsCurrent: accessIsCurrent,
+          onProgress: reportProgress,
+        );
+      } on StorageLimitExceededException catch (e) {
+        throw StorageLimitDuringUploadException(
+          message: e.message,
+          usedBytes: e.usedBytes,
+          limitBytes: e.limitBytes,
+        );
+      } on RateLimitedException catch (e) {
+        final pauseSec = e.resetInSeconds ?? 30;
+        throw TransientUploadException(
+          'Server rate-limited the upload (retrying in ${pauseSec}s)',
+          pauseFor: Duration(seconds: pauseSec),
+        );
+      }
+      if (!accessIsCurrent()) {
+        throw StateError('Private upload session changed');
+      }
+      return UploadResult(
+        fileId: prepared.fileId,
+        autoNamed: job.displayName?.trim().isNotEmpty == true,
+        message: 'Saved private file.',
+      );
+    }
+
     final preferChunked = bytes.length >= kChunkedUploadThresholdBytes;
 
     final contentSha256 = computeContentSha256(bytes);
@@ -13397,16 +13470,16 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (kEnableFileV2UiRead &&
           zk_mvk_store.ZkActiveMvk.current() != null &&
           response['files'] is List) {
-        final retiredById = <String, _VaultStoredFile>{
+        final readyById = <String, _VaultStoredFile>{
           for (final file in vaultFiles)
-            if (file.v2Retired) file.id: file,
+            if (file.v2Available) file.id: file,
         };
         response['files'] = <Map<String, dynamic>>[
           for (final raw in response['files'] as List)
             if (raw is Map)
               () {
                 final row = Map<String, dynamic>.from(raw);
-                final v2 = retiredById['${row['id']}'];
+                final v2 = readyById['${row['id']}'];
                 if (v2 == null) return row;
                 return <String, dynamic>{
                   ...row,
@@ -13415,7 +13488,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   'content_type': v2.contentType,
                   'asset_type': v2.assetType,
                   'file_size': v2.fileSize,
-                  'v2_retired': true,
+                  'v2_retired': v2.v2Retired,
+                  'v2_ready': v2.v2Ready,
                 };
               }(),
         ];
@@ -13911,7 +13985,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       relativePath: file.relativePath,
       sizeBytes: file.fileSize,
     ).map((message) {
-      if (!file.v2Retired || message.kind != ChatMessage.kVaultFile) {
+      if (!file.v2Available || message.kind != ChatMessage.kVaultFile) {
         return message;
       }
       return _Msg(
@@ -13941,7 +14015,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   SavedFileRenameController? _captureSavedFileRename(String fileId) {
-    if (vaultFiles.any((file) => file.id == fileId && file.v2Retired)) {
+    if (vaultFiles.any((file) => file.id == fileId && file.v2Available)) {
       return null;
     }
     final app = context.read<AppState>();
@@ -13978,6 +14052,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               contentType: file.contentType, assetType: file.assetType,
               fileSize: file.fileSize, needsNaming: false,
               v2Retired: file.v2Retired,
+              v2Ready: file.v2Ready,
               relativePath: file.relativePath,
             )
           else file,
@@ -14044,7 +14119,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _openSavedFileRename(_VaultStoredFile file) async {
-    if (file.v2Retired) {
+    if (file.v2Available) {
       _showSnack('Renaming this file is not available yet.');
       return;
     }
@@ -14108,7 +14183,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final controller = _captureSavedFileRename(match.entry.id);
     if (controller == null) {
       final retired = vaultFiles.any(
-        (file) => file.id == match.entry.id && file.v2Retired,
+        (file) => file.id == match.entry.id && file.v2Available,
       );
       _appendLocalVaultReply(text, retired
           ? 'Renaming this file is not available yet.'
@@ -14329,13 +14404,27 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
 
     final app = context.read<AppState>();
+    if (kEnableNewFileV2Upload && !kEnableFileV2UiRead &&
+        zk_mvk_store.ZkActiveMvk.current() != null) {
+      throw StateError('Private file upload needs the V2 file reader');
+    }
+    final v2Mvk = kEnableNewFileV2Upload
+        ? zk_mvk_store.ZkActiveMvk.current() : null;
+    if (kEnableNewFileV2Upload && v2Mvk == null &&
+        app.vaultHandle?.isNotEmpty == true) {
+      throw StateError('Vault encryption key changed. Unlock and try again.');
+    }
+    if (v2Mvk != null &&
+        freshAttachments.any((attachment) => attachment.relativePath != null)) {
+      throw StateError('Private folder upload is not available yet');
+    }
     final hasAccompanyingText =
         accompanyingText != null && accompanyingText.isNotEmpty;
     final freshCount = freshAttachments.length;
     final isMultiFileBatch = freshCount >= 2;
 
     List<int>? keyBytes;
-    final needsChunked =
+    final needsChunked = v2Mvk == null &&
         freshAttachments.any((a) => a.size >= kChunkedUploadThresholdBytes);
     if (needsChunked) {
       keyBytes = await _VaultCrypto.currentKeyBytesOrThrow();
@@ -14343,7 +14432,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     final hasFolderContext =
         freshAttachments.any((a) => a.relativePath != null);
-    final shouldCreateBatch = isMultiFileBatch || hasFolderContext;
+    final shouldCreateBatch = v2Mvk == null &&
+        (isMultiFileBatch || hasFolderContext);
     String? importId;
     if (shouldCreateBatch) {
       String? rootFolderName;
@@ -14388,8 +14478,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _currentUploadContext = _UploadContext(
       client: client,
       vaultName: vaultName,
-      pin: pin,
+      pin: v2Mvk == null ? pin : '',
       authToken: authToken,
+      vaultId: app.vaultId,
+      v2Mvk: v2Mvk,
       keyBytes: keyBytes,
       accompanyingText: accompanyingText,
       isBatchUpload: isMultiFileBatch,
@@ -15040,20 +15132,20 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required String fileId,
     required String fallbackFileName,
     required String? fallbackMime,
-    bool requireRetiredV2 = false,
+    bool requireReadyV2 = false,
   }) async {
-    if (requireRetiredV2 &&
+    if (requireReadyV2 &&
         (!kEnableFileV2UiRead || zk_mvk_store.ZkActiveMvk.current() == null)) {
       throw StateError('Private file access is unavailable.');
     }
-    final retiredV2 = kEnableFileV2UiRead &&
+    final availableV2 = kEnableFileV2UiRead &&
         zk_mvk_store.ZkActiveMvk.current() != null &&
-        await client.isRetiredV2File(authToken: authToken, fileId: fileId);
-    if (requireRetiredV2 && !retiredV2) {
+        await client.isAvailableV2File(authToken: authToken, fileId: fileId);
+    if (requireReadyV2 && !availableV2) {
       throw StateError('Private file changed. Refresh and try again.');
     }
-    if (retiredV2) {
-      final v2 = await client.downloadRetiredV2File(
+    if (availableV2) {
+      final v2 = await client.downloadAvailableV2File(
         authToken: authToken,
         fileId: fileId,
       );
@@ -15492,7 +15584,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         fileId: msg.fileId!,
         fallbackFileName: msg.fileName!,
         fallbackMime: msg.mimeType,
-        requireRetiredV2: msg.payload?['zk_private_chat_v2'] == true,
+        requireReadyV2: msg.payload?['zk_private_chat_v2'] == true,
       );
 
       if (!mounted) return;
@@ -15682,7 +15774,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         fileId: msg.fileId!,
         fallbackFileName: msg.fileName!,
         fallbackMime: msg.mimeType,
-        requireRetiredV2: msg.payload?['zk_private_chat_v2'] == true,
+        requireReadyV2: msg.payload?['zk_private_chat_v2'] == true,
       );
       if (!mounted) return;
       final ok = FileDownloader().downloadBytes(
@@ -17063,12 +17155,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         case VaultLocalContentKind.file:
           final pin = await _VaultCrypto.currentPinOrThrow();
           if (target.accessIsCurrent?.call() == false) return true;
-          if (kEnableFileV2UiRead &&
+          final expectedV2 = vaultFiles.any(
+            (file) => file.id == target.id && file.v2Available,
+          );
+          final availableV2 = kEnableFileV2UiRead &&
               zk_mvk_store.ZkActiveMvk.current() != null &&
-              await client.isRetiredV2File(
+              await client.isAvailableV2File(
                 authToken: token,
                 fileId: target.id,
-              )) {
+              );
+          if (expectedV2 && !availableV2) {
+            throw StateError('Private file changed. Refresh and try again.');
+          }
+          if (availableV2) {
             final handle = app.vaultHandle;
             if (handle == null || handle.isEmpty) {
               throw StateError('Vault verification is unavailable');
@@ -17078,12 +17177,23 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               pin: pin,
               sessionToken: token,
             );
-            await client.deleteRetiredV2File(
-              authToken: token,
-              fileId: target.id,
-              zkProofToken: proof.token,
-              responseIsCurrent: target.accessIsCurrent,
-            );
+            if (await client.isNewReadyV2File(
+              authToken: token, fileId: target.id,
+            )) {
+              await client.deleteNewV2File(
+                authToken: token,
+                fileId: target.id,
+                zkProofToken: proof.token,
+                responseIsCurrent: target.accessIsCurrent,
+              );
+            } else {
+              await client.deleteRetiredV2File(
+                authToken: token,
+                fileId: target.id,
+                zkProofToken: proof.token,
+                responseIsCurrent: target.accessIsCurrent,
+              );
+            }
           } else {
             await client.deleteVaultFile(
               vaultName: vaultName,
@@ -18587,7 +18697,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               child: IconButton(
                 key: ValueKey('files_file_rename_${file.id}'),
                 tooltip: 'Rename',
-                onPressed: file.v2Retired || sending || _pendingLocalDelete != null ||
+                onPressed: file.v2Available || sending || _pendingLocalDelete != null ||
                         _fileDeletesInFlight.contains(file.id) ||
                         _fileRenamesInFlight.contains(file.id)
                     ? null : () => _openSavedFileRename(file),

@@ -21,8 +21,12 @@ class _App extends AppState {
 }
 
 void main() {
+  for (final mode in <String>[
+    'legacy_migration_retired',
+    'client_v2_ready',
+  ]) {
   testWidgets(
-    'Files shows retired V2 copy from encrypted inventory without legacy PIN list',
+    'Files opens verified V2 $mode without legacy PIN list',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(430, 932));
       final app = _App()
@@ -101,7 +105,7 @@ void main() {
                     'file_size': fileBytes.length,
                     'file_name_ciphertext': nameCt,
                     'lifecycle_state': retiredState
-                        ? 'legacy_migration_retired' : 'file_v2_written',
+                        ? mode : 'file_v2_written',
                     'verification_state': retiredState
                         ? 'client_verified' : 'unverified',
                   },
@@ -118,7 +122,7 @@ void main() {
                   <String, dynamic>{
                     'file_id': v2.fileId,
                     'lifecycle_state': retiredState
-                        ? 'legacy_migration_retired' : 'file_v2_written',
+                        ? mode : 'file_v2_written',
                     'verification_state': retiredState
                         ? 'client_verified' : 'unverified',
                   },
@@ -130,8 +134,9 @@ void main() {
           return http.Response(
               jsonEncode(<String, dynamic>{
                 ...v2.toManifestBody(),
-                'lifecycle_state': 'legacy_migration_retired',
-                'verification_state': 'client_verified',
+                'lifecycle_state': retiredState ? mode : 'file_v2_written',
+                'verification_state': retiredState
+                    ? 'client_verified' : 'unverified',
               }),
               200);
         }
@@ -241,4 +246,5 @@ void main() {
     },
     skip: !kEnableFileV2UiRead,
   );
+  }
 }

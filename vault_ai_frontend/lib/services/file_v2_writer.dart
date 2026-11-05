@@ -61,12 +61,14 @@ class FileV2Writer {
     required String fileId,
     required String fileName,
     required Uint8List bytes,
+    String? savedName,
     String? contentType,
     int chunkSize = defaultChunkSize,
   }) async {
     if (!RegExp(r'^v2-[A-Za-z0-9_-]{27}$').hasMatch(fileId) ||
         fileName.trim().isEmpty ||
         fileName.length > 255 ||
+        (savedName?.length ?? 0) > 255 ||
         bytes.length > maxFileBytes ||
         chunkSize <= 0 ||
         chunkSize > defaultChunkSize ||
@@ -80,6 +82,8 @@ class FileV2Writer {
         b64urlEncode(await aesGcmWrap(metadataKey, utf8.encode(value)));
     final encryptedMetadata = <String, String>{
       'file_name_ciphertext': await wrapMetadata(fileName),
+      if (savedName != null && savedName.trim().isNotEmpty)
+        'saved_name_ciphertext': await wrapMetadata(savedName),
       if (contentType != null && contentType.isNotEmpty)
         'content_type_ciphertext': await wrapMetadata(contentType),
     };
@@ -117,8 +121,8 @@ class FileV2Writer {
     required FileV2Get get,
   }) async {
     try {
-      final downloaded = await FileV2Reader(mvk: mvk, get: get)
-          .download(prepared.fileId);
+      final downloaded =
+          await FileV2Reader(mvk: mvk, get: get).download(prepared.fileId);
       final bytes = downloaded.bytes;
       if (bytes.length != originalBytes.length ||
           bytes.length != prepared.totalBytes) {

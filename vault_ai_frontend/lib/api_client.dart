@@ -20,6 +20,7 @@ import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/zk_private_chat.dart' as zk_private_chat;
 import 'services/file_v2_reader.dart';
+import 'services/file_v2_writer.dart';
 
 // Coordinated rollout with VAULTAI_ZK_METADATA_INVENTORY_ENABLED on the API.
 // A missing keyless route must fail closed instead of sending a ZK PIN.
@@ -3745,6 +3746,8 @@ class VaultAIClient {
           'id': raw['file_id'],
           'v2_retired': raw['lifecycle_state'] == 'legacy_migration_retired' &&
               raw['verification_state'] == 'client_verified',
+          'v2_ready': raw['lifecycle_state'] == 'client_v2_ready' &&
+              raw['verification_state'] == 'client_verified',
           'needs_naming': false,
         });
       }
@@ -3791,6 +3794,147 @@ class VaultAIClient {
     );
   }
 
+  /// Idempotently stage one prepared MVK file, verify every server byte on
+  /// this client, then publish it. No PIN, filename, MIME, or plaintext bytes
+  /// are included in any request. The caller retains `prepared` on retry.
+  Future<Map<String, dynamic>> uploadNewV2File({
+    required String authToken,
+    required PreparedNewFileV2 prepared,
+    required Uint8List originalBytes,
+    required SecretKey mvk,
+    bool Function()? responseIsCurrent,
+    void Function(double progress)? onProgress,
+  }) async {
+    if (originalBytes.length != prepared.totalBytes ||
+        !identical(mvk, zk_mvk_store.ZkActiveMvk.current())) {
+      throw StateError('Private upload access changed');
+    }
+    void checkAccess() {
+      _requireSavedItemKey(mvk);
+      if (responseIsCurrent?.call() == false) {
+        throw StateError('Private upload access changed');
+      }
+    }
+    Future<Map<String, dynamic>?> getOptional(String path) async {
+      checkAccess();
+      final response = await _sessionHttpWithGuard(checkAccess).get(
+        Uri.parse('$baseUrl$path'),
+        headers: _defaultHeaders(authToken: authToken),
+      );
+      checkAccess();
+      if (response.statusCode == 404) return null;
+      if (response.statusCode == 429) {
+        throw _rateLimitedFromBody(response.body);
+      }
+      if (response.statusCode != 200) {
+        _throwIfAuthExpired(response.statusCode, response.body);
+        _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        throw FileV2ReadException(response.statusCode);
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Invalid private upload readback');
+      }
+      return decoded;
+    }
+    Future<Map<String, dynamic>> mutate(
+      String method, String path, Map<String, Object> body,
+    ) async {
+      checkAccess();
+      final uri = Uri.parse('$baseUrl$path');
+      final headers = _defaultHeaders(authToken: authToken, json: true);
+      final encoded = jsonEncode(body);
+      final transport = _sessionHttpWithGuard(checkAccess);
+      final response = method == 'PUT'
+          ? await transport.put(uri, headers: headers, body: encoded)
+          : await transport.post(uri, headers: headers, body: encoded);
+      checkAccess();
+      if (response.statusCode == 413) {
+        throw _parseStorageLimitException(response.body);
+      }
+      if (response.statusCode == 429) {
+        throw _rateLimitedFromBody(response.body);
+      }
+      if (response.statusCode != 200) {
+        _throwIfAuthExpired(response.statusCode, response.body);
+        _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        throw FileV2ReadException(response.statusCode);
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Invalid private upload acknowledgement');
+      }
+      return decoded;
+    }
+
+    final encodedId = Uri.encodeComponent(prepared.fileId);
+    final manifestPath = '/vault/file-v2/$encodedId/manifest';
+    final existingManifest = await getOptional(manifestPath);
+    if (existingManifest == null) {
+      await mutate('POST', '/vault/file-v2/manifest',
+          prepared.toManifestBody());
+    } else if (existingManifest['file_id'] != prepared.fileId ||
+        existingManifest['manifest_ciphertext'] !=
+            prepared.manifestCiphertext ||
+        existingManifest['total_bytes'] != prepared.totalBytes ||
+        existingManifest['chunk_size'] != prepared.chunkSize ||
+        existingManifest['chunk_count'] != prepared.chunkCiphertexts.length) {
+      throw const FormatException('Private file upload differs from server');
+    }
+    for (var index = 0; index < prepared.chunkCiphertexts.length; index++) {
+      final chunkPath = '/vault/file-v2/$encodedId/chunk/$index';
+      final existing = await getOptional(chunkPath);
+      if (existing == null) {
+        await mutate('PUT', '/vault/file-v2/chunk',
+            prepared.chunkBody(index));
+      } else if (existing['file_id'] != prepared.fileId ||
+          existing['chunk_index'] != index ||
+          existing['ciphertext'] != prepared.chunkCiphertexts[index]) {
+        throw const FormatException('Private file chunk differs from server');
+      }
+      onProgress?.call((index + 1) /
+          (prepared.chunkCiphertexts.length + 2));
+    }
+    final writer = FileV2Writer(mvk);
+    final verified = await writer.verifyReadback(
+      prepared: prepared,
+      originalBytes: originalBytes,
+      get: (path) async {
+        final value = await getOptional(path);
+        if (value == null) {
+          throw const FormatException('Private file readback is incomplete');
+        }
+        if (path == manifestPath &&
+            value['manifest_ciphertext'] != prepared.manifestCiphertext) {
+          throw const FormatException('Private file metadata changed');
+        }
+        return value;
+      },
+    );
+    checkAccess();
+    if (!verified) {
+      throw const FormatException('Private file readback did not match');
+    }
+    onProgress?.call(0.95);
+    final published = await mutate('POST',
+        '/vault/file-v2/$encodedId/publish-new',
+        <String, Object>{'confirm': true});
+    if (published['file_id'] != prepared.fileId ||
+        !<String>{'published', 'already_published'}
+            .contains(published['status'])) {
+      throw const FormatException('Invalid private file publish result');
+    }
+    final ready = await getOptional(manifestPath);
+    if (ready == null ||
+        ready['lifecycle_state'] != 'client_v2_ready' ||
+        ready['verification_state'] != 'client_verified' ||
+        ready['manifest_ciphertext'] != prepared.manifestCiphertext) {
+      throw const FormatException('Private file publish state is unavailable');
+    }
+    onProgress?.call(1);
+    return published;
+  }
+
   Future<List<Map<String, dynamic>>> listRetiredV2Files({
     required String authToken,
   }) async {
@@ -3812,6 +3956,28 @@ class VaultAIClient {
     ];
   }
 
+  Future<List<Map<String, dynamic>>> listReadyV2Files({
+    required String authToken,
+  }) async {
+    final listed = await _fileV2Reader(authToken: authToken).list(
+      readyOnly: true,
+    );
+    return <Map<String, dynamic>>[
+      for (final file in listed)
+        <String, dynamic>{
+          'id': file.fileId,
+          'file_name': file.fileName ?? file.displayName,
+          'saved_name': file.savedName,
+          'content_type': file.contentType,
+          'asset_type': file.assetType,
+          'file_size': file.totalBytes,
+          'needs_naming': false,
+          'v2_retired': file.retired,
+          'v2_ready': file.readyForUse && !file.retired,
+        },
+    ];
+  }
+
   Future<Map<String, dynamic>> listZkVaultFilesWithRetiredV2({
     required String authToken,
   }) async {
@@ -3819,7 +3985,7 @@ class VaultAIClient {
     final files = (inventory['files'] as List)
         .map((row) => Map<String, dynamic>.from(row as Map))
         .toList();
-    final retired = await listRetiredV2Files(authToken: authToken);
+    final retired = await listReadyV2Files(authToken: authToken);
     final byId = <String, Map<String, dynamic>>{
       for (final row in retired) row['id'] as String: row,
     };
@@ -3827,7 +3993,8 @@ class VaultAIClient {
     for (final row in files) {
       final id = row['id'] as String;
       final v2 = byId.remove(id);
-      if (row['v2_retired'] == true && v2 == null) {
+      if ((row['v2_retired'] == true || row['v2_ready'] == true) &&
+          v2 == null) {
         throw const FormatException('Retired file copy is unavailable');
       }
       merged.add(v2 == null ? row : <String, dynamic>{...row, ...v2});
@@ -3856,6 +4023,40 @@ class VaultAIClient {
     return false;
   }
 
+  Future<bool> isAvailableV2File({
+    required String authToken,
+    required String fileId,
+  }) async {
+    if (fileId.isEmpty) return false;
+    final response = await _fileV2Reader(authToken: authToken).get(
+      '/vault/file-v2',
+    );
+    final files = response['files'];
+    if (files is! List) throw const FormatException('Invalid V2 file list');
+    for (final raw in files) {
+      if (raw is! Map || raw['file_id'] != fileId) continue;
+      return raw['verification_state'] == 'client_verified' &&
+          <String>{'legacy_migration_retired', 'client_v2_ready'}
+              .contains(raw['lifecycle_state']);
+    }
+    return false;
+  }
+
+  Future<bool> isNewReadyV2File({
+    required String authToken,
+    required String fileId,
+  }) async {
+    final response = await _fileV2Reader(authToken: authToken).get(
+      '/vault/file-v2',
+    );
+    final files = response['files'];
+    if (files is! List) throw const FormatException('Invalid V2 file list');
+    return files.whereType<Map>().any((raw) =>
+        raw['file_id'] == fileId &&
+        raw['lifecycle_state'] == 'client_v2_ready' &&
+        raw['verification_state'] == 'client_verified');
+  }
+
   Future<FileV2Download> downloadRetiredV2File({
     required String authToken,
     required String fileId,
@@ -3865,6 +4066,14 @@ class VaultAIClient {
       requireRetired: true,
     );
   }
+
+  Future<FileV2Download> downloadAvailableV2File({
+    required String authToken,
+    required String fileId,
+  }) => _fileV2Reader(authToken: authToken).download(
+        fileId,
+        requireReady: true,
+      );
 
   Future<Map<String, dynamic>> deleteRetiredV2File({
     required String authToken,
@@ -3903,6 +4112,46 @@ class VaultAIClient {
     if (decoded is! Map<String, dynamic> ||
         decoded['file_id'] != fileId ||
         decoded['deleted'] != true) {
+      throw const FormatException('Invalid V2 file delete response');
+    }
+    return decoded;
+  }
+
+  Future<Map<String, dynamic>> deleteNewV2File({
+    required String authToken,
+    required String fileId,
+    required String zkProofToken,
+    bool Function()? responseIsCurrent,
+  }) async {
+    if (zkProofToken.isEmpty || fileId.isEmpty) {
+      throw const FormatException('V2 file delete proof is missing');
+    }
+    void checkAccess() {
+      if (responseIsCurrent?.call() == false) {
+        throw StateError('File deletion access changed. Select it again.');
+      }
+    }
+    checkAccess();
+    final uri = Uri.parse(
+      '$baseUrl/vault/file-v2/${Uri.encodeComponent(fileId)}/delete-new',
+    );
+    final response = await _sessionHttpWithGuard(checkAccess).post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(<String, dynamic>{
+        'zk_proof_token': zkProofToken,
+        'confirm': true,
+      }),
+    );
+    checkAccess();
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw FileV2ReadException(response.statusCode);
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic> ||
+        decoded['file_id'] != fileId || decoded['deleted'] != true) {
       throw const FormatException('Invalid V2 file delete response');
     }
     return decoded;

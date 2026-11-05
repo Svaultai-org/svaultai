@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'file_v2_writer.dart';
 
 
 enum UploadJobStatus {
@@ -82,6 +83,9 @@ class UploadJob {
 
   
   Uint8List? cachedBytes;
+
+  /// Stable encrypted upload across automatic retry of this job.
+  PreparedNewFileV2? preparedNewV2;
 
   UploadJob({
     required this.id,

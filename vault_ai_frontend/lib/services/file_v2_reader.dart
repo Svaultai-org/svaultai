@@ -32,6 +32,7 @@ class FileV2Manifest {
   final String? detectedType;
   final String? detectedService;
   final bool retired;
+  final bool readyForUse;
 
   const FileV2Manifest({
     required this.fileId,
@@ -45,6 +46,7 @@ class FileV2Manifest {
     required this.detectedType,
     required this.detectedService,
     required this.retired,
+    required this.readyForUse,
   });
 
   String get displayName => (savedName?.trim().isNotEmpty ?? false)
@@ -69,7 +71,10 @@ class FileV2Reader {
 
   const FileV2Reader({required this.mvk, required this.get});
 
-  Future<List<FileV2Manifest>> list({bool retiredOnly = false}) async {
+  Future<List<FileV2Manifest>> list({
+    bool retiredOnly = false,
+    bool readyOnly = false,
+  }) async {
     final response = await get('/vault/file-v2');
     final raw = response['files'];
     if (raw is! List) throw const FormatException('Invalid file list');
@@ -79,9 +84,11 @@ class FileV2Reader {
         throw const FormatException('Invalid file listing entry');
       }
       if (retiredOnly && !_isRetired(row)) continue;
+      if (readyOnly && !_isReady(row)) continue;
       result.add(await readManifest(
         row['file_id'] as String,
         requireRetired: retiredOnly,
+        requireReady: readyOnly,
       ));
     }
     return result;
@@ -90,6 +97,7 @@ class FileV2Reader {
   Future<FileV2Manifest> readManifest(
     String fileId, {
     bool requireRetired = false,
+    bool requireReady = false,
   }) async {
     if (fileId.isEmpty) throw const FormatException('Invalid file ID');
     final response = await get(
@@ -102,6 +110,10 @@ class FileV2Reader {
     }
     final retired = _isRetired(response);
     if (requireRetired && !retired) {
+      throw const FormatException('V2 file is not ready for use');
+    }
+    final ready = _isReady(response);
+    if (requireReady && !ready) {
       throw const FormatException('V2 file is not ready for use');
     }
     final total = response['total_bytes'];
@@ -163,16 +175,19 @@ class FileV2Reader {
       detectedType: await unwrapMetadata('detected_type_ciphertext'),
       detectedService: await unwrapMetadata('detected_service_ciphertext'),
       retired: retired,
+      readyForUse: ready,
     );
   }
 
   Future<FileV2Download> download(
     String fileId, {
     bool requireRetired = false,
+    bool requireReady = false,
   }) async {
     final manifest = await readManifest(
       fileId,
       requireRetired: requireRetired,
+      requireReady: requireReady,
     );
     final key = await VaultKeyHierarchy(mvk).fileContentKey();
     final out = Uint8List(manifest.totalBytes);
@@ -209,3 +224,8 @@ class FileV2Reader {
 bool _isRetired(Map row) =>
     row['lifecycle_state'] == 'legacy_migration_retired' &&
     row['verification_state'] == 'client_verified';
+
+bool _isReady(Map row) =>
+    row['verification_state'] == 'client_verified' &&
+    (row['lifecycle_state'] == 'legacy_migration_retired' ||
+        row['lifecycle_state'] == 'client_v2_ready');
