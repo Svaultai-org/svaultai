@@ -767,6 +767,9 @@ String _safeVlogValue(String tag, String key, Object? value) {
       lowerKey.contains('password') ||
       lowerKey.contains('secret') ||
       lowerKey.contains('ciphertext') ||
+      lowerKey.contains('error') ||
+      lowerKey.contains('exception') ||
+      lowerKey.contains('stack') ||
       lowerKey == 'body' ||
       lowerKey == 'prompt' ||
       lowerKey == 'query' ||

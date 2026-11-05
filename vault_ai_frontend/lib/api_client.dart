@@ -33,7 +33,6 @@ void _vlog(String tag, [Map<String, Object?>? data]) {
 String _safeVlogValue(String tag, String key, Object? value) {
   if (value == null) return 'null';
   final lowerKey = key.toLowerCase();
-  final lowerTag = tag.toLowerCase();
   final text = value.toString();
   if (value is Map) {
     return '{${value.entries.map((entry) {
@@ -54,13 +53,15 @@ String _safeVlogValue(String tag, String key, Object? value) {
       lowerKey.contains('secret') ||
       lowerKey.contains('ciphertext') ||
       lowerKey.contains('credential') ||
+      lowerKey.contains('error') ||
+      lowerKey.contains('exception') ||
+      lowerKey.contains('stack') ||
       lowerKey == 'body' ||
       lowerKey == 'response_body' ||
       lowerKey == 'errorbody' ||
       lowerKey == 'prompt' ||
       lowerKey == 'query' ||
-      lowerKey == 'message' ||
-      (lowerTag.contains('chat') && lowerKey.contains('error'))) {
+      lowerKey == 'message') {
     return '<redacted>';
   }
   if (lowerKey.contains('pin') &&
