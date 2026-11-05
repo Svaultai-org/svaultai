@@ -5349,12 +5349,6 @@ Future<void> _stageLegacyContentBestEffort({
   _legacyStageDiagnostic(LegacyStageDiagnosticCode.workerReady);
 
   void checkSession() {
-    try {
-      pinLease.requireActive();
-    } catch (_) {
-      _legacyStageDiagnostic(LegacyStageDiagnosticCode.workerLeaseExpired);
-      rethrow;
-    }
     if (!app.unlocked) {
       _legacyStageDiagnostic(LegacyStageDiagnosticCode.workerNotUnlocked);
       throw StateError('Vault session changed during migration');
@@ -5366,13 +5360,19 @@ Future<void> _stageLegacyContentBestEffort({
       throw StateError('Vault session changed during migration');
     }
   }
+  final stageGuard = LegacyStageSessionGuard(
+    pinLease: pinLease,
+    requireSession: checkSession,
+    onPinLeaseExpired: () =>
+        _legacyStageDiagnostic(LegacyStageDiagnosticCode.workerLeaseExpired),
+  );
 
   Future<legacy_stage.MigrationReply> request(
     String method,
     String path, [
     Map<String, dynamic>? body,
   ]) async {
-    checkSession();
+    stageGuard.requireRequest();
     final uri = Uri.parse('$backendBaseUrl$path');
     final headers = legacy_stage.legacyContentMigrationHeaders(
       sessionToken: token,
@@ -5391,7 +5391,7 @@ Future<void> _stageLegacyContentBestEffort({
       default:
         throw StateError('Unsupported migration request');
     }
-    checkSession();
+    stageGuard.requireRequest();
     Object? decoded;
     try {
       decoded = jsonDecode(response.body);
@@ -5405,13 +5405,12 @@ Future<void> _stageLegacyContentBestEffort({
     final export = legacy_export.LegacyCiphertextExportClient(
       proofProvider: () async {
         _legacyStageDiagnostic(LegacyStageDiagnosticCode.proofAttempt);
-        checkSession();
         final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
           vaultHandle: handle,
-          pin: pinLease.requirePin(),
+          pin: stageGuard.requirePinForProof(),
           sessionToken: token,
         );
-        checkSession();
+        stageGuard.requireProofCompletion();
         _legacyStageDiagnostic(LegacyStageDiagnosticCode.proofComplete);
         return proof.token;
       },

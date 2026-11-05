@@ -42,3 +42,44 @@ class LegacyStagePinLease {
     _timer = null;
   }
 }
+
+/// An active vault session can finish work authorized by an unexpired server
+/// export grant after the local PIN lease has cleared. A new OPAQUE proof still
+/// requires the PIN within its original five-minute lease. The server remains
+/// responsible for enforcing each grant's page, byte, and expiry limits.
+class LegacyStageSessionGuard {
+  final LegacyStagePinLease pinLease;
+  final void Function() requireSession;
+  final void Function()? onPinLeaseExpired;
+
+  const LegacyStageSessionGuard({
+    required this.pinLease,
+    required this.requireSession,
+    this.onPinLeaseExpired,
+  });
+
+  /// Use before and after every export, V2 write, and readback request.
+  void requireRequest() => requireSession();
+
+  /// Use only when starting a fresh OPAQUE proof for a new export grant.
+  String requirePinForProof() {
+    requireSession();
+    try {
+      return pinLease.requirePin();
+    } on StateError {
+      onPinLeaseExpired?.call();
+      rethrow;
+    }
+  }
+
+  /// An OPAQUE exchange that finishes after the lease expires is discarded.
+  void requireProofCompletion() {
+    requireSession();
+    try {
+      pinLease.requireActive();
+    } on StateError {
+      onPinLeaseExpired?.call();
+      rethrow;
+    }
+  }
+}
