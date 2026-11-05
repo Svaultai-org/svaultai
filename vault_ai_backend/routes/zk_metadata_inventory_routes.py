@@ -110,11 +110,14 @@ def file_metadata_inventory(
         cur.execute(
             """
             SELECT u.id, u.file_size, u.storage_mode, u.upload_status,
-                   u.file_name_ciphertext, u.saved_name_ciphertext,
+                   u.file_name_ciphertext,
+                   COALESCE(r.saved_name_override_ciphertext,
+                            u.saved_name_ciphertext) AS saved_name_ciphertext,
                    u.content_type_ciphertext, u.detected_type_ciphertext,
                    u.detected_service_ciphertext, u.asset_type_ciphertext,
                    u.encrypted_file_data IS NOT NULL AS has_inline_ciphertext,
-                   u.created_at, r.lifecycle_state, r.verification_state
+                   u.created_at, r.lifecycle_state, r.verification_state,
+                   r.name_version
               FROM uploaded_files u
               LEFT JOIN file_v2_records r
                 ON r.file_id = u.id AND r.vault_id = u.vault_id
@@ -137,6 +140,10 @@ def file_metadata_inventory(
             "created_at": row["created_at"],
             "lifecycle_state": row["lifecycle_state"],
             "verification_state": row["verification_state"],
+            "name_version": (
+                int(row["name_version"])
+                if row.get("name_version") is not None else None
+            ),
         }
         for field in (
             "file_name_ciphertext", "saved_name_ciphertext",

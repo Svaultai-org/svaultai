@@ -398,6 +398,8 @@ async def rename_file(
 ):
     require_content_write(principal)
     vault_id = principal["vault_id"]
+    from routes.file_v2_routes import reject_legacy_zk_file_rename
+    reject_legacy_zk_file_rename(principal)
     verify_vault_pin(vault_id, payload.pin)
 
     conn = get_db()

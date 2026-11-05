@@ -6,7 +6,7 @@ from psycopg2.extras import RealDictCursor
 from auth_local import SessionPrincipal
 from device_gate import verify_trusted_device
 from routes.auth_zk_routes import consume_recent_zk_proof
-from vault_core import get_db
+from vault_core import get_db, is_vault_zk_adopted
 from zk_migration_flags import ZkMigrationFlags
 from subscription_entitlement import require_content_write, require_file_read
 
@@ -15,6 +15,7 @@ MAX_FILE_BYTES = 64 * 1024 * 1024
 MAX_CHUNK_BYTES = 1024 * 1024
 MAX_CHUNKS = 4096
 MAX_MANIFEST_CIPHERTEXT_BYTES = 64 * 1024
+MAX_ENCRYPTED_SAVED_NAME_BYTES = 4096
 GCM_FRAMING_BYTES = 12 + 16
 FORBIDDEN = ('filename','filename_plaintext','file_content','file_content_plaintext',
  'content_type_plaintext','mime_plaintext','relative_path_plaintext','extracted_text',
@@ -28,6 +29,14 @@ def _enabled(write=False):
 
 def _new_files_enabled():
     return os.getenv('VAULTAI_ZK_NEW_FILE_V2_ENABLED', '').strip().lower() == 'true'
+
+def _v2_rename_enabled():
+    return os.getenv('VAULTAI_ZK_FILE_V2_RENAME_ENABLED', '').strip().lower() == 'true'
+
+def reject_legacy_zk_file_rename(principal: SessionPrincipal) -> None:
+    """Prevent plaintext/PIN rename paths from bypassing an enabled V2 path."""
+    if _v2_rename_enabled() and is_vault_zk_adopted(principal['vault_id']):
+        raise HTTPException(409, detail='zk_v2_rename_required')
 
 def _decode(v: str) -> bytes:
     try: return base64.b64decode(v + '=' * (-len(v) % 4), altchars=b'-_', validate=True)
@@ -60,6 +69,12 @@ class ConfirmedFileDelete(BaseModel):
     model_config = ConfigDict(extra='forbid')
     zk_proof_token: str = Field(min_length=1, max_length=128)
     confirm: bool
+
+class EncryptedFileRename(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    zk_proof_token: str = Field(min_length=1, max_length=128)
+    expected_name_version: int = Field(ge=0)
+    saved_name_ciphertext: str = Field(min_length=1, max_length=5500)
 
 def _reject(data: dict):
     leaked = [k for k in FORBIDDEN if k in data]
@@ -171,11 +186,87 @@ def list_files(principal: SessionPrincipal = Depends(verify_trusted_device)):
 def get_manifest(file_id: str, principal: SessionPrincipal = Depends(verify_trusted_device)):
     _enabled(False); conn = get_db(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        cur.execute('''SELECT file_id,crypto_version,manifest_ciphertext,total_bytes,chunk_size,chunk_count,lifecycle_state,verification_state FROM file_v2_records WHERE file_id=%s AND vault_id=%s''', (file_id, principal['vault_id'])); r=cur.fetchone()
+        cur.execute('''SELECT file_id,crypto_version,manifest_ciphertext,total_bytes,chunk_size,chunk_count,lifecycle_state,verification_state,saved_name_override_ciphertext,name_version FROM file_v2_records WHERE file_id=%s AND vault_id=%s''', (file_id, principal['vault_id'])); r=cur.fetchone()
         if not r: raise HTTPException(404, detail='file_v2_not_found')
         require_file_read(principal, int(r['total_bytes']))
-        r['manifest_ciphertext']=base64.urlsafe_b64encode(bytes(r['manifest_ciphertext'])).decode().rstrip('='); return dict(r)
+        r['manifest_ciphertext']=base64.urlsafe_b64encode(bytes(r['manifest_ciphertext'])).decode().rstrip('=')
+        override = r['saved_name_override_ciphertext']
+        r['saved_name_override_ciphertext'] = (
+            base64.urlsafe_b64encode(bytes(override)).decode().rstrip('=')
+            if override is not None else None
+        )
+        return dict(r)
     finally: conn.close()
+
+@router.post('/vault/file-v2/{file_id}/rename')
+def rename_ready_file(
+    file_id: str,
+    payload: EncryptedFileRename,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+):
+    """CAS an opaque saved-name override; the immutable manifest/chunks stay put."""
+    if not _v2_rename_enabled():
+        raise HTTPException(404, detail='file_v2_rename_disabled')
+    _enabled(True)
+    require_content_write(principal)
+    if not is_vault_zk_adopted(principal['vault_id']):
+        raise HTTPException(409, detail='zk_vault_required')
+    if not file_id or len(file_id) > 128:
+        raise HTTPException(400, detail='invalid_file_id')
+    name_ct = _decode(payload.saved_name_ciphertext)
+    if not GCM_FRAMING_BYTES < len(name_ct) <= MAX_ENCRYPTED_SAVED_NAME_BYTES:
+        raise HTTPException(400, detail='invalid_encrypted_saved_name')
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute(
+            'SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))',
+            (principal['vault_id'], file_id),
+        )
+        cur.execute(
+            'SELECT verification_state,lifecycle_state,name_version '
+            'FROM file_v2_records WHERE file_id=%s AND vault_id=%s FOR UPDATE',
+            (file_id, principal['vault_id']),
+        )
+        state = cur.fetchone()
+        if state is None:
+            raise HTTPException(404, detail='file_v2_not_found')
+        if state[0] != 'client_verified' or state[1] not in (
+            'legacy_migration_retired', 'client_v2_ready',
+        ):
+            raise HTTPException(409, detail='file_v2_not_ready')
+        if int(state[2]) != payload.expected_name_version:
+            raise HTTPException(409, detail='file_v2_name_version_conflict')
+        cur.execute(
+            'SELECT 1 FROM uploaded_files WHERE id=%s AND vault_id=%s FOR UPDATE',
+            (file_id, principal['vault_id']),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(409, detail='file_v2_marker_missing')
+        consume_recent_zk_proof(payload.zk_proof_token, principal)
+        cur.execute(
+            'UPDATE file_v2_records SET saved_name_override_ciphertext=%s, '
+            'name_version=name_version+1 '
+            'WHERE file_id=%s AND vault_id=%s AND name_version=%s '
+            "AND verification_state='client_verified' "
+            "AND lifecycle_state IN ('legacy_migration_retired','client_v2_ready') "
+            'RETURNING name_version',
+            (name_ct, file_id, principal['vault_id'], payload.expected_name_version),
+        )
+        updated = cur.fetchone()
+        if updated is None:
+            raise HTTPException(409, detail='file_v2_name_version_conflict')
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    try:
+        from vault_tool_result_cache import invalidate_for_event
+        invalidate_for_event(vault_id=principal['vault_id'], event='file_renamed')
+    except Exception:
+        pass
+    return {'file_id': file_id, 'name_version': int(updated[0]), 'renamed': True}
 
 @router.get('/vault/file-v2/{file_id}/chunk/{chunk_index}')
 def get_chunk(file_id: str, chunk_index: int, principal: SessionPrincipal = Depends(verify_trusted_device)):

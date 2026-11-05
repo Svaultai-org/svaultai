@@ -11848,6 +11848,9 @@ async def name_file_endpoint(
 ):
     vault_id = principal["vault_id"]
 
+    from routes.file_v2_routes import reject_legacy_zk_file_rename
+    reject_legacy_zk_file_rename(principal)
+
     key = verify_vault_pin(vault_id, pin)
 
     result = save_named_uploaded_asset(
