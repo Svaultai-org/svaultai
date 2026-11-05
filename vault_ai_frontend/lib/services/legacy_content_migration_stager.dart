@@ -319,11 +319,11 @@ class LegacyContentMigrationStager {
           (plain != null && plain is! String)) {
         throw const FormatException('Invalid legacy file metadata');
       }
-      // An old app can rename saved_name after a listing. Use the plaintext
-      // value from the same locked source row over an older ciphertext label.
-      final usePlain = plain is String && plain.isNotEmpty &&
-          (entry.key == 'saved_name_ciphertext' ||
-              encrypted == null || encrypted == '');
+      // Old clients can rename or classify a file by changing the plaintext
+      // columns while leaving older encrypted labels in place. The export
+      // snapshot binds this latest source row; re-encrypt every nonempty
+      // plaintext label from it rather than carrying stale ciphertext into V2.
+      final usePlain = plain is String && plain.isNotEmpty;
       result[entry.key] = usePlain
           ? b64urlEncode(await aesGcmWrap(key, utf8.encode(plain)))
           : encrypted is String && encrypted.isNotEmpty ? encrypted : null;

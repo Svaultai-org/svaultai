@@ -282,6 +282,18 @@ void main() {
     final oldSavedName = b64urlEncode(
       await aesGcmWrap(metadataKey, utf8.encode('Old saved name')),
     );
+    final oldContentType = b64urlEncode(
+      await aesGcmWrap(metadataKey, utf8.encode('old/type')),
+    );
+    final oldDetectedType = b64urlEncode(
+      await aesGcmWrap(metadataKey, utf8.encode('old-detected')),
+    );
+    final oldDetectedService = b64urlEncode(
+      await aesGcmWrap(metadataKey, utf8.encode('old-service')),
+    );
+    final oldAssetType = b64urlEncode(
+      await aesGcmWrap(metadataKey, utf8.encode('old-asset')),
+    );
     Map<String, dynamic>? manifest;
     final chunks = <int, String>{};
     var interruptSecondChunkOnce = true;
@@ -305,18 +317,18 @@ void main() {
         fileSourceMetadata: <String, Map<String, dynamic>>{
           'synthetic-file': <String, dynamic>{
             'file_size': bytes.length,
-            'file_name': null,
+            'file_name': 'Latest file name.bin',
             'saved_name': 'Latest saved name',
             'content_type': 'application/octet-stream',
-            'detected_type': null,
-            'detected_service': null,
-            'asset_type': null,
+            'detected_type': 'latest-detected',
+            'detected_service': 'latest-service',
+            'asset_type': 'latest-asset',
             'file_name_ciphertext': encryptedName,
             'saved_name_ciphertext': oldSavedName,
-            'content_type_ciphertext': null,
-            'detected_type_ciphertext': null,
-            'detected_service_ciphertext': null,
-            'asset_type_ciphertext': null,
+            'content_type_ciphertext': oldContentType,
+            'detected_type_ciphertext': oldDetectedType,
+            'detected_service_ciphertext': oldDetectedService,
+            'asset_type_ciphertext': oldAssetType,
           },
         },
       ),
@@ -354,7 +366,14 @@ void main() {
           expect(body!.containsKey('pin'), isFalse);
           expect(body['migrating_legacy'], isTrue);
           expect(body['source_snapshot'], _snapshotA);
-          expect(jsonEncode(body), isNot(contains('Latest saved name')));
+          final encoded = jsonEncode(body);
+          for (final privateLabel in <String>[
+            'Latest file name.bin', 'Latest saved name',
+            'application/octet-stream', 'latest-detected',
+            'latest-service', 'latest-asset',
+          ]) {
+            expect(encoded, isNot(contains(privateLabel)));
+          }
           manifest = body;
           return const MigrationReply(
               200, <String, dynamic>{'file_id': 'synthetic-file'});
@@ -400,9 +419,18 @@ void main() {
       b64urlDecode(manifest!['manifest_ciphertext'] as String),
     ))) as Map<String, dynamic>;
     final labels = manifestPlain['encrypted_metadata'] as Map<String, dynamic>;
-    expect(utf8.decode(await aesGcmUnwrap(
-      metadataKey, b64urlDecode(labels['saved_name_ciphertext'] as String),
-    )), 'Latest saved name');
+    for (final entry in <String, String>{
+      'file_name_ciphertext': 'Latest file name.bin',
+      'saved_name_ciphertext': 'Latest saved name',
+      'content_type_ciphertext': 'application/octet-stream',
+      'detected_type_ciphertext': 'latest-detected',
+      'detected_service_ciphertext': 'latest-service',
+      'asset_type_ciphertext': 'latest-asset',
+    }.entries) {
+      expect(utf8.decode(await aesGcmUnwrap(
+        metadataKey, b64urlDecode(labels[entry.key] as String),
+      )), entry.value);
+    }
   });
 
   test('stale source rejection aborts without deleting legacy item', () async {
