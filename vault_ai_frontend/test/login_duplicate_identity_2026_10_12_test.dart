@@ -315,12 +315,15 @@ void main() {
     });
   });
 
-  test('crypto profile helper stays encrypted and never falls back after intent refusal', () async {
+  test('ciphertext write refusal never falls back to a legacy PIN route', () async {
     final f = Fixture()..unlock();
     f.rejectCiphertextWrite = true;
-    await expectLater(f.run(() => client.saveCryptoWalletProfile(
-      pin: 'synthetic', authToken: 'synthetic', asset: 'ETH',
-      walletLabel: 'synthetic', publicAddress: '0x2222222222222222222222222222222222222222',
+    await expectLater(f.run(() => client.tryZkVaultItemCiphertextUpsert(
+      baseUrl: client.baseUrl,
+      authToken: 'synthetic',
+      itemType: 'wallet_account',
+      service: 'synthetic',
+      payload: {'asset': 'ETH'},
     )), throwsA(isA<SavedItemUpdateRequiredException>()));
     expect(f.writes.length, 1);
     expect(f.writes.single.url.path, '/vault/ciphertext/vault-items');
