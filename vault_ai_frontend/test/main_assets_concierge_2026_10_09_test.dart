@@ -73,6 +73,9 @@ class _NetworkFixture {
       case 'POST /vault-stats':
         return json(
             {'login_count': 1, 'file_count': 0, 'storage_used_bytes': 0});
+      case 'GET /vault-stats/zk':
+        return json(
+            {'login_count': 1, 'file_count': 0, 'storage_used_bytes': 0});
       case 'GET /billing/me':
         return json({
           'included_bytes': kVaultStorageLimitBytes,

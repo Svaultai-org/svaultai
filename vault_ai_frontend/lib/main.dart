@@ -8068,6 +8068,18 @@ bool isClientSecureItemDeleteCancellationPhrase(String message) {
   ).hasMatch(message);
 }
 
+bool conciergeKeysAllowBinding({
+  required String vaultId,
+  required VaultCryptoContext? keyContext,
+  required SecretKey? mvk,
+  required String? mvkVaultId,
+  required bool privateOnly,
+}) {
+  if (mvk == null || mvkVaultId != vaultId) return false;
+  if (privateOnly) return keyContext == null;
+  return keyContext != null && keyContext.vaultId == vaultId;
+}
+
 class _ChatDashboardPageState extends State<ChatDashboardPage> {
   bool _cryptoBillingBannerDismissed = false;
   BillingLoadState? _cryptoBillingBannerLastState;
@@ -8101,8 +8113,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (!app.authed || !app.unlocked || token == null || vaultId == null ||
         deviceId == null || deviceId.isEmpty ||
-        keyContext == null || keyContext.vaultId != vaultId || mvk == null ||
-        zk_mvk_store.ZkActiveMvk.currentVaultId() != vaultId) {
+        !conciergeKeysAllowBinding(
+          vaultId: vaultId,
+          keyContext: keyContext,
+          mvk: mvk,
+          mvkVaultId: zk_mvk_store.ZkActiveMvk.currentVaultId(),
+          privateOnly: kPrivateOnlyUnlockEnabled,
+        )) {
       _clearConciergeExposureBindings();
       return null;
     }
