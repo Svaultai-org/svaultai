@@ -1155,9 +1155,9 @@ class BeneficiaryListRequest(BaseModel):
 
 class DeleteBeneficiaryRequest(BaseModel):
     link_id: int
-    vault_name: str                      
-    pin: Optional[str] = None
-    zk_proof_token: Optional[str] = None
+    vault_name: str = ""
+    pin: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    zk_proof_token: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
 
 class TransferActionRequest(BaseModel):
