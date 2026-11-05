@@ -856,6 +856,10 @@ enum LegacyStageDiagnosticCode {
   workerSessionChanged,
   proofAttempt,
   proofComplete,
+  itemsComplete,
+  filesListed,
+  fileSourceRead,
+  filePrepared,
   fileDeferred,
   stageComplete,
   stageDeferred,
@@ -5415,6 +5419,16 @@ Future<void> _stageLegacyContentBestEffort({
         mvk: mvk,
       ),
       request: request,
+      onPhase: (phase) => _legacyStageDiagnostic(switch (phase) {
+        legacy_stage.LegacyStagePhase.itemsComplete =>
+          LegacyStageDiagnosticCode.itemsComplete,
+        legacy_stage.LegacyStagePhase.filesListed =>
+          LegacyStageDiagnosticCode.filesListed,
+        legacy_stage.LegacyStagePhase.fileSourceRead =>
+          LegacyStageDiagnosticCode.fileSourceRead,
+        legacy_stage.LegacyStagePhase.filePrepared =>
+          LegacyStageDiagnosticCode.filePrepared,
+      }),
     ).stageAndVerify();
     if (stageResult.filesDeferredForUnreadableSource > 0) {
       _legacyStageDiagnostic(LegacyStageDiagnosticCode.fileDeferred);

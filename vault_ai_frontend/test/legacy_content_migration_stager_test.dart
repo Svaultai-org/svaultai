@@ -211,7 +211,7 @@ void main() {
     expect(calls.where((path) => path.endsWith('/page')), hasLength(2));
   });
 
-  test('unreadable local file source does not block later safe deferrals',
+  test('unreadable local file source does not block a later valid file',
       () async {
     final wrongKey = SecretKey(List<int>.filled(32, 88));
     final box = await AesGcm.with256bits().encrypt(
@@ -222,9 +222,33 @@ void main() {
     final unreadable = base64.encode(<int>[
       ...box.nonce, ...box.cipherText, ...box.mac.bytes,
     ]);
+    final valid = await _legacyEncrypt(<int>[7, 8, 9]);
+    final codec = LegacyCiphertextMigrationCodec(
+      legacyKey: _legacyKey, mvk: _mvk,
+    );
+    final metadataKey = await VaultKeyHierarchy(_mvk).metadataKey();
+    final encryptedName = b64urlEncode(await aesGcmWrap(
+      metadataKey, utf8.encode('synthetic-valid.bin'),
+    ));
+    final prepared = await codec.stageFile(
+      fileId: 'synthetic-valid-file',
+      legacyCiphertext: valid,
+      declaredFileSize: 3,
+      contentType: null,
+      encryptedMetadata: <String, String?>{
+        'file_name_ciphertext': encryptedName,
+        'saved_name_ciphertext': null,
+        'content_type_ciphertext': null,
+        'detected_type_ciphertext': null,
+        'detected_service_ciphertext': null,
+        'asset_type_ciphertext': null,
+      },
+    );
     final calls = <String>[];
+    final phases = <LegacyStagePhase>[];
     final result = await LegacyContentMigrationStager(
       enabled: true,
+      onPhase: phases.add,
       export: _export(
         itemRows: const <Map<String, dynamic>>[],
         fileRows: <Map<String, dynamic>>[
@@ -239,23 +263,54 @@ void main() {
             'ciphertext_chars':
                 LegacyContentMigrationStager.maxAutomaticCiphertextChars + 1,
           },
+          <String, dynamic>{
+            'file_id': 'synthetic-valid-file',
+            'ciphertext_chars': valid.length,
+            'file_size': 3,
+            'file_name': 'synthetic-valid.bin',
+          },
         ],
         itemCiphertexts: const <int, String>{},
         fileCiphertexts: <String, String>{
           'synthetic-unreadable-file': unreadable,
+          'synthetic-valid-file': valid,
         },
         calls: calls,
       ),
-      codec: LegacyCiphertextMigrationCodec(
-        legacyKey: _legacyKey, mvk: _mvk,
-      ),
-      request: (_, __, [___]) async =>
-          throw StateError('unreadable file reached a V2 stage route'),
+      codec: codec,
+      request: (method, path, [body]) async {
+        calls.add('$method $path');
+        if (method == 'GET' &&
+            path.endsWith('/file-staged/synthetic-valid-file')) {
+          return MigrationReply(200, <String, dynamic>{
+            'file_id': 'synthetic-valid-file',
+            'source_snapshot': _snapshotA,
+            'total_bytes': 3,
+            'chunk_count': prepared.chunkCiphertexts.length,
+            'manifest_ciphertext': prepared.manifestCiphertext,
+          });
+        }
+        if (method == 'GET' && path.endsWith('/chunk/0')) {
+          return MigrationReply(200, <String, dynamic>{
+            'file_id': 'synthetic-valid-file',
+            'chunk_index': 0,
+            'ciphertext': prepared.chunkCiphertexts.single,
+          });
+        }
+        throw StateError('unexpected V2 stage route');
+      },
     ).stageAndVerify();
-    expect(result.filesVerified, 0);
+    expect(result.filesVerified, 1);
     expect(result.filesDeferredForUnreadableSource, 1);
     expect(result.filesDeferredForSize, 1);
-    expect(calls.where((path) => path.endsWith('/page')), hasLength(3));
+    expect(calls.where((path) => path.endsWith('/page')), hasLength(4));
+    expect(phases, containsAllInOrder(<LegacyStagePhase>[
+      LegacyStagePhase.itemsComplete,
+      LegacyStagePhase.filesListed,
+      LegacyStagePhase.fileSourceRead,
+      LegacyStagePhase.fileSourceRead,
+      LegacyStagePhase.filePrepared,
+    ]));
   });
 
   test('wallet-engine row is not generically staged or counted', () async {
@@ -787,6 +842,64 @@ void main() {
     expect(resets, 1);
     expect(writes, 1);
     expect(proofs, greaterThanOrEqualTo(3));
+    expect(calls.any((call) => call.contains('retire') ||
+        call.startsWith('DELETE ')), isFalse);
+  });
+
+  test('unreadable file after a V2 reset still aborts the batch', () async {
+    final valid = await _legacyEncrypt(<int>[1, 2, 3]);
+    final wrongKey = SecretKey(List<int>.filled(32, 88));
+    final wrongBox = await AesGcm.with256bits().encrypt(
+      <int>[1, 2, 3], secretKey: wrongKey,
+      nonce: List<int>.generate(12, (i) => i + 4),
+    );
+    final unreadable = base64.encode(<int>[
+      ...wrongBox.nonce, ...wrongBox.cipherText, ...wrongBox.mac.bytes,
+    ]);
+    final fileCiphertexts = <String, String>{'synthetic-file': valid};
+    final calls = <String>[];
+    var resets = 0;
+    final stager = LegacyContentMigrationStager(
+      enabled: true,
+      recoveryEnabled: true,
+      export: _export(
+        itemRows: const <Map<String, dynamic>>[],
+        fileRows: <Map<String, dynamic>>[<String, dynamic>{
+          'file_id': 'synthetic-file',
+          'ciphertext_chars': valid.length,
+          'file_size': 3,
+          'file_name': 'synthetic-file.bin',
+        }],
+        itemCiphertexts: const <int, String>{},
+        fileCiphertexts: fileCiphertexts,
+        calls: calls,
+      ),
+      codec: LegacyCiphertextMigrationCodec(
+        legacyKey: _legacyKey, mvk: _mvk,
+      ),
+      request: (method, path, [body]) async {
+        calls.add('$method $path');
+        if (method == 'GET' && path.endsWith('/file-staged/synthetic-file')) {
+          return MigrationReply(200, <String, dynamic>{
+            'file_id': 'synthetic-file',
+            'source_snapshot': _snapshotA,
+            'total_bytes': 3,
+            'chunk_count': 0,
+            'manifest_ciphertext': 'synthetic-sidecar',
+          });
+        }
+        if (method == 'POST' && path.endsWith('/file-reset-stage')) {
+          resets++;
+          fileCiphertexts['synthetic-file'] = unreadable;
+          return const MigrationReply(200, <String, dynamic>{
+            'file_id': 'synthetic-file', 'stage_reset': true,
+          });
+        }
+        throw StateError('unexpected V2 stage route');
+      },
+    );
+    await expectLater(stager.stageAndVerify(), throwsStateError);
+    expect(resets, 1);
     expect(calls.any((call) => call.contains('retire') ||
         call.startsWith('DELETE ')), isFalse);
   });

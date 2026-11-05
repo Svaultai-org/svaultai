@@ -37,6 +37,14 @@ typedef MigrationRequest = Future<MigrationReply> Function(
   Map<String, dynamic>? body,
 ]);
 
+/// Closed-set phase markers for temporary, content-free migration diagnosis.
+enum LegacyStagePhase {
+  itemsComplete,
+  filesListed,
+  fileSourceRead,
+  filePrepared,
+}
+
 class LegacyStageResult {
   final int itemsVerified;
   final int filesVerified;
@@ -64,6 +72,7 @@ class LegacyContentMigrationStager {
   final LegacyCiphertextExportClient export;
   final LegacyCiphertextMigrationCodec codec;
   final MigrationRequest request;
+  final void Function(LegacyStagePhase)? onPhase;
 
   const LegacyContentMigrationStager({
     this.enabled = false,
@@ -71,6 +80,7 @@ class LegacyContentMigrationStager {
     required this.export,
     required this.codec,
     required this.request,
+    this.onPhase,
   });
 
   Future<LegacyStageResult> stageAndVerify() async {
@@ -92,7 +102,9 @@ class LegacyContentMigrationStager {
         }
         if (await _stageItem(item)) itemsVerified++;
       }
+      onPhase?.call(LegacyStagePhase.itemsComplete);
       final files = await export.listFiles();
+      onPhase?.call(LegacyStagePhase.filesListed);
       for (final file in files) {
         if (file['ciphertext_chars'] is int &&
             (file['ciphertext_chars'] as int) > maxAutomaticCiphertextChars) {
@@ -268,7 +280,13 @@ class LegacyContentMigrationStager {
       final id = record['file_id'];
       if (id is! String || id.isEmpty) rethrow;
       await _resetFileStageAfterFreshExport(id);
-      await _stageFileOnce(await _freshFileRecord(id));
+      try {
+        await _stageFileOnce(await _freshFileRecord(id));
+      } on _UnreadableLegacyFileSource {
+        // The recovery reset may already have changed a V2 sidecar. Abort
+        // rather than counting this as a harmless pre-write deferral.
+        throw StateError('Legacy file became unreadable after stage reset');
+      }
     }
   }
 
@@ -319,6 +337,7 @@ class LegacyContentMigrationStager {
       fileId: id,
       ciphertextChars: chars,
     );
+    onPhase?.call(LegacyStagePhase.fileSourceRead);
     final metadata = source.sourceMetadata;
     final size = metadata['file_size'];
     final contentType = metadata['content_type'];
@@ -351,6 +370,7 @@ class LegacyContentMigrationStager {
     } on SecretBoxAuthenticationError {
       throw const _UnreadableLegacyFileSource();
     }
+    onPhase?.call(LegacyStagePhase.filePrepared);
     final encodedId = Uri.encodeComponent(id);
     final stagePath = '/vault/legacy-ciphertext/migrate/file-staged/$encodedId';
     var staged = await request('GET', stagePath);
