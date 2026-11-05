@@ -174,6 +174,10 @@ class LegacyContentMigrationStager {
       }
       encryptedMetadata[name] = value as String?;
     }
+    if (encryptedMetadata['file_name_ciphertext'] == null &&
+        encryptedMetadata['saved_name_ciphertext'] == null) {
+      throw const FormatException('Legacy file name is unavailable');
+    }
     final legacy = await export.readFileCiphertext(
       fileId: id,
       ciphertextChars: chars,

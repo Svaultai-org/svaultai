@@ -198,6 +198,10 @@ void main() {
     final bytes = List<int>.generate(300000, (i) => (i * 13) & 255);
     final legacy = await _legacyEncrypt(bytes);
     final calls = <String>[];
+    final metadataKey = await VaultKeyHierarchy(_mvk).metadataKey();
+    final encryptedName = b64urlEncode(
+      await aesGcmWrap(metadataKey, utf8.encode('synthetic-file.bin')),
+    );
     Map<String, dynamic>? manifest;
     final chunks = <int, String>{};
     var interruptSecondChunkOnce = true;
@@ -211,7 +215,7 @@ void main() {
             'file_size': bytes.length,
             'content_type': 'application/octet-stream',
             'ciphertext_chars': legacy.length,
-            'file_name_ciphertext': 'synthetic-name-ct',
+            'file_name_ciphertext': encryptedName,
           },
         ],
         itemCiphertexts: const <int, String>{},

@@ -141,6 +141,14 @@ class LegacyCiphertextMigrationCodec {
     final hierarchy = VaultKeyHierarchy(mvk);
     final contentKey = await hierarchy.fileContentKey();
     final metadataKey = await hierarchy.metadataKey();
+    for (final encoded in encryptedMetadata.values) {
+      if (encoded == null) continue;
+      try {
+        utf8.decode(await aesGcmUnwrap(metadataKey, b64urlDecode(encoded)));
+      } catch (_) {
+        throw const FormatException('Legacy file metadata cannot be read');
+      }
+    }
     final chunks = <String>[];
     for (var offset = 0; offset < plain.length; offset += chunkSize) {
       final end =

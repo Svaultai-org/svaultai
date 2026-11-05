@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vault_ai_frontend/services/legacy_ciphertext_migration_codec.dart';
+import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart';
 
 final SecretKey _legacyKey = SecretKey(List<int>.filled(32, 7));
 final SecretKey _mvk = SecretKey(List<int>.filled(32, 19));
@@ -105,6 +106,10 @@ void main() {
         List<int>.generate(307, (i) => (i * 37) & 255),
       );
       final legacy = await _legacyEncrypt(bytes);
+      final metadataKey = await VaultKeyHierarchy(_mvk).metadataKey();
+      final encryptedName = b64urlEncode(
+        await aesGcmWrap(metadataKey, utf8.encode('synthetic-file.bin')),
+      );
       final codec = LegacyCiphertextMigrationCodec(
         legacyKey: _legacyKey,
         mvk: _mvk,
@@ -114,8 +119,8 @@ void main() {
         legacyCiphertext: legacy,
         declaredFileSize: bytes.length,
         contentType: 'application/octet-stream',
-        encryptedMetadata: const <String, String?>{
-          'file_name_ciphertext': 'synthetic-encrypted-name',
+        encryptedMetadata: <String, String?>{
+          'file_name_ciphertext': encryptedName,
           'saved_name_ciphertext': null,
         },
         chunkSize: 64,
@@ -134,8 +139,8 @@ void main() {
           fileId: staged.fileId,
           declaredFileSize: staged.totalBytes,
           contentType: 'application/octet-stream',
-          encryptedMetadata: const <String, String?>{
-            'file_name_ciphertext': 'synthetic-encrypted-name',
+          encryptedMetadata: <String, String?>{
+            'file_name_ciphertext': encryptedName,
             'saved_name_ciphertext': null,
           },
           chunkSize: staged.chunkSize,
@@ -150,8 +155,8 @@ void main() {
             legacyCiphertext: legacy,
             declaredFileSize: staged.totalBytes,
             contentType: contentType ?? 'application/octet-stream',
-            encryptedMetadata: const <String, String?>{
-              'file_name_ciphertext': 'synthetic-encrypted-name',
+            encryptedMetadata: <String, String?>{
+              'file_name_ciphertext': encryptedName,
               'saved_name_ciphertext': null,
             },
             chunkSize: staged.chunkSize,
