@@ -108,6 +108,40 @@ void main() {
       );
     });
 
+    test('schema B item keeps visible fields and the exact old record', () async {
+      final legacyRecord = <String, Object>{
+        'category': 'login',
+        'title': 'Synthetic account',
+        'fields': <String, String>{
+          'username': 'synthetic-user',
+          'password': 'synthetic-password',
+        },
+        'notes': 'synthetic note',
+      };
+      final legacy = await _legacyEncrypt(utf8.encode(jsonEncode(legacyRecord)));
+      final codec = LegacyCiphertextMigrationCodec(
+        legacyKey: _legacyKey, mvk: _mvk,
+      );
+      final staged = await codec.stageItem(
+        itemId: 27, itemType: 'login', service: 'Synthetic account',
+        legacyCiphertext: legacy,
+      );
+      final key = await VaultKeyHierarchy(_mvk).metadataKey();
+      final payload = jsonDecode(utf8.decode(await aesGcmUnwrap(
+        key, b64urlDecode(staged.payloadCiphertext),
+      ))) as Map<String, dynamic>;
+      expect(payload['fields'], legacyRecord['fields']);
+      expect(payload['notes'], 'synthetic note');
+      expect(payload['legacy_record'], legacyRecord);
+      expect(await codec.verifyStagedItem(
+        itemType: 'login', service: 'Synthetic account',
+        legacyCiphertext: legacy,
+        itemTypeCiphertext: staged.itemTypeCiphertext,
+        serviceCiphertext: staged.serviceCiphertext,
+        payloadCiphertext: staged.payloadCiphertext,
+      ), isTrue);
+    });
+
     test('stages file chunks and checks every readback byte and metadata',
         () async {
       final bytes = Uint8List.fromList(

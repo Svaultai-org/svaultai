@@ -80,7 +80,8 @@ class LegacyCiphertextMigrationCodec {
     required String legacyCiphertext,
   }) async {
     if (itemId <= 0) throw const FormatException('Invalid item ID');
-    final fields = await _legacyItemFields(legacyCiphertext);
+    final legacyRecord = await _legacyItemFields(legacyCiphertext);
+    final fields = _visibleLegacyFields(legacyRecord);
     final key = await VaultKeyHierarchy(mvk).metadataKey();
     Future<String> wrap(String text) async =>
         b64urlEncode(await aesGcmWrap(key, utf8.encode(text)));
@@ -88,8 +89,14 @@ class LegacyCiphertextMigrationCodec {
       itemId: itemId,
       itemTypeCiphertext: await wrap(itemType),
       serviceCiphertext: await wrap(service),
-      payloadCiphertext: await wrap(jsonEncode(<String, Object>{
+      payloadCiphertext: await wrap(jsonEncode(<String, Object?>{
         'fields': fields,
+        if (legacyRecord['notes'] is String) 'notes': legacyRecord['notes'],
+        if (legacyRecord['draft_id'] is String)
+          'draft_id': legacyRecord['draft_id'],
+        // Preserve the complete old shape under MVK for exact readback and
+        // future schema handling. Only `fields` is shown in the current UI.
+        'legacy_record': legacyRecord,
       })),
     );
   }
@@ -106,7 +113,8 @@ class LegacyCiphertextMigrationCodec {
     required String payloadCiphertext,
   }) async {
     try {
-      final fields = await _legacyItemFields(legacyCiphertext);
+      final legacyRecord = await _legacyItemFields(legacyCiphertext);
+      final fields = _visibleLegacyFields(legacyRecord);
       final key = await VaultKeyHierarchy(mvk).metadataKey();
       Future<String> unwrap(String encoded) async => utf8.decode(
             await aesGcmUnwrap(key, b64urlDecode(encoded)),
@@ -117,7 +125,8 @@ class LegacyCiphertextMigrationCodec {
       }
       final payload = jsonDecode(await unwrap(payloadCiphertext));
       if (payload is! Map || payload['fields'] is! Map) return false;
-      return _sameJson(fields, payload['fields']);
+      return _sameJson(fields, payload['fields']) &&
+          _sameJson(legacyRecord, payload['legacy_record']);
     } catch (_) {
       return false;
     }
@@ -265,6 +274,16 @@ class LegacyCiphertextMigrationCodec {
   /// ciphertext through a recent, session-bound OPAQUE export grant.
   Future<Map<String, dynamic>> decodeLegacyItem(String encoded) =>
       _legacyItemFields(encoded);
+
+  Map<String, dynamic> _visibleLegacyFields(Map<String, dynamic> record) {
+    const markers = <String>{'category', 'title', 'fields', 'item_id'};
+    if (!markers.any(record.containsKey)) return record;
+    final inner = record['fields'];
+    if (inner is! Map) {
+      throw const FormatException('Invalid legacy saved-item fields');
+    }
+    return Map<String, dynamic>.from(inner);
+  }
 
   Future<Uint8List> _legacyBytes(String encoded) async {
     final combined = base64.decode(encoded);
