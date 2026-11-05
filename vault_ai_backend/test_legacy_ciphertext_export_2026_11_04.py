@@ -1,0 +1,214 @@
+"""Synthetic, database-free checks for the OPAQUE-gated legacy export."""
+
+from __future__ import annotations
+
+import json
+import time
+from unittest import mock
+
+import pytest
+from fastapi import HTTPException
+
+from routes import legacy_ciphertext_export_routes as export
+
+
+VAULT = "11111111-1111-1111-1111-111111111111"
+OTHER_VAULT = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+SESSION = "22222222-2222-2222-2222-222222222222"
+OTHER_SESSION = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+PRINCIPAL = {"vault_id": VAULT, "token_id": SESSION}
+
+
+class FakeCursor:
+    def __init__(self, db):
+        self.db = db
+        self.rows = []
+        self.executed = []
+
+    def execute(self, sql, params=()):
+        normalized = " ".join(sql.split())
+        self.executed.append((normalized, params))
+        if normalized.startswith("SELECT vault_handle IS NOT NULL"):
+            self.rows = [(True,)]
+        elif normalized.startswith("INSERT INTO vault_zk_login_slots"):
+            token, vault_id, state, expires_at = params
+            self.db.grants[token] = {
+                "vault_id": vault_id,
+                "state": bytes(state),
+                "expires_at": expires_at,
+            }
+            self.rows = []
+        elif normalized.startswith("SELECT server_state FROM vault_zk_login_slots"):
+            token, vault_id = params
+            grant = self.db.grants.get(token)
+            if grant is None or grant["vault_id"] != vault_id:
+                self.rows = []
+            else:
+                self.rows = [{"server_state": grant["state"]}]
+        elif normalized.startswith("UPDATE vault_zk_login_slots SET server_state"):
+            state, token, vault_id = params
+            assert self.db.grants[token]["vault_id"] == vault_id
+            self.db.grants[token]["state"] = bytes(state)
+            self.rows = []
+        elif normalized.startswith("SELECT id, LEFT(item_type"):
+            self.rows = [{
+                "id": 7,
+                "item_type": "login",
+                "service": "example",
+                "ciphertext_chars": 16,
+            }]
+        elif normalized.startswith("SELECT LENGTH(encrypted_data)"):
+            offset, length, vault_id, item_id = params
+            if vault_id != VAULT or item_id != 7:
+                self.rows = []
+            else:
+                ct = "SYNTHETIC_B64_CT"
+                self.rows = [{
+                    "total_chars": len(ct),
+                    "ciphertext_chunk": ct[offset - 1:offset - 1 + length],
+                }]
+        else:
+            raise AssertionError(f"Unexpected SQL shape: {normalized[:80]}")
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+    def fetchall(self):
+        return list(self.rows)
+
+
+class FakeConnection:
+    def __init__(self, db):
+        self.db = db
+        self.cursor_obj = FakeCursor(db)
+        self.commits = 0
+        self.rollbacks = 0
+
+    def cursor(self, **_kwargs):
+        return self.cursor_obj
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
+
+    def close(self):
+        pass
+
+
+class FakeDb:
+    def __init__(self):
+        self.grants = {}
+        self.connections = []
+
+    def connect(self):
+        conn = FakeConnection(self)
+        self.connections.append(conn)
+        return conn
+
+
+@pytest.fixture
+def runtime(monkeypatch):
+    monkeypatch.setenv("VAULT_SESSION_SECRET", "synthetic_session_signing_secret_for_offline_tests_123456")
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_EXPORT_ENABLED", "true")
+    from auth_local import reset_secret_for_tests
+    reset_secret_for_tests()
+    db = FakeDb()
+    monkeypatch.setattr(export, "get_db", db.connect)
+    consumed = mock.Mock()
+    monkeypatch.setattr(export, "consume_recent_zk_proof", consumed)
+    yield db, consumed
+    reset_secret_for_tests()
+
+
+def _start(db, consumed):
+    result = export.legacy_export_start(
+        export.LegacyExportStartRequest(zk_proof_token="synthetic-proof"),
+        PRINCIPAL,
+    )
+    consumed.assert_called_once_with("synthetic-proof", PRINCIPAL)
+    assert result["pages_remaining"] == export.GRANT_MAX_PAGES
+    assert result["bytes_remaining"] == export.GRANT_MAX_BYTES
+    assert result["export_token"] in db.grants
+    return result
+
+
+def test_start_consumes_one_opaque_proof_and_binds_grant(runtime):
+    db, consumed = runtime
+    result = _start(db, consumed)
+    token = result["export_token"]
+    assert export._grant_belongs_to_session(token, PRINCIPAL)
+    assert not export._grant_belongs_to_session(
+        token, {**PRINCIPAL, "token_id": OTHER_SESSION},
+    )
+    assert not export._grant_belongs_to_session(
+        token, {**PRINCIPAL, "vault_id": OTHER_VAULT},
+    )
+    assert not export._grant_belongs_to_session(
+        token, PRINCIPAL, now_ts=int(time.time()) + 301,
+    )
+
+
+def test_page_is_bounded_and_sequence_replay_fails(runtime):
+    db, consumed = runtime
+    token = _start(db, consumed)["export_token"]
+    request = export.LegacyExportPageRequest(
+        export_token=token, sequence=0, mode="list_items",
+    )
+    result = export.legacy_export_page(request, PRINCIPAL)
+    assert result["records"] == [{
+        "item_id": 7, "item_type": "login", "service": "example",
+        "ciphertext_chars": 16,
+    }]
+    assert result["next_sequence"] == 1
+    assert result["pages_remaining"] == export.GRANT_MAX_PAGES - 1
+    assert result["bytes_remaining"] < export.GRANT_MAX_BYTES
+    with pytest.raises(HTTPException) as exc:
+        export.legacy_export_page(request, PRINCIPAL)
+    assert exc.value.status_code == 409
+
+
+def test_cross_vault_and_session_pages_never_query_database(runtime):
+    db, consumed = runtime
+    token = _start(db, consumed)["export_token"]
+    before = len(db.connections)
+    request = export.LegacyExportPageRequest(
+        export_token=token, sequence=0, mode="list_items",
+    )
+    for principal in (
+        {**PRINCIPAL, "vault_id": OTHER_VAULT},
+        {**PRINCIPAL, "token_id": OTHER_SESSION},
+    ):
+        with pytest.raises(HTTPException) as exc:
+            export.legacy_export_page(request, principal)
+        assert exc.value.status_code == 401
+    assert len(db.connections) == before
+
+
+def test_item_chunk_returns_only_ciphertext_and_enforces_budget(runtime):
+    db, consumed = runtime
+    token = _start(db, consumed)["export_token"]
+    request = export.LegacyExportPageRequest(
+        export_token=token, sequence=0, mode="read_item",
+        item_id=7, offset=0, max_chars=8,
+    )
+    result = export.legacy_export_page(request, PRINCIPAL)
+    assert result["ciphertext_chunk"] == "SYNTHETI"
+    assert "pin" not in result
+    assert "encrypted_data" not in result
+    assert result["next_offset"] == 8
+    assert result["done"] is False
+
+    state = json.loads(db.grants[token]["state"].decode())
+    state["bytes_left"] = 1
+    db.grants[token]["state"] = json.dumps(state).encode()
+    with pytest.raises(HTTPException) as exc:
+        export.legacy_export_page(
+            export.LegacyExportPageRequest(
+                export_token=token, sequence=1, mode="read_item",
+                item_id=7, offset=8, max_chars=8,
+            ), PRINCIPAL,
+        )
+    assert exc.value.status_code == 413
+    assert json.loads(db.grants[token]["state"].decode())["sequence"] == 1

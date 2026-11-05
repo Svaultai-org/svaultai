@@ -956,7 +956,7 @@ def _zk_login_finalize_sync(
         # A re-verification slot must never be exchangeable for a fresh login
         # session through the older finalize endpoint.
         if payload.slot_id.startswith(
-            (f"{VERIFY_SLOT_VERSION}.", f"{RECENT_PROOF_VERSION}.")
+            (f"{VERIFY_SLOT_VERSION}.", f"{RECENT_PROOF_VERSION}.", "e1.")
         ):
             raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
         ke3 = _b64url_decode(

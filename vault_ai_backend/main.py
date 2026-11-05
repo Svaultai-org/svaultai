@@ -53,6 +53,9 @@ def _qa_count_provider_request() -> None:
         _qa_remote_provider_request_count += 1
 from routes.auth_routes import router as auth_router
 from routes.auth_zk_routes import router as auth_zk_router
+from routes.legacy_ciphertext_export_routes import (
+    router as legacy_ciphertext_export_router,
+)
 from routes.login_routes import router as login_router
 from routes.vault_manage_routes import router as vault_manage_router
 from routes.vault_metadata_migration_routes import (
@@ -438,6 +441,7 @@ app = _create_application()
                                                                          
 app.include_router(auth_router)
 app.include_router(auth_zk_router)
+app.include_router(legacy_ciphertext_export_router)
 app.include_router(vault_metadata_migration_router)
 app.include_router(vault_ciphertext_write_router)
 app.include_router(credential_v2_router)

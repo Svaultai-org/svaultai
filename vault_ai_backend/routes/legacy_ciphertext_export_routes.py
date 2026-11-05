@@ -1,0 +1,402 @@
+"""Bounded encrypted legacy export for client-side MVK migration.
+
+This route never accepts a PIN or decrypts vault content. A recent OPAQUE
+proof is consumed once to create a short-lived, session-bound read grant.
+Every page is serialized under a database row lock, has a monotonic sequence,
+and consumes strict page and byte budgets. The grant is stored in the existing
+short-lived ZK slot table; an ``e1.`` prefix keeps it out of login finalization.
+
+The legacy database already stores item type/service and file size/content
+type in plaintext. Those structural fields are returned only to this vault's
+trusted session so the client can deterministically re-encrypt each record.
+Secret values, file bytes, PINs, keys, and extracted text are never returned
+in plaintext or logged by this module.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import hashlib
+import hmac
+import json
+import os
+import secrets
+import time
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Literal, Optional
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
+from psycopg2.extras import RealDictCursor
+
+from auth_local import SessionPrincipal, _get_secret
+from device_gate import verify_trusted_device
+from routes.auth_zk_routes import consume_recent_zk_proof
+from vault_core import get_db
+
+
+router = APIRouter()
+
+GRANT_VERSION = "e1"
+GRANT_DOMAIN = b"legacy-ciphertext-export-grant/v1\x00"
+GRANT_TTL_SECONDS = 5 * 60
+GRANT_MAX_PAGES = 16
+GRANT_MAX_BYTES = 32 * 1024 * 1024
+PAGE_MAX_BYTES = 4 * 1024 * 1024 + 64 * 1024
+CHUNK_MAX_CHARS = 4 * 1024 * 1024
+LIST_MAX_RECORDS = 50
+
+
+def _enabled() -> bool:
+    return os.getenv(
+        "VAULTAI_ZK_LEGACY_EXPORT_ENABLED", "false",
+    ).strip().lower() == "true"
+
+
+def _require_enabled() -> None:
+    if not _enabled():
+        raise HTTPException(status_code=404, detail="not_found")
+
+
+def _b64(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _unb64(value: str) -> bytes:
+    try:
+        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    except (ValueError, binascii.Error):
+        return b""
+
+
+def _grant_tag(
+    nonce: bytes, expiry: int, principal: SessionPrincipal,
+) -> bytes:
+    binding = (
+        GRANT_DOMAIN
+        + uuid.UUID(str(principal["vault_id"])).bytes
+        + uuid.UUID(str(principal["token_id"])).bytes
+        + expiry.to_bytes(8, "big")
+        + nonce
+    )
+    return hmac.new(_get_secret(), binding, hashlib.sha256).digest()
+
+
+def _new_grant_token(
+    principal: SessionPrincipal,
+) -> tuple[str, datetime]:
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        seconds=GRANT_TTL_SECONDS,
+    )
+    expiry = int(expires_at.timestamp())
+    nonce = secrets.token_bytes(24)
+    tag = _grant_tag(nonce, expiry, principal)
+    return (
+        f"{GRANT_VERSION}.{expiry}.{_b64(nonce)}.{_b64(tag)}",
+        expires_at,
+    )
+
+
+def _grant_belongs_to_session(
+    token: str, principal: SessionPrincipal, *, now_ts: Optional[int] = None,
+) -> bool:
+    try:
+        version, expiry_text, nonce_text, tag_text = token.split(".")
+        if version != GRANT_VERSION:
+            return False
+        expiry = int(expiry_text)
+        now = int(time.time()) if now_ts is None else now_ts
+        if expiry <= now or expiry > now + GRANT_TTL_SECONDS:
+            return False
+        nonce, tag = _unb64(nonce_text), _unb64(tag_text)
+        if len(nonce) != 24 or len(tag) != 32:
+            return False
+        return hmac.compare_digest(tag, _grant_tag(nonce, expiry, principal))
+    except (ValueError, OverflowError, KeyError):
+        return False
+
+
+class LegacyExportStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    zk_proof_token: str = Field(..., min_length=1, max_length=128)
+
+
+class LegacyExportPageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    export_token: str = Field(..., min_length=1, max_length=128)
+    sequence: int = Field(..., ge=0)
+    mode: Literal["list_items", "list_files", "read_item", "read_file"]
+    limit: int = Field(default=20, ge=1, le=LIST_MAX_RECORDS)
+    after_item_id: int = Field(default=0, ge=0)
+    after_file_id: str = Field(default="", max_length=128)
+    item_id: Optional[int] = Field(default=None, gt=0)
+    file_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    offset: int = Field(default=0, ge=0)
+    max_chars: int = Field(default=CHUNK_MAX_CHARS, ge=1, le=CHUNK_MAX_CHARS)
+
+
+def _assert_zk_vault(conn, vault_id: str) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT vault_handle IS NOT NULL FROM vaults "
+        "WHERE vault_id = %s LIMIT 1",
+        (vault_id,),
+    )
+    row = cur.fetchone()
+    if row is None or not bool(row[0]):
+        raise HTTPException(status_code=403, detail="private_vault_required")
+
+
+@router.post("/vault/legacy-ciphertext/export/start")
+def legacy_export_start(
+    payload: LegacyExportStartRequest,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    _require_enabled()
+    # Do not burn the one-time proof if the account is ineligible.
+    conn = get_db()
+    try:
+        _assert_zk_vault(conn, principal["vault_id"])
+    finally:
+        conn.close()
+    consume_recent_zk_proof(payload.zk_proof_token, principal)
+
+    token, expires_at = _new_grant_token(principal)
+    state = {"sequence": 0, "pages_left": GRANT_MAX_PAGES,
+             "bytes_left": GRANT_MAX_BYTES}
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO vault_zk_login_slots
+              (slot_id, vault_id, server_state, expires_at)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (token, principal["vault_id"],
+             json.dumps(state, separators=(",", ":")).encode("ascii"),
+             expires_at),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return {
+        "export_token": token,
+        "expires_at": expires_at,
+        "next_sequence": 0,
+        "pages_remaining": GRANT_MAX_PAGES,
+        "bytes_remaining": GRANT_MAX_BYTES,
+    }
+
+
+def _metadata_b64(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    return _b64(bytes(value))
+
+
+def _list_items(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
+    cur.execute(
+        """
+        SELECT id, LEFT(item_type, 257) AS item_type,
+               LEFT(service, 257) AS service,
+               LENGTH(encrypted_data) AS ciphertext_chars
+          FROM vault_items
+         WHERE vault_id = %s AND encrypted_data IS NOT NULL AND id > %s
+         ORDER BY id LIMIT %s
+        """,
+        (vault_id, payload.after_item_id, payload.limit + 1),
+    )
+    rows = cur.fetchall() or []
+    selected = rows[:payload.limit]
+    records = []
+    for row in selected:
+        item_type = row["item_type"] or ""
+        service = row["service"] or ""
+        if len(item_type) > 256 or len(service) > 256:
+            raise HTTPException(status_code=413, detail="legacy_metadata_too_large")
+        records.append({
+            "item_id": int(row["id"]),
+            "item_type": item_type,
+            "service": service,
+            "ciphertext_chars": int(row["ciphertext_chars"]),
+        })
+    return {
+        "records": records,
+        "has_more": len(rows) > payload.limit,
+        "next_after_item_id": records[-1]["item_id"] if records else None,
+    }
+
+
+def _list_files(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
+    cur.execute(
+        """
+        SELECT id, file_size, LEFT(content_type, 257) AS content_type,
+               file_name_ciphertext, saved_name_ciphertext,
+               content_type_ciphertext, detected_type_ciphertext,
+               detected_service_ciphertext, asset_type_ciphertext,
+               LENGTH(encrypted_file_data) AS ciphertext_chars
+          FROM uploaded_files
+         WHERE vault_id = %s AND storage_mode = 'inline'
+           AND upload_status = 'complete'
+           AND encrypted_file_data IS NOT NULL AND id > %s
+         ORDER BY id LIMIT %s
+        """,
+        (vault_id, payload.after_file_id, payload.limit + 1),
+    )
+    rows = cur.fetchall() or []
+    selected = rows[:payload.limit]
+    records = []
+    for row in selected:
+        content_type = row["content_type"] or ""
+        file_id = str(row["id"])
+        if len(content_type) > 256 or len(file_id) > 128:
+            raise HTTPException(status_code=413, detail="legacy_metadata_too_large")
+        records.append({
+            "file_id": file_id,
+            "file_size": int(row["file_size"]),
+            "content_type": content_type,
+            "ciphertext_chars": int(row["ciphertext_chars"]),
+            **{
+                field: _metadata_b64(row[field])
+                for field in (
+                    "file_name_ciphertext", "saved_name_ciphertext",
+                    "content_type_ciphertext", "detected_type_ciphertext",
+                    "detected_service_ciphertext", "asset_type_ciphertext",
+                )
+            },
+        })
+    return {
+        "records": records,
+        "has_more": len(rows) > payload.limit,
+        "next_after_file_id": records[-1]["file_id"] if records else None,
+    }
+
+
+def _read_chunk(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
+    if payload.mode == "read_item":
+        if payload.item_id is None:
+            raise HTTPException(status_code=400, detail="item_id_required")
+        table, id_column, data_column, record_id = (
+            "vault_items", "id", "encrypted_data", payload.item_id,
+        )
+        id_key = "item_id"
+        storage_clause = ""
+    else:
+        if payload.file_id is None:
+            raise HTTPException(status_code=400, detail="file_id_required")
+        table, id_column, data_column, record_id = (
+            "uploaded_files", "id", "encrypted_file_data", payload.file_id,
+        )
+        id_key = "file_id"
+        storage_clause = "AND storage_mode = 'inline' AND upload_status = 'complete'"
+    # Table/column names are fixed code constants, never request parameters.
+    cur.execute(
+        f"SELECT LENGTH({data_column}) AS total_chars, "
+        f"SUBSTRING({data_column} FROM %s FOR %s) AS ciphertext_chunk "
+        f"FROM {table} WHERE vault_id = %s AND {id_column} = %s "
+        f"AND {data_column} IS NOT NULL {storage_clause}",
+        (payload.offset + 1, payload.max_chars, vault_id, record_id),
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="legacy_record_not_found")
+    total = int(row["total_chars"])
+    if payload.offset > total:
+        raise HTTPException(status_code=416, detail="offset_out_of_range")
+    chunk = row["ciphertext_chunk"] or ""
+    next_offset = payload.offset + len(chunk)
+    return {
+        id_key: record_id,
+        "offset": payload.offset,
+        "ciphertext_chunk": chunk,
+        "total_chars": total,
+        "next_offset": next_offset,
+        "done": next_offset >= total,
+    }
+
+
+@router.post("/vault/legacy-ciphertext/export/page")
+def legacy_export_page(
+    payload: LegacyExportPageRequest,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    _require_enabled()
+    if not _grant_belongs_to_session(payload.export_token, principal):
+        raise HTTPException(status_code=401, detail="invalid_export_grant")
+
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT server_state FROM vault_zk_login_slots
+             WHERE slot_id = %s AND vault_id = %s AND expires_at > NOW()
+             FOR UPDATE
+            """,
+            (payload.export_token, principal["vault_id"]),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=401, detail="invalid_export_grant")
+        try:
+            state = json.loads(bytes(row["server_state"]).decode("ascii"))
+            sequence = int(state["sequence"])
+            pages_left = int(state["pages_left"])
+            bytes_left = int(state["bytes_left"])
+        except (ValueError, TypeError, KeyError, UnicodeError):
+            raise HTTPException(status_code=401, detail="invalid_export_grant")
+        if not (
+            0 <= sequence <= GRANT_MAX_PAGES
+            and 0 <= pages_left <= GRANT_MAX_PAGES
+            and 0 <= bytes_left <= GRANT_MAX_BYTES
+        ):
+            raise HTTPException(status_code=401, detail="invalid_export_grant")
+        if payload.sequence != sequence or pages_left <= 0 or bytes_left <= 0:
+            raise HTTPException(status_code=409, detail="export_page_replayed_or_exhausted")
+
+        if payload.mode == "list_items":
+            data = _list_items(cur, principal["vault_id"], payload)
+        elif payload.mode == "list_files":
+            data = _list_files(cur, principal["vault_id"], payload)
+        else:
+            data = _read_chunk(cur, principal["vault_id"], payload)
+        response = {
+            "mode": payload.mode,
+            **data,
+            "next_sequence": sequence + 1,
+            "pages_remaining": pages_left - 1,
+            "bytes_remaining": 0,
+        }
+        # Account conservatively for the dynamic remaining-budget field and
+        # JSON escaping. It may charge slightly more than transmitted bytes,
+        # never less. Every response remains under a strict per-page cap.
+        charge = len(json.dumps(response, ensure_ascii=True).encode()) + 256
+        if charge > PAGE_MAX_BYTES or charge > bytes_left:
+            raise HTTPException(status_code=413, detail="export_page_limit")
+        state = {
+            "sequence": sequence + 1,
+            "pages_left": pages_left - 1,
+            "bytes_left": bytes_left - charge,
+        }
+        cur.execute(
+            """
+            UPDATE vault_zk_login_slots SET server_state = %s
+             WHERE slot_id = %s AND vault_id = %s
+            """,
+            (json.dumps(state, separators=(",", ":")).encode("ascii"),
+             payload.export_token, principal["vault_id"]),
+        )
+        conn.commit()
+        response["bytes_remaining"] = state["bytes_left"]
+        return response
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
