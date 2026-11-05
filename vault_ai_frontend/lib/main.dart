@@ -560,6 +560,7 @@ class _UploadContext {
   final List<int>? keyBytes;
   final String? accompanyingText;
   final bool isBatchUpload;
+  final bool zkImportSessionOnly;
   final int uploadSafetyCapBytes;
 
   final String? importId;
@@ -574,6 +575,7 @@ class _UploadContext {
     required this.keyBytes,
     required this.accompanyingText,
     required this.isBatchUpload,
+    this.zkImportSessionOnly = false,
     required this.uploadSafetyCapBytes,
     this.importId,
   });
@@ -845,6 +847,82 @@ const bool kEnableZkBeneficiaryProof = bool.fromEnvironment(
   'VAULTAI_ENABLE_ZK_BENEFICIARY_PROOF',
   defaultValue: false,
 );
+
+const bool kEnableZkLegacyFileDeleteProof = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_LEGACY_FILE_DELETE_PROOF',
+  defaultValue: false,
+);
+
+const bool kEnableZkImportSessionActions = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_IMPORT_SESSION_ACTIONS',
+  defaultValue: false,
+);
+
+Future<String?> _promptForActionPin(BuildContext context, String title) async {
+  final controller = TextEditingController();
+  final formKey = GlobalKey<FormState>();
+  try {
+    return await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Form(
+          key: formKey,
+          child: TextFormField(
+            key: const Key('zk_action_pin_field'),
+            controller: controller,
+            obscureText: true,
+            keyboardType: TextInputType.number,
+            maxLength: 64,
+            validator: (value) {
+              final pin = value?.trim() ?? '';
+              if (!RegExp(r'^\d{6,64}$').hasMatch(pin)) {
+                return 'Enter your 6–64 digit PIN.';
+              }
+              return null;
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (!(formKey.currentState?.validate() ?? false)) return;
+              final pin = controller.text.trim();
+              controller.clear();
+              Navigator.pop(dialogContext, pin);
+            },
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+  } finally {
+    controller.clear();
+    controller.dispose();
+  }
+}
+
+Future<String> _zkActionProof(
+  AppState app, String token, String pin,
+) async {
+  final handle = app.vaultHandle;
+  if (handle == null || handle.isEmpty || app.sessionToken != token) {
+    throw StateError('Vault verification is unavailable.');
+  }
+  final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
+    vaultHandle: handle,
+    pin: pin,
+    sessionToken: token,
+  );
+  if (app.sessionToken != token || app.vaultHandle != handle) {
+    throw StateError('Vault access changed during verification.');
+  }
+  return proof.token;
+}
 
 Future<({String? pin, String? zkProofToken})> _beneficiaryCredential(
   AppState app,
@@ -9702,17 +9780,35 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       ),
     );
     if (confirmed != true) return;
+    if (!mounted) return;
 
     final token = app.sessionToken;
     if (token == null || app.vaultName == null) return;
 
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
+      String? pin;
+      String? proofToken;
+      if (kEnableZkBeneficiaryProof) {
+        if (app.vaultHandle == null || app.vaultHandle!.isEmpty) {
+          throw StateError('Sign in again to verify beneficiary access.');
+        }
+        final entered = await _promptForActionPin(
+          context, 'Confirm beneficiary removal',
+        );
+        if (entered == null || !mounted) return;
+        proofToken = await _zkActionProof(app, token, entered);
+      } else {
+        pin = await _VaultCrypto.currentPinOrThrow();
+      }
+      if (app.sessionToken != token) {
+        throw StateError('Vault access changed.');
+      }
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       await client.deleteBeneficiary(
         linkId: linkId,
         vaultName: app.vaultName!,
         pin: pin,
+        zkProofToken: proofToken,
         authToken: token,
       );
       // 2026-07-22: synchronously remove the deleted card from local
@@ -14405,9 +14501,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       ctx!.client
           .cancelImport(
             vaultName: ctx.vaultName,
-            pin: ctx.pin,
+            pin: ctx.zkImportSessionOnly ? null : ctx.pin,
             authToken: ctx.authToken,
             importId: ctx.importId!,
+            zkSessionOnly: ctx.zkImportSessionOnly,
           )
           .catchError((_) => <String, dynamic>{});
     }
@@ -14469,6 +14566,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     final hasFolderContext =
         freshAttachments.any((a) => a.relativePath != null);
+    final zkImportSessionOnly = kEnableZkImportSessionActions &&
+        app.vaultHandle?.isNotEmpty == true;
+    if (zkImportSessionOnly && hasFolderContext) {
+      throw StateError('Private folder import is not available yet');
+    }
     final shouldCreateBatch = v2Mvk == null &&
         (isMultiFileBatch || hasFolderContext);
     String? importId;
@@ -14488,8 +14590,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       try {
         final batch = await client.startImport(
           vaultName: vaultName,
-          pin: pin,
+          pin: zkImportSessionOnly ? null : pin,
           authToken: authToken,
+          zkSessionOnly: zkImportSessionOnly,
           rootFolderName: rootFolderName,
           totalFiles: freshAttachments.length,
           totalBytesPlanned: totalBytesPlanned,
@@ -14522,6 +14625,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       keyBytes: keyBytes,
       accompanyingText: accompanyingText,
       isBatchUpload: isMultiFileBatch,
+      zkImportSessionOnly: zkImportSessionOnly,
       uploadSafetyCapBytes: app.uploadSafetyCapBytes,
       importId: importId,
     );
@@ -14556,9 +14660,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         try {
           await client.completeImport(
             vaultName: vaultName,
-            pin: pin,
+            pin: zkImportSessionOnly ? null : pin,
             authToken: authToken,
             importId: importId,
+            zkSessionOnly: zkImportSessionOnly,
             failedCountDelta: _uploadQueue.failedCount,
           );
         } catch (e) {
@@ -17190,7 +17295,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           if (mounted) setState(() => _memoryRefreshGeneration++);
           break;
         case VaultLocalContentKind.file:
-          final pin = await _VaultCrypto.currentPinOrThrow();
           if (target.accessIsCurrent?.call() == false) return true;
           final expectedV2 = vaultFiles.any(
             (file) => file.id == target.id && file.v2Available,
@@ -17204,30 +17308,39 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           if (expectedV2 && !availableV2) {
             throw StateError('Private file changed. Refresh and try again.');
           }
-          if (availableV2) {
+          String? pin;
+          String? proofToken;
+          if (availableV2 || kEnableZkLegacyFileDeleteProof) {
+            if (!mounted) return true;
             final handle = app.vaultHandle;
             if (handle == null || handle.isEmpty) {
               throw StateError('Vault verification is unavailable');
             }
-            final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
-              vaultHandle: handle,
-              pin: pin,
-              sessionToken: token,
+            final entered = await _promptForActionPin(
+              context, 'Confirm file deletion',
             );
+            if (entered == null || !mounted) return true;
+            proofToken = await _zkActionProof(app, token, entered);
+          } else {
+            pin = await _VaultCrypto.currentPinOrThrow();
+          }
+          if (target.accessIsCurrent?.call() == false ||
+              app.sessionToken != token) return true;
+          if (availableV2) {
             if (await client.isNewReadyV2File(
               authToken: token, fileId: target.id,
             )) {
               await client.deleteNewV2File(
                 authToken: token,
                 fileId: target.id,
-                zkProofToken: proof.token,
+                zkProofToken: proofToken!,
                 responseIsCurrent: target.accessIsCurrent,
               );
             } else {
               await client.deleteRetiredV2File(
                 authToken: token,
                 fileId: target.id,
-                zkProofToken: proof.token,
+                zkProofToken: proofToken!,
                 responseIsCurrent: target.accessIsCurrent,
               );
             }
@@ -17236,6 +17349,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               vaultName: vaultName,
               fileId: target.id,
               pin: pin,
+              zkProofToken: proofToken,
               authToken: token,
               responseIsCurrent: target.accessIsCurrent,
             );

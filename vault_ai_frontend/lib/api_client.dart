@@ -2255,7 +2255,8 @@ class VaultAIClient {
   Future<Map<String, dynamic>> deleteBeneficiary({
     required int linkId,
     required String vaultName,
-    required String pin,
+    String? pin,
+    String? zkProofToken,
     required String authToken,
   }) async {
     final response = await _sessionHttp.post(
@@ -2264,7 +2265,7 @@ class VaultAIClient {
       body: jsonEncode({
         'link_id': linkId,
         'vault_name': '',
-        'pin': pin,
+        ..._pinOrZkProofBody(pin: pin, zkProofToken: zkProofToken),
       }),
     );
     if (response.statusCode != 200) {
@@ -3534,18 +3535,38 @@ class VaultAIClient {
     return decoded;
   }
 
+  Map<String, dynamic> _importAuthBody({
+    required String? pin,
+    required bool zkSessionOnly,
+  }) {
+    if (zkSessionOnly) {
+      if (pin != null) {
+        throw ArgumentError('Private import must omit the PIN.');
+      }
+      return const <String, dynamic>{};
+    }
+    if (pin == null || pin.isEmpty) {
+      throw ArgumentError('Legacy import requires a PIN.');
+    }
+    return <String, dynamic>{'pin': pin};
+  }
+
   Future<Map<String, dynamic>> startImport({
     required String vaultName,
-    required String pin,
+    required String? pin,
     required String authToken,
+    bool zkSessionOnly = false,
     String? rootFolderName,
     int totalFiles = 0,
     int totalBytesPlanned = 0,
   }) async {
     final uri = Uri.parse('$baseUrl/imports/start');
+    if (zkSessionOnly && rootFolderName != null) {
+      throw ArgumentError('Private import cannot send a folder name.');
+    }
     final body = <String, dynamic>{
       'vault_name': '',
-      'pin': pin,
+      ..._importAuthBody(pin: pin, zkSessionOnly: zkSessionOnly),
       'total_files': totalFiles,
       'total_bytes_planned': totalBytesPlanned,
       if (rootFolderName != null && rootFolderName.isNotEmpty)
@@ -3609,14 +3630,15 @@ class VaultAIClient {
 
   Future<Map<String, dynamic>> cancelImport({
     required String vaultName,
-    required String pin,
+    required String? pin,
     required String authToken,
     required String importId,
+    bool zkSessionOnly = false,
   }) async {
     final uri = Uri.parse('$baseUrl/imports/$importId/cancel');
     final body = <String, dynamic>{
       'vault_name': '',
-      'pin': pin,
+      ..._importAuthBody(pin: pin, zkSessionOnly: zkSessionOnly),
     };
 
     final response = await _sessionHttp.post(
@@ -3645,16 +3667,17 @@ class VaultAIClient {
 
   Future<Map<String, dynamic>> completeImport({
     required String vaultName,
-    required String pin,
+    required String? pin,
     required String authToken,
     required String importId,
+    bool zkSessionOnly = false,
     int failedCountDelta = 0,
     int skippedDuplicateCountDelta = 0,
   }) async {
     final uri = Uri.parse('$baseUrl/imports/$importId/complete');
     final body = <String, dynamic>{
       'vault_name': '',
-      'pin': pin,
+      ..._importAuthBody(pin: pin, zkSessionOnly: zkSessionOnly),
       'failed_count_delta': failedCountDelta,
       'skipped_duplicate_count_delta': skippedDuplicateCountDelta,
     };
@@ -5406,7 +5429,8 @@ class VaultAIClient {
   Future<Map<String, dynamic>> deleteVaultFile({
     required String vaultName,
     required String fileId,
-    required String pin,
+    String? pin,
+    String? zkProofToken,
     required String authToken,
     bool Function()? responseIsCurrent,
   }) async {
@@ -5426,7 +5450,7 @@ class VaultAIClient {
       body: jsonEncode({
         'vault_name': '',
         'file_id': fileId,
-        'pin': pin,
+        ..._pinOrZkProofBody(pin: pin, zkProofToken: zkProofToken),
       }),
     );
 
