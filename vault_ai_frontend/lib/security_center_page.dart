@@ -10,6 +10,14 @@ import 'services/app_release_controller.dart' as release;
 import 'ui/responsive.dart';
 import 'main.dart' show AppState, backendBaseUrl;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
+import 'services/zk_local_password_analysis.dart';
+
+// Coordinated with the trusted-device metadata inventory and MVK V2 reader.
+// Kept off until every supported saved item can be read in the private format.
+const bool kEnableZkSecurityLocalAnalyze = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_SECURITY_LOCAL_ANALYZE',
+  defaultValue: false,
+);
 
 
 class SecurityCenterPage extends StatefulWidget {
@@ -25,9 +33,18 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
   bool _loading = true;
   String? _error;
   Map<String, dynamic>? _summary;
+  ZkLocalPasswordAnalysis? _localPasswordAnalysis;
+  String? _localPasswordError;
+  String? _localAnalysisToken;
+  String? _localAnalysisVaultId;
 
   
   bool _analyzing = false;
+
+  bool get _useLocalZkAnalysis =>
+      kEnableZkSecurityLocalAnalyze &&
+      (context.read<AppState>().vaultHandle?.isNotEmpty == true ||
+          zk_mvk_store.ZkActiveMvk.current() != null);
 
   @override
   void initState() {
@@ -44,20 +61,30 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
   }
 
   Future<void> _refresh() async {
-    final token = context.read<AppState>().sessionToken;
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultId = app.vaultId;
     if (token == null) return;
     try {
       final data = await _client.getSecurityCenterSummary(
         authToken: token,
       );
-      if (!mounted) return;
+      if (!mounted || app.sessionToken != token || app.vaultId != vaultId) {
+        return;
+      }
       setState(() {
         _summary = data;
         _loading = false;
         _error = null;
+        if (_localAnalysisToken != token || _localAnalysisVaultId != vaultId) {
+          _localPasswordAnalysis = null;
+          _localPasswordError = null;
+        }
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || app.sessionToken != token || app.vaultId != vaultId) {
+        return;
+      }
       setState(() {
         _loading = false;
         _error = 'Could not load Security Center: $e';
@@ -255,6 +282,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
 
   
   Future<bool> _confirmAnalyzeWarning() async {
+    final localOnly = _useLocalZkAnalysis;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -262,12 +290,15 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
         title: Text(
           AppLocalizations.of(context).securityAnalyzePasswordsTitle,
         ),
-        content: const Text(
-          'Svaultai will temporarily decrypt your saved logins on this '
-          'device to compute password health. Passwords are never shown '
-          'or stored on the server. Hashes are user-salted and used '
-          'only to detect reused passwords inside your own vault.',
-          style: TextStyle(height: 1.4),
+        content: Text(
+          localOnly
+              ? 'SVaultAI will check your saved login passwords on this '
+                  'device. Passwords and the check results stay on this device.'
+              : 'Svaultai will temporarily decrypt your saved logins on this '
+                  'device to compute password health. Passwords are never '
+                  'shown or stored on the server. Hashes are user-salted and '
+                  'used only to detect reused passwords inside your own vault.',
+          style: const TextStyle(height: 1.4),
         ),
         actions: [
           TextButton(
@@ -372,6 +403,10 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
 
   Future<void> _runAnalyzePasswords() async {
     if (_analyzing) return;
+    if (_useLocalZkAnalysis) {
+      await _runLocalZkAnalyzePasswords();
+      return;
+    }
     final messenger = ScaffoldMessenger.of(context);
 
     
@@ -422,6 +457,114 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
       
       await _refresh();
     }
+  }
+
+  Future<void> _runLocalZkAnalyzePasswords() async {
+    if (!await _confirmAnalyzeWarning() || !mounted) return;
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultId = app.vaultId;
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (token == null || vaultId == null || mvk == null) {
+      setState(() {
+        _localPasswordAnalysis = null;
+        _localPasswordError = 'Unlock this vault to check its passwords.';
+      });
+      return;
+    }
+    bool stillCurrent() =>
+        mounted &&
+        app.sessionToken == token &&
+        app.vaultId == vaultId &&
+        identical(zk_mvk_store.ZkActiveMvk.current(), mvk);
+
+    setState(() {
+      _analyzing = true;
+      _localPasswordAnalysis = null;
+      _localPasswordError = null;
+      _localAnalysisToken = token;
+      _localAnalysisVaultId = vaultId;
+    });
+    try {
+      final result = await loadAndAnalyzeZkPasswords(
+        fetchMetadata: () => _client.listZkItemMetadataRaw(authToken: token),
+        fetchV2Items: () => _client.listZkVaultItemsOnly(authToken: token),
+        stillCurrent: stillCurrent,
+      );
+      if (!stillCurrent()) return;
+      setState(() {
+        _localPasswordAnalysis = result;
+        _localPasswordError = null;
+        _localAnalysisToken = token;
+        _localAnalysisVaultId = vaultId;
+      });
+    } on ZkPasswordAnalysisIncomplete {
+      if (!stillCurrent()) return;
+      setState(() {
+        _localPasswordAnalysis = null;
+        _localPasswordError =
+            'Some saved items still need a private format update before '
+            'this check can finish.';
+      });
+    } catch (_) {
+      if (!stillCurrent()) return;
+      setState(() {
+        _localPasswordAnalysis = null;
+        _localPasswordError = 'Could not complete the check. Try again.';
+      });
+    } finally {
+      if (mounted) setState(() => _analyzing = false);
+    }
+  }
+
+  Widget _localZkPasswordSection() {
+    final app = context.read<AppState>();
+    final sameVault = _localAnalysisToken == app.sessionToken &&
+        _localAnalysisVaultId == app.vaultId;
+    final result = sameVault ? _localPasswordAnalysis : null;
+    final error = sameVault ? _localPasswordError : null;
+    return _card(
+      'PASSWORD HEALTH',
+      Column(
+        key: const Key('zk_local_password_analysis'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (error != null)
+            Text(error,
+                style: const TextStyle(color: Color(0xFFFFA726), fontSize: 13))
+          else if (result == null)
+            const Text(
+              'Check your saved login passwords on this device.',
+              style: TextStyle(color: VaultColors.textSecondary, fontSize: 13),
+            )
+          else ...[
+            Text(
+              '${result.strong} strong   ·   ${result.moderate} moderate   ·   '
+              '${result.weak} weak',
+              style: const TextStyle(color: VaultColors.textSecondary, fontSize: 13),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${result.reusedGroups} reused group${result.reusedGroups == 1 ? '' : 's'}'
+              '${result.skippedCount == 0 ? '' : '   ·   ${result.skippedCount} without a password'}',
+              style: const TextStyle(color: VaultColors.textSecondary, fontSize: 13),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: OutlinedButton.icon(
+              onPressed: _analyzing ? null : _runAnalyzePasswords,
+              icon: _analyzing
+                  ? const SizedBox(width: 14, height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.fact_check_outlined, size: 18),
+              label: Text(_analyzing ? 'Analyzing...' : 'Analyze all passwords'),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _passwordSection(Map<String, dynamic> s) {
@@ -810,6 +953,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
 
   @override
   Widget build(BuildContext context) {
+    final localZkAnalysis = _useLocalZkAnalysis;
     return Scaffold(
       backgroundColor: VaultColors.canvas,
       appBar: AppBar(
@@ -840,13 +984,30 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
                           onRefresh: _refresh,
                           child: ListView(
                             children: [
-                              _scoreHeader(_summary!),
+                              if (localZkAnalysis)
+                                _card(
+                                  'SECURITY OVERVIEW',
+                                  const Text(
+                                    'Password checks run on this device. '
+                                    'Other vault status appears below.',
+                                    style: TextStyle(
+                                      color: VaultColors.textSecondary,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                )
+                              else
+                                _scoreHeader(_summary!),
                               _devicesSection(_summary!),
-                              _passwordSection(_summary!),
+                              if (localZkAnalysis)
+                                _localZkPasswordSection()
+                              else
+                                _passwordSection(_summary!),
                               _vaultSection(_summary!),
                               _storageSection(_summary!),
                               _inheritanceSection(_summary!),
-                              _recommendationsSection(_summary!),
+                              if (!localZkAnalysis)
+                                _recommendationsSection(_summary!),
                               _buildDiagnosticsSection(),
                             ],
                           ),
