@@ -34,6 +34,7 @@ class VaultKeyHierarchy {
   }
 
   Future<SecretKey> metadataKey() => _sub('vaultai.metadata.v1');
+  Future<SecretKey> fileContentKey() => _sub('vaultai.file.content.v1');
   Future<SecretKey> memoryKey() => _sub('vaultai.memory.v1');
   Future<SecretKey> walletWrapKey() => _sub('vaultai.wallet.v1');
   Future<SecretKey> displayNameKey() => _sub('vaultai.display.v1');

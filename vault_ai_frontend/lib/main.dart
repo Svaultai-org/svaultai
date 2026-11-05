@@ -37,6 +37,9 @@ import 'chunked_aead.dart';
 import 'services/inheritance_credentials.dart' as inh_cred;
 import 'services/legacy_adoption.dart' as legacy_adopt;
 import 'services/metadata_migration_client.dart' as mmc;
+import 'services/legacy_ciphertext_export_client.dart' as legacy_export;
+import 'services/legacy_ciphertext_migration_codec.dart' as legacy_codec;
+import 'services/legacy_content_migration_stager.dart' as legacy_stage;
 import 'services/native_secure_store.dart';
 import 'services/session_persistence_lock.dart'
     if (dart.library.html) 'services/session_persistence_lock_web.dart' as session_store;
@@ -794,6 +797,12 @@ const bool kAuthTimingDiagnosticsEnabled = bool.fromEnvironment(
 // OPAQUE identifier must not silently send the typed PIN to /auth/login.
 const bool kEnableLegacyAuthFallback = bool.fromEnvironment(
   'VAULTAI_ENABLE_LEGACY_AUTH_FALLBACK',
+  defaultValue: false,
+);
+
+// Only stages and verifies MVK-wrapped copies. It cannot retire legacy rows.
+const bool kEnableLegacyContentStage = bool.fromEnvironment(
+  'VAULTAI_ENABLE_LEGACY_CONTENT_STAGE',
   defaultValue: false,
 );
 
@@ -4968,6 +4977,124 @@ void _scheduleMetadataMigration({required AppState app}) {
   ));
 }
 
+void _scheduleLegacyContentStage({
+  required AppState app,
+  required String pin,
+}) {
+  if (!kEnableLegacyContentStage) return;
+  final token = app.sessionToken;
+  final vaultId = app.vaultId;
+  final vaultName = app.vaultName;
+  final mvk = zk_mvk_store.ZkActiveMvk.current();
+  if (token == null || vaultId == null || vaultName == null || mvk == null) {
+    return;
+  }
+  unawaited(_stageLegacyContentBestEffort(
+    app: app,
+    pin: pin,
+    token: token,
+    vaultId: vaultId,
+    vaultName: vaultName,
+    mvk: mvk,
+  ));
+}
+
+Future<void> _stageLegacyContentBestEffort({
+  required AppState app,
+  required String pin,
+  required String token,
+  required String vaultId,
+  required String vaultName,
+  required SecretKey mvk,
+}) async {
+  if (!kEnableLegacyContentStage) return;
+  final handle = app.vaultHandle;
+  final legacyKey =
+      _VaultCrypto._keyCache[_VaultCrypto._ck(vaultId, vaultName)];
+  if (handle == null || handle.isEmpty || legacyKey == null) return;
+
+  void checkSession() {
+    if (!app.unlocked ||
+        app.sessionToken != token ||
+        app.vaultId != vaultId ||
+        !identical(zk_mvk_store.ZkActiveMvk.current(), mvk)) {
+      throw StateError('Vault session changed during migration');
+    }
+  }
+
+  Future<legacy_stage.MigrationReply> request(
+    String method,
+    String path, [
+    Map<String, dynamic>? body,
+  ]) async {
+    checkSession();
+    final uri = Uri.parse('$backendBaseUrl$path');
+    final headers = <String, String>{
+      'Authorization': 'Bearer $token',
+      'Content-Type': 'application/json',
+    };
+    late http.Response response;
+    switch (method) {
+      case 'GET':
+        response = await http.get(uri, headers: headers);
+      case 'POST':
+        response =
+            await http.post(uri, headers: headers, body: jsonEncode(body));
+      case 'PUT':
+        response =
+            await http.put(uri, headers: headers, body: jsonEncode(body));
+      default:
+        throw StateError('Unsupported migration request');
+    }
+    checkSession();
+    Object? decoded;
+    try {
+      decoded = jsonDecode(response.body);
+    } catch (_) {
+      throw const FormatException('Invalid migration response');
+    }
+    return legacy_stage.MigrationReply(response.statusCode, decoded);
+  }
+
+  try {
+    final export = legacy_export.LegacyCiphertextExportClient(
+      proofProvider: () async {
+        checkSession();
+        final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
+          vaultHandle: handle,
+          pin: pin,
+          sessionToken: token,
+        );
+        checkSession();
+        return proof.token;
+      },
+      post: (path, body) async {
+        final response = await request('POST', path, body);
+        if (response.statusCode != 200 ||
+            response.data is! Map<String, dynamic>) {
+          throw StateError('Legacy export unavailable');
+        }
+        return response.data as Map<String, dynamic>;
+      },
+    );
+    await legacy_stage.LegacyContentMigrationStager(
+      enabled: true,
+      export: export,
+      codec: legacy_codec.LegacyCiphertextMigrationCodec(
+        legacyKey: legacyKey,
+        mvk: mvk,
+      ),
+      request: request,
+    ).stageAndVerify();
+  } catch (error) {
+    // A failed stage retains the complete legacy row. Never log error bodies,
+    // decrypted content, ciphertext, or the active PIN.
+    vlog('legacy_content_stage.deferred', {
+      'error_type': error.runtimeType.toString(),
+    });
+  }
+}
+
 /// Best-effort transparent adoption after successful legacy unlock.
 /// A failure never breaks the user's session. Returns true if the
 /// widget already navigated to the save screen (caller must skip its
@@ -5443,6 +5570,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         // still lands on /chat.
         try {
           _scheduleMetadataMigration(app: app);
+          _scheduleLegacyContentStage(app: app, pin: pin);
         } catch (e) {
           vlog('login.post_login_side_effect_failed',
               {'step': 'schedule_metadata_migration', 'error': e.toString()});
@@ -6417,6 +6545,7 @@ class _UnlockPageState extends State<UnlockPage> {
         // "Null check operator used on a null value" symptom).
         try {
           _scheduleMetadataMigration(app: app);
+          _scheduleLegacyContentStage(app: app, pin: pin);
         } catch (e) {
           vlog('unlock.post_login_side_effect_failed',
               {'step': 'schedule_metadata_migration', 'error': e.toString()});
