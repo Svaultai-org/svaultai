@@ -6,6 +6,23 @@ library;
 import 'zk_private_chat.dart';
 import 'zk_private_chat_index.dart';
 
+enum ZkChatEntryRoute { privateChat, unavailable, legacy }
+
+/// Decide before touching the legacy PIN-derived crypto context. A confirmed
+/// ZK session must fail closed if its MVK disappeared or belongs to a different
+/// vault, rather than silently falling into the raw-PIN chat pipeline.
+ZkChatEntryRoute resolveZkChatEntryRoute({
+  required bool privateChatEnabled,
+  required bool hasZkHandle,
+  required bool hasMvk,
+  required bool mvkMatchesVault,
+}) {
+  if (!privateChatEnabled) return ZkChatEntryRoute.legacy;
+  if (!hasZkHandle && !hasMvk) return ZkChatEntryRoute.legacy;
+  if (!hasMvk || !mvkMatchesVault) return ZkChatEntryRoute.unavailable;
+  return ZkChatEntryRoute.privateChat;
+}
+
 class ZkPrivateChatTurn {
   final ZkLocalChatResult local;
   final String? generalReply;
@@ -30,6 +47,11 @@ class ZkPrivateChatFlow {
     required this.sendGeneral,
     required this.accessIsCurrent,
   });
+
+  void clear() {
+    _selection = null;
+    _generalHistory.clear();
+  }
 
   void _checkAccess() {
     if (!accessIsCurrent()) {

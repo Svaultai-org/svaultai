@@ -12830,6 +12830,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   @override
   void dispose() {
+    _zkPrivateChatFlow?.clear();
+    _zkPrivateChatFlow = null;
+    _zkPrivateChatMvk = null;
     _clearConciergeExposureBindings();
     _chatMainnetSendApprovalSession.clear();
     if (_speech.isListening) {
@@ -17228,6 +17231,33 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final vaultName = app.vaultName;
     final activeVaultId = app.vaultId;
 
+    if (!app.unlocked) {
+      _appendAssistantMessage(
+          'Your vault is locked. Please enter your PIN again.');
+      return;
+    }
+
+    final zkChatMvk = zk_mvk_store.ZkActiveMvk.current();
+    final zkRoute = zk_chat_flow.resolveZkChatEntryRoute(
+      privateChatEnabled: kEnableZkPrivateChat,
+      hasZkHandle: app.vaultHandle?.isNotEmpty ?? false,
+      hasMvk: zkChatMvk != null,
+      mvkMatchesVault: activeVaultId != null &&
+          zk_mvk_store.ZkActiveMvk.currentVaultId() == activeVaultId,
+    );
+    if (zkRoute == zk_chat_flow.ZkChatEntryRoute.unavailable) {
+      _appendAssistantMessage(
+          'Your vault encryption key is unavailable. Please lock and unlock your vault again.');
+      return;
+    }
+    if (zkRoute == zk_chat_flow.ZkChatEntryRoute.privateChat) {
+      await _sendZkPrivateChat(
+        app: app, token: authToken, vaultId: activeVaultId!,
+        mvk: zkChatMvk!, text: text,
+      );
+      return;
+    }
+
     vlog('chat.preSend', {
       'vault_id': activeVaultId,
       'vaultName': vaultName,
@@ -17239,7 +17269,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       'cryptoSnapshot': _VaultCrypto.debugSnapshot(),
     });
 
-    if (!app.unlocked || vaultName == null) {
+    if (vaultName == null) {
       _appendAssistantMessage(
           'Your vault is locked. Please enter your PIN again.');
       return;
@@ -17255,16 +17285,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         'vaultName': vaultName,
       });
       app.handleApiException(const InvalidVaultUnlockException());
-      return;
-    }
-
-    final zkChatMvk = zk_mvk_store.ZkActiveMvk.current();
-    if (kEnableZkPrivateChat && zkChatMvk != null &&
-        zk_mvk_store.ZkActiveMvk.currentVaultId() == activeVaultId) {
-      await _sendZkPrivateChat(
-        app: app, token: authToken, vaultId: activeVaultId,
-        mvk: zkChatMvk, text: text,
-      );
       return;
     }
 

@@ -5,6 +5,33 @@ import 'package:vault_ai_frontend/services/zk_private_chat_flow.dart';
 import 'package:vault_ai_frontend/services/zk_private_chat_index.dart';
 
 void main() {
+  test('flagged ZK chat routes by MVK before any legacy key requirement', () {
+    expect(resolveZkChatEntryRoute(
+      privateChatEnabled: true,
+      hasZkHandle: true,
+      hasMvk: true,
+      mvkMatchesVault: true,
+    ), ZkChatEntryRoute.privateChat);
+    expect(resolveZkChatEntryRoute(
+      privateChatEnabled: true,
+      hasZkHandle: true,
+      hasMvk: false,
+      mvkMatchesVault: false,
+    ), ZkChatEntryRoute.unavailable);
+    expect(resolveZkChatEntryRoute(
+      privateChatEnabled: true,
+      hasZkHandle: true,
+      hasMvk: true,
+      mvkMatchesVault: false,
+    ), ZkChatEntryRoute.unavailable);
+    expect(resolveZkChatEntryRoute(
+      privateChatEnabled: false,
+      hasZkHandle: true,
+      hasMvk: false,
+      mvkMatchesVault: false,
+    ), ZkChatEntryRoute.legacy);
+  });
+
   test('private chat UI dispatch stays off in an ordinary build', () {
     expect(kEnableZkPrivateChat, isFalse);
   });
@@ -39,6 +66,10 @@ void main() {
     final followUp = await flow.run('play it');
     expect(followUp.local.selection?.id, 'video-1');
     expect(indexLoads, 2);
+    expect(generalCalls, 0);
+    flow.clear();
+    final afterClear = await flow.run('play it');
+    expect(afterClear.local.selection, isNull);
     expect(generalCalls, 0);
   });
 
