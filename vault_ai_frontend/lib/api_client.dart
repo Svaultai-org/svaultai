@@ -18,6 +18,7 @@ import 'services/vault_handle.dart' as vault_handle;
 import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/zk_private_chat.dart' as zk_private_chat;
+import 'services/file_v2_reader.dart';
 
 void _vlog(String tag, [Map<String, Object?>? data]) {
   if (kReleaseMode) return;
@@ -3512,6 +3513,210 @@ class VaultAIClient {
     }
 
     await _decryptUploadedFileMetadataForActiveZkVault(decoded);
+    return decoded;
+  }
+
+  /// Session-only ZK file inventory. The server returns encrypted labels and
+  /// structural fields, never inline file ciphertext or a PIN-derived key.
+  Future<Map<String, dynamic>> listZkFileMetadata({
+    required String authToken,
+  }) async {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    final files = <Map<String, dynamic>>[];
+    final seen = <String>{};
+    var after = '';
+    for (var page = 0; page < 1000; page++) {
+      _requireSavedItemKey(mvk);
+      final uri = Uri.parse(
+        '$baseUrl/vault/files/metadata?after_file_id=${Uri.encodeQueryComponent(after)}&limit=100',
+      );
+      final response = await _sessionHttpWithGuard(
+        () => _requireSavedItemKey(mvk),
+      ).get(uri, headers: _defaultHeaders(authToken: authToken));
+      _requireSavedItemKey(mvk);
+      if (response.statusCode != 200) {
+        _throwIfAuthExpired(response.statusCode, response.body);
+        _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        throw StateError('ZK file inventory unavailable (${response.statusCode})');
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic> ||
+          decoded['records'] is! List ||
+          decoded['has_more'] is! bool) {
+        throw const FormatException('Invalid ZK file inventory');
+      }
+      for (final raw in decoded['records'] as List) {
+        if (raw is! Map<String, dynamic> ||
+            raw['file_id'] is! String ||
+            (raw['file_id'] as String).isEmpty ||
+            !seen.add(raw['file_id'] as String)) {
+          throw const FormatException('Invalid ZK file inventory entry');
+        }
+        files.add(<String, dynamic>{
+          ...raw,
+          'id': raw['file_id'],
+          'v2_retired': raw['lifecycle_state'] == 'legacy_migration_retired' &&
+              raw['verification_state'] == 'client_verified',
+          'needs_naming': false,
+        });
+      }
+      if (decoded['has_more'] == false) {
+        final result = <String, dynamic>{'files': files};
+        await _decryptUploadedFileMetadataForActiveZkVault(result);
+        _requireSavedItemKey(mvk);
+        return result;
+      }
+      final next = decoded['next_after_file_id'];
+      if (next is! String || next.isEmpty || next == after) {
+        throw const FormatException('ZK file inventory did not advance');
+      }
+      after = next;
+    }
+    throw StateError('ZK file inventory exceeded page limit');
+  }
+
+  FileV2Reader _fileV2Reader({required String authToken}) {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    return FileV2Reader(
+      mvk: mvk,
+      get: (path) async {
+        _requireSavedItemKey(mvk);
+        final response = await _sessionHttpWithGuard(
+          () => _requireSavedItemKey(mvk),
+        ).get(
+          Uri.parse('$baseUrl$path'),
+          headers: _defaultHeaders(authToken: authToken),
+        );
+        _requireSavedItemKey(mvk);
+        if (response.statusCode != 200) {
+          _throwIfAuthExpired(response.statusCode, response.body);
+          _throwIfDeviceNotTrusted(response.statusCode, response.body);
+          throw FileV2ReadException(response.statusCode);
+        }
+        final decoded = jsonDecode(response.body);
+        if (decoded is! Map<String, dynamic>) {
+          throw const FormatException('Invalid V2 file response');
+        }
+        return decoded;
+      },
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> listRetiredV2Files({
+    required String authToken,
+  }) async {
+    final listed = await _fileV2Reader(authToken: authToken).list(
+      retiredOnly: true,
+    );
+    return <Map<String, dynamic>>[
+      for (final file in listed)
+        <String, dynamic>{
+          'id': file.fileId,
+          'file_name': file.fileName ?? file.displayName,
+          'saved_name': file.savedName,
+          'content_type': file.contentType,
+          'asset_type': file.assetType,
+          'file_size': file.totalBytes,
+          'needs_naming': false,
+          'v2_retired': true,
+        },
+    ];
+  }
+
+  Future<Map<String, dynamic>> listZkVaultFilesWithRetiredV2({
+    required String authToken,
+  }) async {
+    final inventory = await listZkFileMetadata(authToken: authToken);
+    final files = (inventory['files'] as List)
+        .map((row) => Map<String, dynamic>.from(row as Map))
+        .toList();
+    final retired = await listRetiredV2Files(authToken: authToken);
+    final byId = <String, Map<String, dynamic>>{
+      for (final row in retired) row['id'] as String: row,
+    };
+    final merged = <Map<String, dynamic>>[];
+    for (final row in files) {
+      final id = row['id'] as String;
+      final v2 = byId.remove(id);
+      if (row['v2_retired'] == true && v2 == null) {
+        throw const FormatException('Retired file copy is unavailable');
+      }
+      merged.add(v2 == null ? row : <String, dynamic>{...row, ...v2});
+    }
+    merged.addAll(byId.values);
+    return <String, dynamic>{'files': merged};
+  }
+
+  Future<bool> isRetiredV2File({
+    required String authToken,
+    required String fileId,
+  }) async {
+    if (fileId.isEmpty) return false;
+    final response = await _fileV2Reader(authToken: authToken).get(
+      '/vault/file-v2',
+    );
+    final files = response['files'];
+    if (files is! List) {
+      throw const FormatException('Invalid V2 file list');
+    }
+    for (final raw in files) {
+      if (raw is! Map || raw['file_id'] != fileId) continue;
+      return raw['lifecycle_state'] == 'legacy_migration_retired' &&
+          raw['verification_state'] == 'client_verified';
+    }
+    return false;
+  }
+
+  Future<FileV2Download> downloadRetiredV2File({
+    required String authToken,
+    required String fileId,
+  }) async {
+    return _fileV2Reader(authToken: authToken).download(
+      fileId,
+      requireRetired: true,
+    );
+  }
+
+  Future<Map<String, dynamic>> deleteRetiredV2File({
+    required String authToken,
+    required String fileId,
+    required String zkProofToken,
+    bool Function()? responseIsCurrent,
+  }) async {
+    if (zkProofToken.isEmpty || fileId.isEmpty) {
+      throw const FormatException('V2 file delete proof is missing');
+    }
+    void checkAccess() {
+      if (responseIsCurrent?.call() == false) {
+        throw StateError('File deletion access changed. Select it again.');
+      }
+    }
+    checkAccess();
+    final uri = Uri.parse(
+      '$baseUrl/vault/file-v2/${Uri.encodeComponent(fileId)}/delete-confirm',
+    );
+    final response = await _sessionHttpWithGuard(checkAccess).post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(<String, dynamic>{
+        'zk_proof_token': zkProofToken,
+        'confirm': true,
+      }),
+    );
+    checkAccess();
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw FileV2ReadException(response.statusCode);
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic> ||
+        decoded['file_id'] != fileId ||
+        decoded['deleted'] != true) {
+      throw const FormatException('Invalid V2 file delete response');
+    }
     return decoded;
   }
 

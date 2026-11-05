@@ -11,6 +11,15 @@ import 'vault_key_hierarchy.dart';
 
 typedef FileV2Get = Future<Map<String, dynamic>> Function(String path);
 
+class FileV2ReadException implements Exception {
+  final int statusCode;
+
+  const FileV2ReadException(this.statusCode);
+
+  @override
+  String toString() => 'V2 file request failed ($statusCode)';
+}
+
 class FileV2Manifest {
   final String fileId;
   final int totalBytes;
@@ -19,6 +28,10 @@ class FileV2Manifest {
   final String? fileName;
   final String? savedName;
   final String? contentType;
+  final String? assetType;
+  final String? detectedType;
+  final String? detectedService;
+  final bool retired;
 
   const FileV2Manifest({
     required this.fileId,
@@ -28,6 +41,10 @@ class FileV2Manifest {
     required this.fileName,
     required this.savedName,
     required this.contentType,
+    required this.assetType,
+    required this.detectedType,
+    required this.detectedService,
+    required this.retired,
   });
 
   String get displayName => (savedName?.trim().isNotEmpty ?? false)
@@ -52,7 +69,7 @@ class FileV2Reader {
 
   const FileV2Reader({required this.mvk, required this.get});
 
-  Future<List<FileV2Manifest>> list() async {
+  Future<List<FileV2Manifest>> list({bool retiredOnly = false}) async {
     final response = await get('/vault/file-v2');
     final raw = response['files'];
     if (raw is! List) throw const FormatException('Invalid file list');
@@ -61,12 +78,19 @@ class FileV2Reader {
       if (row is! Map || row['file_id'] is! String) {
         throw const FormatException('Invalid file listing entry');
       }
-      result.add(await readManifest(row['file_id'] as String));
+      if (retiredOnly && !_isRetired(row)) continue;
+      result.add(await readManifest(
+        row['file_id'] as String,
+        requireRetired: retiredOnly,
+      ));
     }
     return result;
   }
 
-  Future<FileV2Manifest> readManifest(String fileId) async {
+  Future<FileV2Manifest> readManifest(
+    String fileId, {
+    bool requireRetired = false,
+  }) async {
     if (fileId.isEmpty) throw const FormatException('Invalid file ID');
     final response = await get(
       '/vault/file-v2/${Uri.encodeComponent(fileId)}/manifest',
@@ -75,6 +99,10 @@ class FileV2Reader {
         response['crypto_version'] != 'client_mvk_v2' ||
         response['manifest_ciphertext'] is! String) {
       throw const FormatException('Invalid V2 file manifest');
+    }
+    final retired = _isRetired(response);
+    if (requireRetired && !retired) {
+      throw const FormatException('V2 file is not ready for use');
     }
     final total = response['total_bytes'];
     final chunkSize = response['chunk_size'];
@@ -131,11 +159,21 @@ class FileV2Reader {
       fileName: await unwrapMetadata('file_name_ciphertext'),
       savedName: await unwrapMetadata('saved_name_ciphertext'),
       contentType: contentType as String?,
+      assetType: await unwrapMetadata('asset_type_ciphertext'),
+      detectedType: await unwrapMetadata('detected_type_ciphertext'),
+      detectedService: await unwrapMetadata('detected_service_ciphertext'),
+      retired: retired,
     );
   }
 
-  Future<FileV2Download> download(String fileId) async {
-    final manifest = await readManifest(fileId);
+  Future<FileV2Download> download(
+    String fileId, {
+    bool requireRetired = false,
+  }) async {
+    final manifest = await readManifest(
+      fileId,
+      requireRetired: requireRetired,
+    );
     final key = await VaultKeyHierarchy(mvk).fileContentKey();
     final out = Uint8List(manifest.totalBytes);
     var offset = 0;
@@ -167,3 +205,7 @@ class FileV2Reader {
     return FileV2Download(manifest: manifest, bytes: out);
   }
 }
+
+bool _isRetired(Map row) =>
+    row['lifecycle_state'] == 'legacy_migration_retired' &&
+    row['verification_state'] == 'client_verified';

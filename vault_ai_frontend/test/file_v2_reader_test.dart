@@ -58,13 +58,24 @@ void main() {
         if (path == '/vault/file-v2') {
           return <String, dynamic>{
             'files': <Map<String, dynamic>>[
-              <String, dynamic>{'file_id': staged.fileId},
+              <String, dynamic>{
+                'file_id': staged.fileId,
+                'lifecycle_state': 'legacy_migration_retired',
+                'verification_state': 'client_verified',
+              },
+              <String, dynamic>{
+                'file_id': 'synthetic-incomplete-file',
+                'lifecycle_state': 'file_v2_written',
+                'verification_state': 'unverified',
+              },
             ],
           };
         }
         if (path.endsWith('/manifest')) {
           return <String, dynamic>{
             ...staged.toManifestBody(),
+            'lifecycle_state': 'legacy_migration_retired',
+            'verification_state': 'client_verified',
           };
         }
         if (path.contains('/chunk/')) {
@@ -78,11 +89,12 @@ void main() {
         fail('Unexpected V2 path');
       },
     );
-    final listed = await reader.list();
+    final listed = await reader.list(retiredOnly: true);
     expect(listed, hasLength(1));
+    expect(listed.single.retired, isTrue);
     expect(listed.single.displayName, 'synthetic-memory.jpg');
     expect(listed.single.contentType, 'image/jpeg');
-    final opened = await reader.download(staged.fileId);
+    final opened = await reader.download(staged.fileId, requireRetired: true);
     expect(opened.bytes, bytes);
     expect(paths.any((p) => p.contains('download-file')), isFalse);
     expect(paths.any((p) => p.contains('pin')), isFalse);

@@ -684,6 +684,7 @@ class _VaultStoredFile {
   final String? assetType;
   final int fileSize;
   final bool needsNaming;
+  final bool v2Retired;
 
   final String? relativePath;
 
@@ -695,6 +696,7 @@ class _VaultStoredFile {
     this.contentType,
     this.assetType,
     this.needsNaming = false,
+    this.v2Retired = false,
     this.relativePath,
   });
 
@@ -707,6 +709,7 @@ class _VaultStoredFile {
       assetType: json['asset_type']?.toString(),
       fileSize: (json['file_size'] as num?)?.toInt() ?? 0,
       needsNaming: json['needs_naming'] == true,
+      v2Retired: json['v2_retired'] == true,
       relativePath: json['relative_path']?.toString(),
     );
   }
@@ -806,6 +809,11 @@ const bool kEnableLegacyAuthFallback = bool.fromEnvironment(
 // Only stages and verifies MVK-wrapped copies. It cannot retire legacy rows.
 const bool kEnableLegacyContentStage = bool.fromEnvironment(
   'VAULTAI_ENABLE_LEGACY_CONTENT_STAGE',
+  defaultValue: false,
+);
+
+const bool kEnableFileV2UiRead = bool.fromEnvironment(
+  'VAULTAI_ENABLE_FILE_V2_UI_READ',
   defaultValue: false,
 );
 
@@ -13175,13 +13183,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
 
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
       final client = VaultAIClient(baseUrl: backendBaseUrl);
-      final result = await client.listVaultFiles(
-        vaultName: app.vaultName!,
-        pin: pin,
-        authToken: token,
-      );
+      final result = kEnableFileV2UiRead &&
+              zk_mvk_store.ZkActiveMvk.current() != null
+          ? await client.listZkVaultFilesWithRetiredV2(authToken: token)
+          : await client.listVaultFiles(
+              vaultName: app.vaultName!,
+              pin: await _VaultCrypto.currentPinOrThrow(),
+              authToken: token,
+            );
 
       final rawFiles = result['files'];
       final parsed = <_VaultStoredFile>[];
@@ -13228,6 +13238,32 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         authToken: token,
         path: _currentFolderPath.isEmpty ? null : _currentFolderPath,
       );
+      if (kEnableFileV2UiRead &&
+          zk_mvk_store.ZkActiveMvk.current() != null &&
+          response['files'] is List) {
+        final retiredById = <String, _VaultStoredFile>{
+          for (final file in vaultFiles)
+            if (file.v2Retired) file.id: file,
+        };
+        response['files'] = <Map<String, dynamic>>[
+          for (final raw in response['files'] as List)
+            if (raw is Map)
+              () {
+                final row = Map<String, dynamic>.from(raw);
+                final v2 = retiredById['${row['id']}'];
+                if (v2 == null) return row;
+                return <String, dynamic>{
+                  ...row,
+                  'file_name': v2.fileName,
+                  'saved_name': v2.savedName,
+                  'content_type': v2.contentType,
+                  'asset_type': v2.assetType,
+                  'file_size': v2.fileSize,
+                  'v2_retired': true,
+                };
+              }(),
+        ];
+      }
       if (!mounted ||
           labelMutationGeneration != _savedFileLabelMutationGeneration) return;
       setState(() {
@@ -13731,6 +13767,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   SavedFileRenameController? _captureSavedFileRename(String fileId) {
+    if (vaultFiles.any((file) => file.id == fileId && file.v2Retired)) {
+      return null;
+    }
     final app = context.read<AppState>();
     final token = app.sessionToken;
     final vaultId = app.vaultId;
@@ -13764,6 +13803,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               id: file.id, fileName: file.fileName, savedName: name,
               contentType: file.contentType, assetType: file.assetType,
               fileSize: file.fileSize, needsNaming: false,
+              v2Retired: file.v2Retired,
               relativePath: file.relativePath,
             )
           else file,
@@ -13830,6 +13870,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _openSavedFileRename(_VaultStoredFile file) async {
+    if (file.v2Retired) {
+      _showSnack('Renaming this file is not available yet.');
+      return;
+    }
     if (_fileRenameDialogOpen || sending || _pendingLocalDelete != null ||
         _fileDeletesInFlight.contains(file.id) ||
         _fileRenamesInFlight.contains(file.id)) {
@@ -13889,7 +13933,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     final controller = _captureSavedFileRename(match.entry.id);
     if (controller == null) {
-      _appendLocalVaultReply(text, 'Unlock your vault before renaming a file.');
+      final retired = vaultFiles.any(
+        (file) => file.id == match.entry.id && file.v2Retired,
+      );
+      _appendLocalVaultReply(text, retired
+          ? 'Renaming this file is not available yet.'
+          : 'Unlock your vault before renaming a file.');
       return true;
     }
     try {
@@ -14813,12 +14862,25 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _fetchVaultFile({
     required VaultAIClient client,
     required String vaultName,
-    required String pin,
     required String authToken,
     required String fileId,
     required String fallbackFileName,
     required String? fallbackMime,
   }) async {
+    if (kEnableFileV2UiRead &&
+        zk_mvk_store.ZkActiveMvk.current() != null &&
+        await client.isRetiredV2File(authToken: authToken, fileId: fileId)) {
+      final v2 = await client.downloadRetiredV2File(
+        authToken: authToken,
+        fileId: fileId,
+      );
+      return (
+        bytes: v2.bytes,
+        contentType: v2.manifest.contentType ?? fallbackMime,
+        fileName: v2.manifest.displayName,
+      );
+    }
+    final pin = await _VaultCrypto.currentPinOrThrow();
     Map<String, dynamic>? manifest;
     try {
       manifest = await client.getDownloadManifest(
@@ -15238,13 +15300,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
 
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
       final client = VaultAIClient(baseUrl: backendBaseUrl);
 
       final fetched = await _fetchVaultFile(
         client: client,
         vaultName: app.vaultName!,
-        pin: pin,
         authToken: token,
         fileId: msg.fileId!,
         fallbackFileName: msg.fileName!,
@@ -15430,12 +15490,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return;
     }
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final fetched = await _fetchVaultFile(
         client: client,
         vaultName: app.vaultName!,
-        pin: pin,
         authToken: token,
         fileId: msg.fileId!,
         fallbackFileName: msg.fileName!,
@@ -16820,13 +16878,36 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         case VaultLocalContentKind.file:
           final pin = await _VaultCrypto.currentPinOrThrow();
           if (target.accessIsCurrent?.call() == false) return true;
-          await client.deleteVaultFile(
-            vaultName: vaultName,
-            fileId: target.id,
-            pin: pin,
-            authToken: token,
-            responseIsCurrent: target.accessIsCurrent,
-          );
+          if (kEnableFileV2UiRead &&
+              zk_mvk_store.ZkActiveMvk.current() != null &&
+              await client.isRetiredV2File(
+                authToken: token,
+                fileId: target.id,
+              )) {
+            final handle = app.vaultHandle;
+            if (handle == null || handle.isEmpty) {
+              throw StateError('Vault verification is unavailable');
+            }
+            final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
+              vaultHandle: handle,
+              pin: pin,
+              sessionToken: token,
+            );
+            await client.deleteRetiredV2File(
+              authToken: token,
+              fileId: target.id,
+              zkProofToken: proof.token,
+              responseIsCurrent: target.accessIsCurrent,
+            );
+          } else {
+            await client.deleteVaultFile(
+              vaultName: vaultName,
+              fileId: target.id,
+              pin: pin,
+              authToken: token,
+              responseIsCurrent: target.accessIsCurrent,
+            );
+          }
           if (target.accessIsCurrent?.call() == false) return true;
           if (target.accessIsCurrent != null) {
             // Remove only the confirmed stable ID. A full asynchronous reload
@@ -18166,7 +18247,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               child: IconButton(
                 key: ValueKey('files_file_rename_${file.id}'),
                 tooltip: 'Rename',
-                onPressed: sending || _pendingLocalDelete != null ||
+                onPressed: file.v2Retired || sending || _pendingLocalDelete != null ||
                         _fileDeletesInFlight.contains(file.id) ||
                         _fileRenamesInFlight.contains(file.id)
                     ? null : () => _openSavedFileRename(file),
