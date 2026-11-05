@@ -470,7 +470,7 @@ class DeviceGateEmitsRevokedCodeTests(unittest.IsolatedAsyncioTestCase):
             "vault_id":   self.vault_id,
             "vault_name": "test",
             "token_id":   "00000000-0000-4000-8000-00000000eeee",
-            "device_id":  None,
+            "device_id":  "device-A_paddingpaddingpaddingpaddingpad",
         }
 
         with self.assertRaises(HTTPException) as ctx:
@@ -504,7 +504,7 @@ class DeviceGateEmitsRevokedCodeTests(unittest.IsolatedAsyncioTestCase):
             "vault_id":   self.vault_id,
             "vault_name": "test",
             "token_id":   "00000000-0000-4000-8000-00000000ffff",
-            "device_id":  None,
+            "device_id":  "unknown-device_paddingpaddingpaddingpaddin",
         }
         with self.assertRaises(HTTPException) as ctx:
             await self.device_gate.verify_trusted_device(request, principal)
@@ -537,7 +537,7 @@ class DeviceGateEmitsRevokedCodeTests(unittest.IsolatedAsyncioTestCase):
             "vault_id":   self.vault_id,
             "vault_name": "test",
             "token_id":   "00000000-0000-4000-8000-00000000dead",
-            "device_id":  None,
+            "device_id":  "device-B_paddingpaddingpaddingpaddingpad",
         }
         # Should not raise.
         returned = await self.device_gate.verify_trusted_device(request, principal)

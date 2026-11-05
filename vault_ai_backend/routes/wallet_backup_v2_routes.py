@@ -9,7 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from psycopg2.extras import RealDictCursor
 
-from auth_local import SessionPrincipal, verify_session_token
+from auth_local import SessionPrincipal
+from device_gate import verify_trusted_device
 from vault_core import get_db
 from zk_migration_flags import ZkMigrationFlags
 from subscription_entitlement import require_content_write, require_crypto_access
@@ -46,7 +47,7 @@ class WalletBackupV2CreateRequest(BaseModel):
 
 @router.post("/vault/wallet-backup-v2")
 def create_wallet_backup_v2(payload: WalletBackupV2CreateRequest,
-                            principal: SessionPrincipal = Depends(verify_session_token)):
+                            principal: SessionPrincipal = Depends(verify_trusted_device)):
     require_content_write(principal)
     require_crypto_access(principal)
     _enabled(write=True)
@@ -68,7 +69,7 @@ def create_wallet_backup_v2(payload: WalletBackupV2CreateRequest,
 
 
 @router.get("/vault/wallet-backup-v2")
-def list_wallet_backup_v2(principal: SessionPrincipal = Depends(verify_session_token)):
+def list_wallet_backup_v2(principal: SessionPrincipal = Depends(verify_trusted_device)):
     require_crypto_access(principal)
     _enabled()
     conn = get_db()
@@ -84,7 +85,7 @@ def list_wallet_backup_v2(principal: SessionPrincipal = Depends(verify_session_t
 
 @router.get("/vault/wallet-backup-v2/{backup_record_id}")
 def read_wallet_backup_v2(backup_record_id: str,
-                          principal: SessionPrincipal = Depends(verify_session_token)):
+                          principal: SessionPrincipal = Depends(verify_trusted_device)):
     require_crypto_access(principal)
     _enabled()
     conn = get_db()
@@ -106,7 +107,7 @@ def read_wallet_backup_v2(backup_record_id: str,
 
 @router.delete("/vault/wallet-backup-v2/{backup_record_id}")
 def delete_wallet_backup_v2(backup_record_id: str,
-                            principal: SessionPrincipal = Depends(verify_session_token)):
+                            principal: SessionPrincipal = Depends(verify_trusted_device)):
     _enabled(write=True)
     conn = get_db()
     try:

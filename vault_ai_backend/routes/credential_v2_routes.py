@@ -18,7 +18,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from psycopg2.extras import Json, RealDictCursor
 
-from auth_local import SessionPrincipal, verify_session_token
+from auth_local import SessionPrincipal
+from device_gate import verify_trusted_device
 from vault_core import get_db
 from zk_migration_flags import ZkMigrationFlags
 from vault_credential_draft import consume_draft, get_draft
@@ -128,7 +129,7 @@ class GeneratedDraftFinalizeResponse(BaseModel):
 @router.post("/generated-drafts/{draft_id}/cancel", response_model=dict)
 def cancel_generated_draft_v2(
     draft_id: str,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     _require("write")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", draft_id):
@@ -159,7 +160,7 @@ def _response(row: dict) -> CredentialV2EnvelopeResponse:
 def finalize_generated_draft_v2(
     record_id: str,
     draft_id: str,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> GeneratedDraftFinalizeResponse:
     """Clear a transient draft only after its opaque v2 record exists.
 
@@ -214,7 +215,7 @@ def finalize_generated_draft_v2(
 def write_credential_v2(
     record_id: str,
     payload: CredentialV2WriteRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> CredentialV2EnvelopeResponse:
     require_content_write(principal)
     qa = os.getenv('QA_CHAT_PRIVACY_DIAGNOSTICS', '').lower() == 'true'
@@ -297,7 +298,7 @@ def write_credential_v2(
 @router.get("/{record_id}", response_model=CredentialV2EnvelopeResponse)
 def read_credential_v2(
     record_id: str,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> CredentialV2EnvelopeResponse:
     _require("read")
     conn = get_db()
@@ -325,7 +326,7 @@ def read_credential_v2(
 def list_credentials_v2(
     blind_index_name: str | None = Query(default=None),
     blind_index_token: str | None = Query(default=None),
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> list[CredentialV2EnvelopeResponse]:
     _require("read")
     if (blind_index_name is None) != (blind_index_token is None):
@@ -369,7 +370,7 @@ class ClientVerificationRequest(BaseModel):
 def verify_credential_v2(
     record_id: str,
     payload: ClientVerificationRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     require_content_write(principal)
     _require("migration")
@@ -442,7 +443,7 @@ def verify_credential_v2(
 @router.post("/{record_id}/rollback", response_model=dict)
 def rollback_credential_v2(
     record_id: str,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     require_content_write(principal)
     _require("migration")
@@ -488,7 +489,7 @@ def rollback_credential_v2(
 @router.delete("/{record_id}", response_model=dict)
 def delete_credential_v2(
     record_id: str,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     _require("write")
     conn = get_db()

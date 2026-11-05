@@ -333,6 +333,12 @@ def _build_client(store: dict, *, principal_vault_id: str,
     app.dependency_overrides[irr.verify_session_token] = (
         _override_session_principal
     )
+    # These tests exercise the inheritance state machine. Device-gate
+    # authorization is covered separately with synthetic pending/revoked
+    # sessions, so provide the same trusted principal here.
+    app.dependency_overrides[irr.verify_trusted_device] = (
+        _override_session_principal
+    )
 
     class _WithHeaders:
         def __init__(self, client: TestClient) -> None:

@@ -7,8 +7,8 @@ plaintext column, and advances the migration cursor.
 
 Design invariants:
 
-  * Every endpoint requires a valid session for the caller's vault
-    (see ``verify_session_token``). No admin path exists.
+  * Every endpoint requires a trusted device and valid session for the
+    caller's vault. No admin path exists.
   * The server never learns which vault key was used to produce the
     ciphertext. Payloads are opaque BYTEA.
   * A single failed batch is idempotent: re-applying the same batch
@@ -37,8 +37,8 @@ from psycopg2.extras import RealDictCursor
 
 from auth_local import (
     SessionPrincipal,
-    verify_session_token,
 )
+from device_gate import verify_trusted_device
 from vault_core import get_db
 
 
@@ -179,7 +179,7 @@ class MigrationStatusResponse(BaseModel):
     response_model=NextBatchResponse,
 )
 def next_batch(
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
     limit: int = BATCH_SIZE_DEFAULT,
 ) -> NextBatchResponse:
     if limit < 1 or limit > BATCH_SIZE_MAX:
@@ -294,7 +294,7 @@ def next_batch(
 )
 def apply_batch(
     payload: ApplyBatchRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> ApplyBatchResponse:
     spec = _TABLES.get(payload.table)
     if spec is None:
@@ -368,7 +368,7 @@ def apply_batch(
     response_model=MigrationStatusResponse,
 )
 def status(
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> MigrationStatusResponse:
     conn = get_db()
     try:

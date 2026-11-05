@@ -269,7 +269,7 @@ def test_actual_http_write_then_read_returns_identical_opaque_envelope(monkeypat
     monkeypatch.setattr(route, "get_db", lambda: _SyntheticConnection(state))
     app = FastAPI()
     app.include_router(route.router)
-    app.dependency_overrides[route.verify_session_token] = lambda: {
+    app.dependency_overrides[route.verify_trusted_device] = lambda: {
         "vault_id": uuid4(), "session_id": "synthetic"
     }
     client = TestClient(app)
@@ -292,7 +292,7 @@ def test_actual_http_rejects_pin_before_storage(monkeypatch) -> None:
     monkeypatch.setenv("ZK_V2_WRITE_ENABLED", "true")
     app = FastAPI()
     app.include_router(route.router)
-    app.dependency_overrides[route.verify_session_token] = lambda: {
+    app.dependency_overrides[route.verify_trusted_device] = lambda: {
         "vault_id": uuid4(), "session_id": "synthetic"
     }
     payload = _payload()

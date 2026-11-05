@@ -63,6 +63,7 @@ from psycopg2.extras import RealDictCursor
 
 from auth_local import SessionPrincipal, verify_session_token
 from inheritance_error_codes import INHERR, inheritance_http_error
+from device_gate import verify_trusted_device
 from vault_core import get_db
 
 
@@ -374,7 +375,7 @@ def _clear_release_timestamps_if_stale(
 )
 def get_beneficiary_public_key(
     link_id: int,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> BeneficiaryPubKeyResponse:
     """Owner-side lookup returning the beneficiary's stored X25519
     public key so the owner's client can wrap the CEK before saving.
@@ -448,7 +449,7 @@ def _insert_credential_row(
 )
 def save_credentials(
     payload: SaveCredentialPackageRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> CredentialStatusResponse:
     """Owner-side save. Refuses if credentials are already saved for
     this link (use /replace) or if an access request is in flight."""
@@ -537,7 +538,7 @@ def save_credentials(
 )
 def replace_credentials(
     payload: ReplaceCredentialPackageRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> CredentialStatusResponse:
     """Owner-side replace. Refuses if no credentials are saved or if
     an access request is in flight. Soft-deletes the previous row so
@@ -631,7 +632,7 @@ def replace_credentials(
 )
 def delete_credentials(
     payload: DeleteCredentialPackageRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> CredentialStatusResponse:
     """Owner-side delete. Soft-deletes the credential row and moves
     the link back to ``paired_no_credentials``."""
@@ -685,7 +686,7 @@ def delete_credentials(
 )
 def credential_status(
     link_id: int = Query(..., ge=1),
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> CredentialStatusResponse:
     conn = get_db()
     try:

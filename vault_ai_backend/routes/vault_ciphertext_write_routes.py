@@ -54,8 +54,8 @@ from psycopg2.extras import RealDictCursor
 
 from auth_local import (
     SessionPrincipal,
-    verify_session_token,
 )
+from device_gate import verify_trusted_device
 from vault_core import get_db
 from zk_migration_flags import ZkMigrationFlags
 from subscription_entitlement import require_content_write
@@ -174,7 +174,7 @@ class GeneratedDraftCiphertextFinalizeRequest(BaseModel):
 )
 def vault_item_upsert_ciphertext(
     payload: VaultItemUpsertRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> VaultItemUpsertResponse:
     require_content_write(principal)
     _reject_plaintext_leak(
@@ -276,7 +276,7 @@ def vault_item_upsert_ciphertext(
 )
 def finalize_generated_draft_ciphertext(
     payload: GeneratedDraftCiphertextFinalizeRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     """Consume a login draft only after its opaque item is durable.
 
@@ -333,7 +333,7 @@ def finalize_generated_draft_ciphertext(
     response_model=list[VaultItemCiphertextResponse],
 )
 def list_vault_item_ciphertexts(
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> list[VaultItemCiphertextResponse]:
     """Return only opaque, vault-scoped rows for client-side MVK hydration."""
     conn = get_db()
@@ -376,7 +376,7 @@ def list_vault_item_ciphertexts(
 @router.delete("/vault/ciphertext/vault-items/{item_id}", response_model=dict)
 def delete_vault_item_ciphertext(
     item_id: int,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     """Delete one opaque vault item owned by the active vault."""
     conn = get_db()
@@ -423,7 +423,7 @@ class UploadedFileMetadataResponse(BaseModel):
 )
 def uploaded_file_metadata_ciphertext(
     payload: UploadedFileMetadataRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> UploadedFileMetadataResponse:
     require_content_write(principal)
     _reject_plaintext_leak(payload, (
@@ -515,7 +515,7 @@ class NotificationCiphertextResponse(BaseModel):
 )
 def notification_ciphertext_create(
     payload: NotificationCiphertextRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> NotificationCiphertextResponse:
     require_content_write(principal)
     _reject_plaintext_leak(payload, ("title", "body", "metadata"))
@@ -600,7 +600,7 @@ class AiMemoryCiphertextReadResponse(BaseModel):
 )
 def ai_memory_ciphertext_upsert(
     payload: AiMemoryCiphertextRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> AiMemoryCiphertextResponse:
     require_content_write(principal)
     qa = os.getenv("QA_CHAT_PRIVACY_DIAGNOSTICS", "").lower() == "true"
@@ -759,7 +759,7 @@ def ai_memory_ciphertext_upsert(
 )
 def ai_memory_ciphertext_list(
     memory_lookup_hash: Optional[str] = None,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> list[AiMemoryCiphertextReadResponse]:
     """Return opaque memory envelopes only; never legacy plaintext columns."""
     memory_flags = ZkMigrationFlags.from_environment(os.environ)
@@ -808,7 +808,7 @@ def ai_memory_ciphertext_list(
 @router.delete("/vault/ciphertext/vault-ai-memory/{memory_id}", response_model=dict)
 def ai_memory_ciphertext_delete(
     memory_id: str,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     flags = ZkMigrationFlags.from_environment(os.environ)
     flags.validate_dependencies()
@@ -841,7 +841,7 @@ class BeneficiaryLabelCiphertextRequest(BaseModel):
 )
 def beneficiary_label_ciphertext_update(
     payload: BeneficiaryLabelCiphertextRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     require_content_write(principal)
     _reject_plaintext_leak(payload, ("passer_label",))
@@ -891,7 +891,7 @@ class SemanticIndexKeyedHashRequest(BaseModel):
 )
 def semantic_index_keyed_hash_upsert(
     payload: SemanticIndexKeyedHashRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     require_content_write(principal)
     if (payload.uploaded_file_id is None) == (payload.vault_item_id is None):
@@ -975,7 +975,7 @@ class InheritanceRewrapUpload(BaseModel):
 )
 def inheritance_rewrap_upload(
     payload: InheritanceRewrapUpload,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     require_content_write(principal)
     """Passer's client uploads the beneficiary-wrapped MVK envelope
@@ -1042,7 +1042,7 @@ class CryptoDraftCiphertextRequest(BaseModel):
 )
 def crypto_draft_ciphertext_persist(
     payload: CryptoDraftCiphertextRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     require_content_write(principal)
     """Called by the ZK client immediately AFTER a draft is created
@@ -1160,7 +1160,7 @@ class CryptoHistoryCiphertextRequest(BaseModel):
 )
 def crypto_history_ciphertext_write(
     payload: CryptoHistoryCiphertextRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     require_content_write(principal)
     """ZK client calls this after successful broadcast. The server

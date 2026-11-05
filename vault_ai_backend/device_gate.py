@@ -237,6 +237,20 @@ async def verify_trusted_device(
             },
         )
 
+    # A caller controls X-Device-Id. It must identify the same device that
+    # authenticated this session, otherwise a pending session could borrow
+    # another device's trusted row and pass the gate.
+    if not principal.get("device_id") or principal["device_id"] != device_id:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "device_session_mismatch",
+                "message": "Sign in again on this device to continue.",
+                "device_id": device_id,
+                "status": "device_session_mismatch",
+            },
+        )
+
     db_status = _lookup_device_status(vault_id, device_id)
     row_missing = db_status is None
 
@@ -301,6 +315,17 @@ async def verify_caller_is_trusted_device(
                 "message":   "X-Device-Id header required to manage devices.",
                 "device_id": None,
                 "status":    "missing_device_id",
+            },
+        )
+
+    if not principal.get("device_id") or principal["device_id"] != device_id:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "device_session_mismatch",
+                "message": "Sign in again on this device to continue.",
+                "device_id": device_id,
+                "status": "device_session_mismatch",
             },
         )
 

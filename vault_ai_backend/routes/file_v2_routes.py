@@ -3,7 +3,7 @@ import base64, binascii, os
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from psycopg2.extras import RealDictCursor
-from auth_local import SessionPrincipal, verify_session_token
+from auth_local import SessionPrincipal
 from device_gate import verify_trusted_device
 from routes.auth_zk_routes import consume_recent_zk_proof
 from vault_core import get_db
@@ -51,7 +51,7 @@ def _reject(data: dict):
     if leaked: raise HTTPException(400, detail='file_v2_plaintext_field_rejected')
 
 @router.post('/vault/file-v2/manifest')
-def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(verify_session_token)):
+def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(verify_trusted_device)):
     require_content_write(principal)
     _enabled(True); _reject(payload.model_dump())
     ct = _decode(payload.manifest_ciphertext)
@@ -98,7 +98,7 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
     return {'file_id': payload.file_id, 'crypto_version': payload.crypto_version}
 
 @router.put('/vault/file-v2/chunk')
-def put_chunk(payload: Chunk, principal: SessionPrincipal = Depends(verify_session_token)):
+def put_chunk(payload: Chunk, principal: SessionPrincipal = Depends(verify_trusted_device)):
     require_content_write(principal)
     _enabled(True); _reject(payload.model_dump()); ct = _decode(payload.ciphertext)
     conn = get_db(); cur = conn.cursor()
@@ -115,7 +115,7 @@ def put_chunk(payload: Chunk, principal: SessionPrincipal = Depends(verify_sessi
     return {'file_id': payload.file_id, 'chunk_index': payload.chunk_index}
 
 @router.get('/vault/file-v2')
-def list_files(principal: SessionPrincipal = Depends(verify_session_token)):
+def list_files(principal: SessionPrincipal = Depends(verify_trusted_device)):
     _enabled(False); conn = get_db(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         # A tab/process can disappear without running the client's abort path.
@@ -132,7 +132,7 @@ def list_files(principal: SessionPrincipal = Depends(verify_session_token)):
     finally: conn.close()
 
 @router.get('/vault/file-v2/{file_id}/manifest')
-def get_manifest(file_id: str, principal: SessionPrincipal = Depends(verify_session_token)):
+def get_manifest(file_id: str, principal: SessionPrincipal = Depends(verify_trusted_device)):
     _enabled(False); conn = get_db(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         cur.execute('''SELECT file_id,crypto_version,manifest_ciphertext,total_bytes,chunk_size,chunk_count,lifecycle_state,verification_state FROM file_v2_records WHERE file_id=%s AND vault_id=%s''', (file_id, principal['vault_id'])); r=cur.fetchone()
@@ -142,7 +142,7 @@ def get_manifest(file_id: str, principal: SessionPrincipal = Depends(verify_sess
     finally: conn.close()
 
 @router.get('/vault/file-v2/{file_id}/chunk/{chunk_index}')
-def get_chunk(file_id: str, chunk_index: int, principal: SessionPrincipal = Depends(verify_session_token)):
+def get_chunk(file_id: str, chunk_index: int, principal: SessionPrincipal = Depends(verify_trusted_device)):
     _enabled(False); conn=get_db(); cur=conn.cursor()
     try:
         cur.execute('''SELECT c.ciphertext,r.total_bytes FROM file_v2_chunks c JOIN file_v2_records r ON r.file_id=c.file_id WHERE c.file_id=%s AND c.chunk_index=%s AND r.vault_id=%s''',(file_id,chunk_index,principal['vault_id'])); r=cur.fetchone()
@@ -152,7 +152,7 @@ def get_chunk(file_id: str, chunk_index: int, principal: SessionPrincipal = Depe
     finally: conn.close()
 
 @router.delete('/vault/file-v2/{file_id}')
-def delete_file(file_id: str, principal: SessionPrincipal = Depends(verify_session_token)):
+def delete_file(file_id: str, principal: SessionPrincipal = Depends(verify_trusted_device)):
     _enabled(True); conn=get_db(); cur=conn.cursor()
     try:
         cur.execute('SELECT verification_state, lifecycle_state FROM file_v2_records WHERE file_id=%s AND vault_id=%s FOR UPDATE',(file_id,principal['vault_id']))

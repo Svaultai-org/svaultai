@@ -71,6 +71,7 @@ from pydantic import BaseModel, Field
 from psycopg2.extras import RealDictCursor
 
 from auth_local import SessionPrincipal, verify_session_token
+from device_gate import verify_trusted_device
 from inheritance_error_codes import INHERR, inheritance_http_error
 from vault_core import get_db
 
@@ -692,7 +693,7 @@ def access_status(
 )
 def retrieve_credentials(
     link_id: int = Query(..., ge=1),
-    principal: SessionPrincipal = Depends(verify_session_token),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> RetrievedCredentialPackage:
     """Returns the wrapped credential package to the beneficiary only
     when the release state permits. On the first retrieval in
