@@ -358,6 +358,8 @@ def _verify_pin(vault_id: str, pin: Optional[str]) -> bool:
 
     if not isinstance(pin, str) or not pin:
         return False
+    from zk_raw_pin_content_gate import reject_zk_raw_pin_content
+    reject_zk_raw_pin_content(vault_id)
     try:
         pin_salt, pin_verifier, iterations = _load_pin_material(vault_id)
     except HTTPException:
@@ -498,6 +500,10 @@ def confirm_delete(
             subject=sec_log.short_hash(vault_id),
         )
         raise
+
+    if payload.pin is not None:
+        from zk_raw_pin_content_gate import reject_zk_raw_pin_content
+        reject_zk_raw_pin_content(vault_id)
 
     if payload.confirmation_phrase != CONFIRMATION_PHRASE:
         raise HTTPException(

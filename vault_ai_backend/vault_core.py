@@ -341,7 +341,7 @@ def verify_vault_pin(vault_id: str, pin: str) -> bytes:
         cursor.execute(
             """
             SELECT pin_salt, pin_verifier, locked_until, kdf_iterations,
-                   must_reset, failed_pin_attempts
+                   must_reset, failed_pin_attempts, vault_handle
             FROM vaults
             WHERE vault_id = %s
             LIMIT 1
@@ -352,6 +352,11 @@ def verify_vault_pin(vault_id: str, pin: str) -> bytes:
 
         if not row:
             raise HTTPException(status_code=404, detail="Vault not found")
+
+        from zk_raw_pin_content_gate import reject_zk_raw_pin_content
+        reject_zk_raw_pin_content(
+            vault_id, zk_registered=row.get("vault_handle") is not None,
+        )
 
         if row.get("must_reset"):
             raise HTTPException(

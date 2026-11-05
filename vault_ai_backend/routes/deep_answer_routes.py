@@ -237,6 +237,8 @@ async def deep_answer_poll(
     )
 
     vault_id = principal["vault_id"]
+    from zk_raw_pin_content_gate import reject_zk_raw_pin_content
+    reject_zk_raw_pin_content(vault_id)
     job = get_job(vault_id, job_id)
     if job is None:
                                                                     

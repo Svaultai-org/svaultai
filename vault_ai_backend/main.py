@@ -10042,6 +10042,10 @@ async def get_or_create_vault_meta_endpoint(
                                                                         
     vault_id = principal["vault_id"]
 
+    if payload.pin is not None:
+        from zk_raw_pin_content_gate import reject_zk_raw_pin_content
+        reject_zk_raw_pin_content(vault_id)
+
     pin_salt = get_or_create_pin_salt(vault_id)
 
     conn = get_db()
@@ -10171,7 +10175,6 @@ async def verify_pin_endpoint(
 ):
 
 
-    print("[PIN-DEBUG] ROUTE_ENTRY", flush=True)
     vault_id = principal["vault_id"]
 
     try:
@@ -10185,6 +10188,9 @@ async def verify_pin_endpoint(
             subject=_sec_log.short_hash(vault_id),
         )
         raise
+    from zk_raw_pin_content_gate import reject_zk_raw_pin_content
+    reject_zk_raw_pin_content(vault_id)
+    print("[PIN-DEBUG] ROUTE_ENTRY", flush=True)
     print(
         f"[PIN-DEBUG] AUTH_OK vault=...{str(vault_id)[-6:]}",
         flush=True,
@@ -13650,6 +13656,11 @@ async def chat_endpoint(
             subject=_sec_log.short_hash(vault_id),
         )
         raise
+
+    # The legacy chat contract carries a raw PIN. Refuse ZK vaults before
+    # request diagnostics, KDF checks, or any content-dependent work.
+    from zk_raw_pin_content_gate import reject_zk_raw_pin_content
+    reject_zk_raw_pin_content(vault_id)
 
                                                                    
     print(

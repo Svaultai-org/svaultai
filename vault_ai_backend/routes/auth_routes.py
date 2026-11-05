@@ -22,6 +22,7 @@ from auth_local import (
     revoke_session_token,
     verify_session_token,
 )
+from zk_raw_pin_content_gate import raw_pin_content_disabled
 from file_v2_client_capability import request_has_file_v2_reader
 from rate_limit_auth import (
     enforce_login_credential_rate_limit,
@@ -277,8 +278,11 @@ def _login_impl(
         # Pre-ZK vaults remain eligible so they can sign in and adopt ZK.
         if (
             row.get("vault_handle") is not None
-            and os.getenv("VAULTAI_ZK_LEGACY_LOGIN_DISABLED", "false")
-            .strip().lower() == "true"
+            and (
+                os.getenv("VAULTAI_ZK_LEGACY_LOGIN_DISABLED", "false")
+                .strip().lower() == "true"
+                or raw_pin_content_disabled()
+            )
         ):
             with _login_phase(timings, "kdf"):
                 _do_dummy_derive(payload.pin)

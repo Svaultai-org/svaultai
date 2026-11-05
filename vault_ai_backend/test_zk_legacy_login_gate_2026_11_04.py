@@ -40,7 +40,7 @@ class _Connection:
         pass
 
 
-def _login_attempt(vault_handle):
+def _login_attempt(vault_handle, *, legacy_gate="true", raw_pin_gate="false"):
     row = {
         "vault_id": "synthetic-vault-id",
         "vault_handle": vault_handle,
@@ -54,7 +54,10 @@ def _login_attempt(vault_handle):
     request = Request({"type": "http", "headers": [], "client": ("test", 1234)})
     timings = {"limiter": 0.0, "validation": 0.0, "db": 0.0, "kdf": 0.0}
     with (
-        mock.patch.dict(os.environ, {"VAULTAI_ZK_LEGACY_LOGIN_DISABLED": "true"}),
+        mock.patch.dict(os.environ, {
+            "VAULTAI_ZK_LEGACY_LOGIN_DISABLED": legacy_gate,
+            "VAULTAI_ZK_RAW_PIN_CONTENT_DISABLED": raw_pin_gate,
+        }),
         mock.patch.object(auth, "enforce_login_rate_limit"),
         mock.patch.object(auth, "enforce_login_credential_rate_limit"),
         mock.patch.object(auth, "get_db", return_value=connection),
@@ -78,6 +81,27 @@ def test_zk_row_rejected_before_pin_verifier_check():
 
 def test_legacy_row_still_reaches_pin_verification():
     error, connection, dummy, derive = _login_attempt(None)
+    assert error.status_code == 401  # synthetic verifier deliberately fails
+    dummy.assert_not_called()
+    derive.assert_called_once()
+    assert connection.closed
+
+
+def test_new_cutover_gate_blocks_zk_login_without_old_login_gate():
+    error, connection, dummy, derive = _login_attempt(
+        b"synthetic-handle", legacy_gate="false", raw_pin_gate="true",
+    )
+    assert error.status_code == 401
+    assert error.detail == auth.GENERIC_LOGIN_ERROR
+    dummy.assert_called_once()
+    derive.assert_not_called()
+    assert connection.closed
+
+
+def test_new_cutover_gate_preserves_legacy_only_login():
+    error, connection, dummy, derive = _login_attempt(
+        None, legacy_gate="false", raw_pin_gate="true",
+    )
     assert error.status_code == 401  # synthetic verifier deliberately fails
     dummy.assert_not_called()
     derive.assert_called_once()
