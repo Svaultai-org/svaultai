@@ -822,6 +822,12 @@ const bool kEnableLegacyAuthFallback = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// Coordinated ZK-only builds retain only OPAQUE-unwrapped MVK/Sk in memory.
+const bool kPrivateOnlyUnlockEnabled = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_PRIVATE_ONLY_UNLOCK',
+  defaultValue: false,
+);
+
 // Only stages and verifies MVK-wrapped copies. It cannot retire legacy rows.
 const bool kEnableLegacyContentStage = bool.fromEnvironment(
   'VAULTAI_ENABLE_LEGACY_CONTENT_STAGE',
@@ -964,10 +970,26 @@ const bool kEnableNewFileV2Upload = bool.fromEnvironment(
   defaultValue: false,
 );
 
+const bool kRequirePinFreeFileRoutes = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_FILE_PIN_FREE_ONLY',
+  defaultValue: false,
+);
+
+const bool kZkPrivateOnlyClientReady = kEnableZkPrivateChat &&
+    kEnableFileV2UiRead &&
+    kEnableNewFileV2Upload &&
+    kRequirePinFreeFileRoutes &&
+    kEnableKeylessSavedItemRead &&
+    kEnableKeylessSavedItemWrite &&
+    kEnableZkBeneficiaryProof &&
+    kEnableZkLegacyFileDeleteProof &&
+    kEnableZkImportSessionActions;
+
 bool legacyAuthFallbackPermitted({
   required bool opaqueLookupMissed,
   required bool isHandle,
 }) =>
+    !kPrivateOnlyUnlockEnabled &&
     kEnableLegacyAuthFallback && opaqueLookupMissed && !isHandle;
 
 Future<bool> verifyCurrentVaultPinForWallet(AppState app, String pin) async {
@@ -1039,6 +1061,13 @@ void debugAuthFailureTrace(
 }
 
 Future<void> main() async {
+  if (kPrivateOnlyUnlockEnabled && !kZkPrivateOnlyClientReady) {
+    throw StateError(
+      'Private-only unlock requires private chat, V2 file read/upload, '
+      'keyless saved-item read/write, and PIN-free action routes '
+      'in the same build.',
+    );
+  }
   if (kReleaseMode && !backendBaseUrl.startsWith('https://')) {
     throw StateError(
       'BACKEND_BASE_URL must use https:// in release builds. '
@@ -1597,6 +1626,18 @@ class AppState extends ChangeNotifier {
     final vId = vaultId;
     final vName = _vaultName;
     if (vId == null || vName == null) return false;
+    if (kPrivateOnlyUnlockEnabled) {
+      return vaultHandle != null &&
+          vaultHandle!.isNotEmpty &&
+          zk_mvk_store.ZkActiveMvk.current() != null &&
+          zk_mvk_store.ZkActiveMvk.currentVaultId() == vId &&
+          zk_mvk_store.ZkActiveMvk.currentVaultHandle() == vaultHandle &&
+          zk_sk_store.ZkActiveSkVault.current() != null &&
+          zk_sk_store.ZkActiveSkVault.currentVaultId() == vId &&
+          VaultCryptoRegistry.current == null &&
+          !_VaultCrypto.hasKeyFor(vaultId: vId, vaultName: vName) &&
+          _VaultCrypto.cachedPinFor(vaultId: vId, vaultName: vName) == null;
+    }
     if (!_VaultCrypto.hasKeyFor(vaultId: vId, vaultName: vName)) return false;
     return true;
   }
@@ -2440,15 +2481,16 @@ class AppState extends ChangeNotifier {
           _nonEmptyTrimmed(result.displayName) ??
           result.vaultHandle;
 
-      _VaultCrypto
-              ._keyCache[_VaultCrypto._ck(result.vaultId, resolvedVaultName)] =
-          result.mvk;
-      _VaultCrypto
-          ._pinCache[_VaultCrypto._ck(result.vaultId, resolvedVaultName)] = pin;
-      _VaultCrypto.setActiveVault(
-        vaultId: result.vaultId,
-        vaultName: resolvedVaultName,
-      );
+      if (!kPrivateOnlyUnlockEnabled) {
+        _VaultCrypto._keyCache[
+            _VaultCrypto._ck(result.vaultId, resolvedVaultName)] = result.mvk;
+        _VaultCrypto._pinCache[
+            _VaultCrypto._ck(result.vaultId, resolvedVaultName)] = pin;
+        _VaultCrypto.setActiveVault(
+          vaultId: result.vaultId,
+          vaultName: resolvedVaultName,
+        );
+      }
       zk_mvk_store.ZkActiveMvk.set(
         mvk: result.mvk,
         vaultId: result.vaultId,
@@ -2647,6 +2689,28 @@ class AppState extends ChangeNotifier {
         displayNameValue: activeDisplay,
         vaultHandleValue: activeVaultHandle,
       );
+
+      if (kPrivateOnlyUnlockEnabled) {
+        if (zkRestore == null) {
+          throw StateError('OPAQUE verification is required in private mode.');
+        }
+        installZkPrivateOnlyUnlockKeys(
+          app: this,
+          origin: ZkPrivateUnlockOrigin.pinGate,
+          sessionToken: activeToken,
+          vaultId: activeVaultId,
+          vaultName: activeVaultName,
+          vaultHandle: activeVaultHandle ?? '',
+          mvk: zkRestore.mvk,
+          skVault: zkRestore.skVaultPrivate,
+        );
+        lockMessage = null;
+        pinAttempts = 0;
+        lockoutUntil = null;
+        markUnlocked();
+        _refreshSessionListsBestEffort(this);
+        return unlocked;
+      }
 
       lockMessage = null;
 
@@ -2867,6 +2931,7 @@ class AppState extends ChangeNotifier {
     required String pinSaltBase64,
     required int iterations,
   }) async {
+    if (kPrivateOnlyUnlockEnabled) return false;
     final vId = vaultId;
     final vName = _vaultName;
     if (vId == null || vName == null) return false;
@@ -5063,6 +5128,7 @@ Future<Map<String, dynamic>> _zkHttpPost(
       deviceId.isNotEmpty) {
     requestBody.putIfAbsent('device_id', () => deviceId);
   }
+  assertPrivateOnlyPinFreeBody(requestBody);
   final response = await http
       .post(
         uri,
@@ -5152,6 +5218,7 @@ void _scheduleLegacyContentStage({
   required AppState app,
   required String pin,
 }) {
+  if (kPrivateOnlyUnlockEnabled) return;
   if (!kEnableLegacyContentStage) return;
   final token = app.sessionToken;
   final vaultId = app.vaultId;
@@ -5178,6 +5245,7 @@ Future<void> _stageLegacyContentBestEffort({
   required String vaultName,
   required SecretKey mvk,
 }) async {
+  if (kPrivateOnlyUnlockEnabled) return;
   if (!kEnableLegacyContentStage) return;
   final handle = app.vaultHandle;
   final legacyKey =
@@ -5425,6 +5493,9 @@ Future<bool> _deriveKeyAndUnlock({
   required AppState app,
   required String pin,
 }) async {
+  if (kPrivateOnlyUnlockEnabled) {
+    throw StateError('Legacy PIN unlock is unavailable in private mode.');
+  }
   final vaultName = app.vaultName;
   final vaultId = app.vaultId;
   final token = app.sessionToken;
@@ -5753,17 +5824,28 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           displayNameValue: loginResult.displayName,
         );
         pageTiming('secure_store_complete');
-        final loginMeta = await resolveLoginVaultMeta(
-          loginResult: loginResult,
-          registerDevice: () => _registerDeviceBestEffort(loginResult.sessionToken),
-          afterDeviceReady: () => _autoConsumeInheritanceTokenIfPresent(
+        final LoginVaultMeta? loginMeta;
+        if (kPrivateOnlyUnlockEnabled) {
+          if (!loginResult.deviceTrustComplete) {
+            await _registerDeviceBestEffort(loginResult.sessionToken);
+          }
+          await _autoConsumeInheritanceTokenIfPresent(
             loginResult.sessionToken, app,
-          ),
-          fetchVaultMeta: () => _API.getVaultMeta(
-            vaultName: resolvedVaultName,
-            authToken: loginResult.sessionToken,
-          ),
-        );
+          );
+          loginMeta = null;
+        } else {
+          loginMeta = await resolveLoginVaultMeta(
+            loginResult: loginResult,
+            registerDevice: () => _registerDeviceBestEffort(loginResult.sessionToken),
+            afterDeviceReady: () => _autoConsumeInheritanceTokenIfPresent(
+              loginResult.sessionToken, app,
+            ),
+            fetchVaultMeta: () => _API.getVaultMeta(
+              vaultName: resolvedVaultName,
+              authToken: loginResult.sessionToken,
+            ),
+          );
+        }
         if (!mounted || app.sessionToken != loginResult.sessionToken ||
             app.vaultId != loginResult.vaultId) {
           throw StateError('Sign-in initialization was superseded.');
@@ -5781,6 +5863,18 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         // Fix: install the atomic VaultCryptoContext with the
         // FRESHLY-DERIVED PBKDF2 key from current /vault-meta.
         // /chat now reads exclusively from VaultCryptoRegistry.
+        if (kPrivateOnlyUnlockEnabled) {
+          installZkPrivateOnlyUnlockKeys(
+            app: app,
+            origin: ZkPrivateUnlockOrigin.login,
+            sessionToken: loginResult.sessionToken,
+            vaultId: loginResult.vaultId,
+            vaultName: resolvedVaultName,
+            vaultHandle: loginResult.vaultHandle,
+            mvk: loginResult.mvk,
+            skVault: loginResult.skVaultPrivate,
+          );
+        } else {
         _VaultCrypto._keyCache[
                 _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] =
             loginResult.mvk;
@@ -5804,7 +5898,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           vaultId: loginResult.vaultId,
           vaultName: resolvedVaultName,
           pin: pin,
-          pinSaltBase64: loginMeta.pinSaltBase64,
+          pinSaltBase64: loginMeta!.pinSaltBase64,
           iterations: loginMeta.kdfIterations,
           source: 'zk_login',
           canInstall: () => mounted &&
@@ -5822,6 +5916,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           skVault: loginResult.skVaultPrivate,
           vaultId: loginResult.vaultId,
         );
+        }
         inheritanceRevealDiag('normal_login_zk_success', {
           'vault_fpr': inheritanceRevealIdFingerprint(loginResult.vaultId),
           'has_vault_handle': loginResult.vaultHandle.isNotEmpty,
@@ -5841,7 +5936,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         // still lands on /chat.
         try {
           _scheduleMetadataMigration(app: app);
-          _scheduleLegacyContentStage(app: app, pin: pin);
+          if (!kPrivateOnlyUnlockEnabled) {
+            _scheduleLegacyContentStage(app: app, pin: pin);
+          }
         } catch (e) {
           vlog('login.post_login_side_effect_failed',
               {'step': 'schedule_metadata_migration', 'error': e.toString()});
@@ -6298,6 +6395,18 @@ class _SignupPageState extends State<SignupPage> {
       // longer matches — that mismatch produced the "signup
       // succeeds → redirect back to PIN" symptom because
       // ``unlocked`` returned false immediately.
+      if (kPrivateOnlyUnlockEnabled) {
+        installZkPrivateOnlyUnlockKeys(
+          app: app,
+          origin: ZkPrivateUnlockOrigin.signup,
+          sessionToken: result.sessionToken,
+          vaultId: result.vaultId,
+          vaultName: vaultName,
+          vaultHandle: result.vaultHandle,
+          mvk: result.mvk,
+          skVault: result.skVaultPrivate,
+        );
+      } else {
       _VaultCrypto._keyCache[_VaultCrypto._ck(result.vaultId, vaultName)] =
           result.mvk;
       _VaultCrypto._pinCache[_VaultCrypto._ck(result.vaultId, vaultName)] = pin;
@@ -6351,6 +6460,7 @@ class _SignupPageState extends State<SignupPage> {
           'error': e.toString(),
           'vaultName': vaultName,
         });
+      }
       }
       app.markUnlocked();
       _refreshSessionListsBestEffort(app);
@@ -6743,17 +6853,28 @@ class _UnlockPageState extends State<UnlockPage> {
           displayNameValue: loginResult.displayName,
         );
         pageTiming('secure_store_complete');
-        final loginMeta = await resolveLoginVaultMeta(
-          loginResult: loginResult,
-          registerDevice: () => _registerDeviceBestEffort(loginResult.sessionToken),
-          afterDeviceReady: () => _autoConsumeInheritanceTokenIfPresent(
+        final LoginVaultMeta? loginMeta;
+        if (kPrivateOnlyUnlockEnabled) {
+          if (!loginResult.deviceTrustComplete) {
+            await _registerDeviceBestEffort(loginResult.sessionToken);
+          }
+          await _autoConsumeInheritanceTokenIfPresent(
             loginResult.sessionToken, app,
-          ),
-          fetchVaultMeta: () => _API.getVaultMeta(
-            vaultName: resolvedVaultName,
-            authToken: loginResult.sessionToken,
-          ),
-        );
+          );
+          loginMeta = null;
+        } else {
+          loginMeta = await resolveLoginVaultMeta(
+            loginResult: loginResult,
+            registerDevice: () => _registerDeviceBestEffort(loginResult.sessionToken),
+            afterDeviceReady: () => _autoConsumeInheritanceTokenIfPresent(
+              loginResult.sessionToken, app,
+            ),
+            fetchVaultMeta: () => _API.getVaultMeta(
+              vaultName: resolvedVaultName,
+              authToken: loginResult.sessionToken,
+            ),
+          );
+        }
         if (!mounted || app.sessionToken != loginResult.sessionToken ||
             app.vaultId != loginResult.vaultId) {
           throw StateError('Unlock initialization was superseded.');
@@ -6762,6 +6883,18 @@ class _UnlockPageState extends State<UnlockPage> {
         // _keyCache for the ZK metadata surface, but install the
         // freshly-derived PBKDF2 VaultCryptoContext for /chat. See
         // the LoginPage ZK path above for the full incident context.
+        if (kPrivateOnlyUnlockEnabled) {
+          installZkPrivateOnlyUnlockKeys(
+            app: app,
+            origin: ZkPrivateUnlockOrigin.unlock,
+            sessionToken: loginResult.sessionToken,
+            vaultId: loginResult.vaultId,
+            vaultName: resolvedVaultName,
+            vaultHandle: loginResult.vaultHandle,
+            mvk: loginResult.mvk,
+            skVault: loginResult.skVaultPrivate,
+          );
+        } else {
         _VaultCrypto._keyCache[
                 _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] =
             loginResult.mvk;
@@ -6782,7 +6915,7 @@ class _UnlockPageState extends State<UnlockPage> {
           vaultId: loginResult.vaultId,
           vaultName: resolvedVaultName,
           pin: pin,
-          pinSaltBase64: loginMeta.pinSaltBase64,
+          pinSaltBase64: loginMeta!.pinSaltBase64,
           iterations: loginMeta.kdfIterations,
           source: 'zk_unlock',
           canInstall: () => mounted &&
@@ -6800,6 +6933,7 @@ class _UnlockPageState extends State<UnlockPage> {
           skVault: loginResult.skVaultPrivate,
           vaultId: loginResult.vaultId,
         );
+        }
         inheritanceRevealDiag('normal_unlock_zk_success', {
           'vault_fpr': inheritanceRevealIdFingerprint(loginResult.vaultId),
           'has_vault_handle': loginResult.vaultHandle.isNotEmpty,
@@ -6816,7 +6950,9 @@ class _UnlockPageState extends State<UnlockPage> {
         // "Null check operator used on a null value" symptom).
         try {
           _scheduleMetadataMigration(app: app);
-          _scheduleLegacyContentStage(app: app, pin: pin);
+          if (!kPrivateOnlyUnlockEnabled) {
+            _scheduleLegacyContentStage(app: app, pin: pin);
+          }
         } catch (e) {
           vlog('unlock.post_login_side_effect_failed',
               {'step': 'schedule_metadata_migration', 'error': e.toString()});
@@ -10926,6 +11062,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         app,
       );
 
+      if (kPrivateOnlyUnlockEnabled) {
+        installZkPrivateOnlyUnlockKeys(
+          app: app,
+          origin: ZkPrivateUnlockOrigin.inheritance,
+          sessionToken: loginResult.sessionToken,
+          vaultId: loginResult.vaultId,
+          vaultName: resolvedVaultName,
+          vaultHandle: loginResult.vaultHandle,
+          mvk: loginResult.mvk,
+          skVault: loginResult.skVaultPrivate,
+        );
+      } else {
       _VaultCrypto._keyCache[
               _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] =
           loginResult.mvk;
@@ -10966,6 +11114,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         vlog('inheritance.reveal.rehydrate_pbkdf2_failed', {
           'exception_type': e.runtimeType.toString(),
         });
+      }
       }
 
       app.markUnlocked();
@@ -20723,6 +20872,11 @@ class VaultCryptoRegistry {
     required int operationId,
     required VaultCryptoContext context,
   }) {
+    if (kPrivateOnlyUnlockEnabled &&
+        zk_mvk_store.ZkActiveMvk.current() != null &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == context.vaultId) {
+      return false;
+    }
     if (operationId != _operationSeq) {
       vlog('crypto.context.install.stale', {
         'reason': 'operation_id_superseded',
@@ -20811,6 +20965,11 @@ Future<VaultCryptoContext?> deriveAndInstallCryptoContext({
   required String source,
   bool Function()? canInstall,
 }) async {
+  if (kPrivateOnlyUnlockEnabled &&
+      zk_mvk_store.ZkActiveMvk.current() != null &&
+      zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId) {
+    throw StateError('PIN-derived encryption is unavailable in private mode.');
+  }
   final opId = VaultCryptoRegistry.nextOperationId();
 
   final secretKey = await _deriveVaultPbkdf2Key(
@@ -20822,6 +20981,11 @@ Future<VaultCryptoContext?> deriveAndInstallCryptoContext({
   // A completed derive from a former session must not overwrite the current
   // context or unlock a vault after sign-out, navigation, or a new login.
   if (canInstall != null && !canInstall()) return null;
+  if (kPrivateOnlyUnlockEnabled &&
+      zk_mvk_store.ZkActiveMvk.current() != null &&
+      zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId) {
+    return null;
+  }
 
   final gen = VaultCryptoRegistry.nextGeneration();
   final context = VaultCryptoContext(
@@ -20860,6 +21024,51 @@ Future<VaultCryptoContext?> deriveAndInstallCryptoContext({
   _VaultCrypto._activeVaultName = vaultName;
 
   return context;
+}
+
+/// Install only the keys returned by successful OPAQUE authentication.
+/// A PIN is deliberately not accepted or retained by this transition.
+enum ZkPrivateUnlockOrigin { login, signup, unlock, pinGate, inheritance }
+
+@visibleForTesting
+Map<String, Object?> zkPrivateUnlockCredentialStateForTesting() => {
+  'pin_cache_entries': _VaultCrypto._pinCache.length,
+  'legacy_key_entries': _VaultCrypto._keyCache.length,
+  'has_pbkdf2_context': VaultCryptoRegistry.current != null,
+};
+
+void installZkPrivateOnlyUnlockKeys({
+  required AppState app,
+  required ZkPrivateUnlockOrigin origin,
+  required String sessionToken,
+  required String vaultId,
+  required String vaultName,
+  required String vaultHandle,
+  required SecretKey mvk,
+  required SecretKey skVault,
+}) {
+  if (!kPrivateOnlyUnlockEnabled) {
+    throw StateError('Private-only unlock is disabled.');
+  }
+  if (!kZkPrivateOnlyClientReady) {
+    throw StateError('Private-only vault features are incomplete.');
+  }
+  if (vaultId.isEmpty || vaultName.isEmpty || vaultHandle.isEmpty ||
+      !app.authed || app.sessionToken != sessionToken ||
+      app.vaultId != vaultId || app.vaultName != vaultName ||
+      app.vaultHandle != vaultHandle) {
+    throw StateError('Vault session changed during private unlock.');
+  }
+  VaultCryptoRegistry.clear(reason: 'zk_private_only_unlock');
+  _VaultCrypto.clearAllCachedCredentials();
+  zk_mvk_store.ZkActiveMvk.clear();
+  zk_sk_store.ZkActiveSkVault.clear();
+  _VaultCrypto.setActiveVault(vaultId: vaultId, vaultName: vaultName);
+  zk_mvk_store.ZkActiveMvk.set(
+    mvk: mvk, vaultId: vaultId, vaultHandle: vaultHandle,
+  );
+  zk_sk_store.ZkActiveSkVault.set(skVault: skVault, vaultId: vaultId);
+  vlog('crypto.private_unlock', {'origin': origin.name});
 }
 
 Future<SecretKey> _deriveVaultPbkdf2Key({
@@ -20965,6 +21174,11 @@ class _VaultCrypto {
     required String pinSaltBase64,
     required int iterations,
   }) async {
+    if (kPrivateOnlyUnlockEnabled &&
+        zk_mvk_store.ZkActiveMvk.current() != null &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId) {
+      throw StateError('PIN-derived encryption is unavailable in private mode.');
+    }
     final algorithm = Pbkdf2(
       macAlgorithm: Hmac.sha256(),
       iterations: iterations,
@@ -20998,6 +21212,11 @@ class _VaultCrypto {
     final id = _activeVaultId;
     final v = _activeVaultName;
     if (id == null || v == null) {
+      throw const InvalidVaultUnlockException();
+    }
+    if (kPrivateOnlyUnlockEnabled &&
+        zk_mvk_store.ZkActiveMvk.current() != null &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == id) {
       throw const InvalidVaultUnlockException();
     }
     final key = _keyCache[_ck(id, v)];
@@ -21049,6 +21268,11 @@ class _VaultCrypto {
     if (id == null || v == null) {
       throw const InvalidVaultUnlockException();
     }
+    if (kPrivateOnlyUnlockEnabled &&
+        zk_mvk_store.ZkActiveMvk.current() != null &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == id) {
+      throw const InvalidVaultUnlockException();
+    }
     final pin = _pinCache[_ck(id, v)];
     if (pin == null) {
       throw const InvalidVaultUnlockException();
@@ -21061,6 +21285,11 @@ class _VaultCrypto {
     required String vaultName,
   }) {
     if (vaultId.isEmpty || vaultName.isEmpty) return null;
+    if (kPrivateOnlyUnlockEnabled &&
+        zk_mvk_store.ZkActiveMvk.current() != null &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId) {
+      return null;
+    }
     return _pinCache[_ck(vaultId, vaultName)];
   }
 
@@ -21091,6 +21320,14 @@ class _VaultCrypto {
       'remaining': _keyCache.length,
       'clearedActive': wasActive,
     });
+  }
+
+  static void clearAllCachedCredentials() {
+    _keyCache.clear();
+    _pinCache.clear();
+    _keyOrigin.clear();
+    _activeVaultId = null;
+    _activeVaultName = null;
   }
 
   static Map<String, Object?> debugSnapshot() {

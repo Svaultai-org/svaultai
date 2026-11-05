@@ -75,6 +75,46 @@ const bool kEnableKeylessSavedItemWrite = bool.fromEnvironment(
   defaultValue: false,
 );
 
+const bool kPrivateOnlyTransportRejectPin = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_PRIVATE_ONLY_UNLOCK',
+  defaultValue: false,
+);
+
+bool _containsRawPinField(Object? value) {
+  if (value is Map) {
+    for (final entry in value.entries) {
+      if (entry.key.toString().toLowerCase() == 'pin' ||
+          _containsRawPinField(entry.value)) {
+        return true;
+      }
+    }
+  } else if (value is Iterable) {
+    for (final entry in value) {
+      if (_containsRawPinField(entry)) return true;
+    }
+  }
+  return false;
+}
+
+/// Catch accidental legacy PIN requests before they leave a private build.
+void assertPrivateOnlyPinFreeBody(Object? body) {
+  if (!kPrivateOnlyTransportRejectPin || body == null) return;
+  Object? parsed = body;
+  if (body is String) {
+    try {
+      parsed = jsonDecode(body);
+    } on FormatException {
+      if (RegExp(r'(^|[?&])pin=', caseSensitive: false).hasMatch(body)) {
+        throw StateError('Raw PIN requests are unavailable in private mode.');
+      }
+      return;
+    }
+  }
+  if (_containsRawPinField(parsed)) {
+    throw StateError('Raw PIN requests are unavailable in private mode.');
+  }
+}
+
 void _vlog(String tag, [Map<String, Object?>? data]) {
   if (kReleaseMode) return;
   final payload = data == null
@@ -500,7 +540,8 @@ class _SessionBoundHttp {
   final void Function()? _beforeResponse;
 
   Future<http.Response> _send(Map<String, String>? headers,
-      Future<http.Response> Function() send) async {
+      Future<http.Response> Function() send, {Object? body}) async {
+    assertPrivateOnlyPinFreeBody(body);
     final scope = _requestScopeFor(headers);
     _assertCurrentRequest(scope);
     final response = await send();
@@ -524,7 +565,8 @@ class _SessionBoundHttp {
           () =>
               _client?.post(url,
                   headers: headers, body: body, encoding: encoding) ??
-              http.post(url, headers: headers, body: body, encoding: encoding));
+              http.post(url, headers: headers, body: body, encoding: encoding),
+          body: body);
 
   Future<http.Response> put(Uri url,
           {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
@@ -533,7 +575,8 @@ class _SessionBoundHttp {
           () =>
               _client?.put(url,
                   headers: headers, body: body, encoding: encoding) ??
-              http.put(url, headers: headers, body: body, encoding: encoding));
+              http.put(url, headers: headers, body: body, encoding: encoding),
+          body: body);
 
   Future<http.Response> patch(Uri url,
           {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
@@ -543,7 +586,8 @@ class _SessionBoundHttp {
               _client?.patch(url,
                   headers: headers, body: body, encoding: encoding) ??
               http.patch(url,
-                  headers: headers, body: body, encoding: encoding));
+                  headers: headers, body: body, encoding: encoding),
+          body: body);
 
   Future<http.Response> delete(Uri url,
           {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
@@ -553,7 +597,8 @@ class _SessionBoundHttp {
               _client?.delete(url,
                   headers: headers, body: body, encoding: encoding) ??
               http.delete(url,
-                  headers: headers, body: body, encoding: encoding));
+                  headers: headers, body: body, encoding: encoding),
+          body: body);
 }
 
 class InvalidVaultUnlockException implements Exception {
@@ -1794,6 +1839,7 @@ class VaultAIClient {
       kdfIterationsUsed: kdfIterationsUsed,
     ));
 
+    assertPrivateOnlyPinFreeBody(request.body);
     _assertCurrentRequest(requestScope);
     final response = await (_httpClient?.send(request) ?? request.send());
     _assertCurrentRequest(requestScope);
@@ -3611,6 +3657,7 @@ class VaultAIClient {
       ),
     );
 
+    assertPrivateOnlyPinFreeBody(request.fields);
     _assertCurrentRequest(requestScope);
     final response = await (_httpClient?.send(request) ?? request.send());
     _assertCurrentRequest(requestScope);
@@ -3975,6 +4022,7 @@ class VaultAIClient {
     request.fields['saved_name'] = savedName;
     request.fields['pin'] = pin;
 
+    assertPrivateOnlyPinFreeBody(request.fields);
     _assertCurrentRequest(requestScope);
     final response = await (_httpClient?.send(request) ?? request.send());
     _assertCurrentRequest(requestScope);
@@ -4795,6 +4843,7 @@ class VaultAIClient {
       filename: 'chunk_$chunkIndex.bin',
     ));
 
+    assertPrivateOnlyPinFreeBody(request.fields);
     _assertCurrentRequest(requestScope);
     final response = await (_httpClient?.send(request) ?? request.send());
     _assertCurrentRequest(requestScope);
