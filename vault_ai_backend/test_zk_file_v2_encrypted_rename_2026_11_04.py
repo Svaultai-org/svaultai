@@ -258,6 +258,42 @@ def test_manifest_and_inventory_read_back_same_override(monkeypatch, rename_gate
     assert listed["records"][0]["name_version"] == 1
 
 
+def test_folder_tree_uses_encrypted_override_without_plaintext(monkeypatch, rename_gate):
+    _, _ = rename_gate
+    override = b"\x03" * 32
+    encoded = base64.urlsafe_b64encode(override).decode().rstrip("=")
+    old = b"\x04" * 32
+    rows = [{
+        "id": "synthetic-file", "file_name": None, "saved_name": None,
+        "file_name_ciphertext": None, "saved_name_ciphertext": old,
+        "relative_path": None,
+    }]
+    monkeypatch.setattr(main, "list_uploaded_files", lambda *_args, **_kw: rows)
+
+    class FolderConn:
+        def cursor(self, **_kwargs):
+            return self
+
+        def execute(self, sql, params):
+            assert "saved_name_override_ciphertext" in sql
+            assert params == (PRINCIPAL["vault_id"], ["synthetic-file"])
+
+        def fetchall(self):
+            return [{
+                "file_id": "synthetic-file",
+                "saved_name_override_ciphertext": override,
+            }]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(main, "get_db", FolderConn)
+    tree = main.build_folder_tree(vault_id=PRINCIPAL["vault_id"])
+    assert tree["files"][0]["saved_name_ciphertext"] == encoded
+    assert tree["files"][0]["saved_name"] is None
+    assert rows[0]["saved_name_ciphertext"] == old
+
+
 def test_old_pin_plaintext_rename_paths_fail_before_verification(
     monkeypatch, rename_gate,
 ):

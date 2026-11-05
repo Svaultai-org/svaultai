@@ -3565,10 +3565,10 @@ def build_folder_tree(
     sanitised_path = _sanitize_relative_path(path) if path else None
     at_root = not sanitised_path
 
-    rows = [
-        _uploaded_file_for_wire(row)
-        for row in list_uploaded_files(vault_id, include_ciphertext=True)
-    ]
+    raw_rows = list_uploaded_files(vault_id, include_ciphertext=True)
+    if os.getenv("VAULTAI_ZK_FILE_V2_RENAME_ENABLED", "false").strip().lower() == "true":
+        raw_rows = _with_v2_file_name_overrides(vault_id, raw_rows)
+    rows = [_uploaded_file_for_wire(row) for row in raw_rows]
 
     folders_count: dict[str, int] = {}
     files_at_path: list[dict] = []
@@ -3622,6 +3622,33 @@ def build_folder_tree(
         "folders": folders,
         "files": files_at_path,
     }
+
+
+def _with_v2_file_name_overrides(vault_id: str, rows: list[dict]) -> list[dict]:
+    """Use the same encrypted V2 saved name in folders and manifest reads."""
+    ids = [str(row["id"]) for row in rows if row.get("id") is not None]
+    if not ids:
+        return rows
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT file_id, saved_name_override_ciphertext "
+            "FROM file_v2_records WHERE vault_id=%s AND file_id=ANY(%s) "
+            "AND saved_name_override_ciphertext IS NOT NULL",
+            (vault_id, ids),
+        )
+        overrides = {
+            str(row["file_id"]): row["saved_name_override_ciphertext"]
+            for row in (cur.fetchall() or [])
+        }
+    finally:
+        conn.close()
+    return [
+        {**row, "saved_name_ciphertext": overrides[str(row["id"])]}
+        if str(row.get("id")) in overrides else row
+        for row in rows
+    ]
 
 
 def _serialize_file_row(row: dict) -> dict:
