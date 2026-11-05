@@ -13558,6 +13558,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
 
     try {
+      if (kRequirePinFreeZkFiles && app.vaultHandle?.isNotEmpty == true &&
+          (!kEnableFileV2UiRead ||
+              zk_mvk_store.ZkActiveMvk.current() == null)) {
+        throw StateError('Unlock your private files on an updated app.');
+      }
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final result = kEnableFileV2UiRead &&
               zk_mvk_store.ZkActiveMvk.current() != null
@@ -14599,6 +14604,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
 
     final app = context.read<AppState>();
+    if (kRequirePinFreeZkFiles && app.vaultHandle?.isNotEmpty == true &&
+        (!kEnableFileV2UiRead ||
+            !kEnableNewFileV2Upload ||
+            zk_mvk_store.ZkActiveMvk.current() == null)) {
+      throw StateError('Private file upload requires an updated app.');
+    }
     if (kEnableNewFileV2Upload && !kEnableFileV2UiRead &&
         zk_mvk_store.ZkActiveMvk.current() != null) {
       throw StateError('Private file upload needs the V2 file reader');
@@ -15337,6 +15348,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required String? fallbackMime,
     bool requireReadyV2 = false,
   }) async {
+    final pinFreeZkFile = kRequirePinFreeZkFiles &&
+        context.read<AppState>().vaultHandle?.isNotEmpty == true;
+    if (pinFreeZkFile &&
+        (!kEnableFileV2UiRead || zk_mvk_store.ZkActiveMvk.current() == null)) {
+      throw StateError('Unlock your private files on an updated app.');
+    }
     if (requireReadyV2 &&
         (!kEnableFileV2UiRead || zk_mvk_store.ZkActiveMvk.current() == null)) {
       throw StateError('Private file access is unavailable.');
@@ -15344,6 +15361,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final availableV2 = kEnableFileV2UiRead &&
         zk_mvk_store.ZkActiveMvk.current() != null &&
         await client.isAvailableV2File(authToken: authToken, fileId: fileId);
+    if (!availableV2 && pinFreeZkFile && !requireReadyV2) {
+      throw StateError('This file needs private migration before opening.');
+    }
     if (requireReadyV2 && !availableV2) {
       throw StateError('Private file changed. Refresh and try again.');
     }
@@ -17851,7 +17871,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     var uploadedFileIds = <String>[];
     final hadAttachments = pendingAttachments.isNotEmpty;
-    final privateV2Upload = hadAttachments && kEnableNewFileV2Upload &&
+    final pinFreeZkUpload = hadAttachments && kRequirePinFreeZkFiles &&
+        app.vaultHandle?.isNotEmpty == true;
+    final privateV2Upload = hadAttachments &&
+        (kEnableNewFileV2Upload || pinFreeZkUpload) &&
         (zk_mvk_store.ZkActiveMvk.current() != null ||
             app.vaultHandle?.isNotEmpty == true);
     var uploadCommitted = false;

@@ -30,6 +30,20 @@ const bool kFileV2ReaderCapability = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// After the coordinated ZK file cutover, legacy file endpoints must never
+// receive a PIN from an unlocked MVK vault. Legacy-only vaults still use
+// these endpoints; the V2 and ciphertext migration routes do not call them.
+const bool kRequirePinFreeZkFiles = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_FILE_PIN_FREE_ONLY',
+  defaultValue: false,
+);
+
+void _rejectLegacyFilePinForActiveZk() {
+  if (kRequirePinFreeZkFiles && zk_mvk_store.ZkActiveMvk.current() != null) {
+    throw StateError('Private file needs migration before this action.');
+  }
+}
+
 // Coordinated rollout with VAULTAI_ZK_METADATA_INVENTORY_ENABLED on the API.
 // A missing keyless route must fail closed instead of sending a ZK PIN.
 const bool kEnableKeylessSavedItemRead = bool.fromEnvironment(
@@ -3495,6 +3509,7 @@ class VaultAIClient {
     String? contentSha256,
     String? duplicateAction,
   }) async {
+    _rejectLegacyFilePinForActiveZk();
     final uri = Uri.parse('$baseUrl/upload-file');
 
     final requestScope =
@@ -3957,6 +3972,7 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
+    _rejectLegacyFilePinForActiveZk();
     final uri = Uri.parse('$baseUrl/list-files');
 
     final response = await _sessionHttp.post(
@@ -4611,6 +4627,7 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
+    _rejectLegacyFilePinForActiveZk();
     final uri = Uri.parse('$baseUrl/download-file');
 
     final response = await _sessionHttp.post(
@@ -4655,6 +4672,7 @@ class VaultAIClient {
     String? relativePath,
     String? importId,
   }) async {
+    _rejectLegacyFilePinForActiveZk();
     final uri = Uri.parse('$baseUrl/upload-file/init');
     final body = <String, dynamic>{
       'vault_name': '',
@@ -4773,6 +4791,7 @@ class VaultAIClient {
     required String pin,
     required String fileId,
   }) async {
+    _rejectLegacyFilePinForActiveZk();
     final uri = Uri.parse('$baseUrl/upload-file/finalize');
 
     final response = await _sessionHttp.post(
@@ -4809,6 +4828,7 @@ class VaultAIClient {
     required String pin,
     required String fileId,
   }) async {
+    _rejectLegacyFilePinForActiveZk();
     final uri = Uri.parse('$baseUrl/upload-file/abort');
 
     final response = await _sessionHttp.post(
@@ -4845,6 +4865,7 @@ class VaultAIClient {
     required String pin,
     required String fileId,
   }) async {
+    _rejectLegacyFilePinForActiveZk();
     final uri = Uri.parse('$baseUrl/download-file/manifest');
 
     final response = await _sessionHttp.post(
