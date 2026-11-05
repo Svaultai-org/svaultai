@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from psycopg2.extras import RealDictCursor
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from auth_local import verify_session_token
 from device_gate import (
@@ -24,7 +24,7 @@ from device_monitor import (
     lock_and_validate_current_session,
     register_or_refresh,
 )
-from vault_core import get_db, verify_vault_pin
+from vault_core import get_db, is_vault_zk_adopted, verify_vault_pin
 
 
 logger = logging.getLogger(__name__)
@@ -429,7 +429,33 @@ class TargetDeviceRequest(BaseModel):
 
 
 class SelfApprovalRequest(BaseModel):
-    pin: str
+    model_config = ConfigDict(extra="forbid")
+    pin: Optional[str] = None
+    zk_proof_token: Optional[str] = None
+
+
+def _verify_self_approval_credential(
+    vault_id: str, device_id: str, principal, payload: SelfApprovalRequest,
+) -> None:
+    from routes.auth_zk_routes import (
+        consume_pending_self_approval_proof,
+        pending_device_proof_enabled,
+    )
+
+    if pending_device_proof_enabled() and is_vault_zk_adopted(vault_id):
+        if payload.pin is not None:
+            raise HTTPException(status_code=409, detail="zk_client_update_required")
+        if not payload.zk_proof_token:
+            raise HTTPException(status_code=400, detail="zk_proof_token_required")
+        consume_pending_self_approval_proof(
+            payload.zk_proof_token, principal, device_id,
+        )
+        return
+    if payload.zk_proof_token is not None:
+        raise HTTPException(status_code=409, detail="zk_pending_proof_not_enabled")
+    if not payload.pin:
+        raise HTTPException(status_code=400, detail="pin_required")
+    verify_vault_pin(vault_id, payload.pin)
 
 
 class CancelSelfApprovalRequest(BaseModel):
@@ -669,7 +695,9 @@ async def request_self_approval_endpoint(
             )
 
                                                                           
-        verify_vault_pin(vault_id, payload.pin)
+        _verify_self_approval_credential(
+            vault_id, device_id, principal, payload,
+        )
 
                                                                     
         cur.execute("SELECT (NOW() AT TIME ZONE 'UTC') AS now")
@@ -776,7 +804,9 @@ async def finalize_self_approval_endpoint(
             )
 
                                                                        
-        verify_vault_pin(vault_id, payload.pin)
+        _verify_self_approval_credential(
+            vault_id, device_id, principal, payload,
+        )
 
         cooldown = row.get("cooldown_until")
         if cooldown is None:
@@ -828,7 +858,7 @@ async def finalize_self_approval_endpoint(
     _notify(
         vault_id, "device_approved",
         title="Device approved",
-        body=f'"{_label_for(row)}" was approved via self-approval (PIN + cooldown).',
+        body=f'"{_label_for(row)}" was approved via self-approval (credential check + cooldown).',
         metadata={"device_id": device_id, "via": "self_approval"},
     )
 

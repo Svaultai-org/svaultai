@@ -231,6 +231,10 @@ VERIFY_SLOT_DOMAIN = b"zk-pin-reverify-slot/v1\x00"
 RECENT_PROOF_VERSION = "p1"
 RECENT_PROOF_DOMAIN = b"zk-recent-opaque-proof/v1\x00"
 RECENT_PROOF_TTL_SECONDS = 5 * 60
+PENDING_SLOT_VERSION = "pv1"
+PENDING_SLOT_DOMAIN = b"zk-pending-device-slot/v1\x00"
+PENDING_PROOF_VERSION = "pp1"
+PENDING_PROOF_DOMAIN = b"zk-pending-self-approval-proof/v1\x00"
 
 MAX_OPAQUE_MESSAGE_BYTES = 8 * 1024
 MAX_WRAPPED_BLOB_BYTES = 64 * 1024
@@ -255,6 +259,12 @@ def _verifier_free_registration_enabled() -> bool:
     """
     return os.getenv(
         "VAULTAI_ZK_VERIFIER_FREE_REGISTRATION_ENABLED", "false",
+    ).strip().lower() == "true"
+
+
+def pending_device_proof_enabled() -> bool:
+    return os.getenv(
+        "VAULTAI_ZK_PENDING_DEVICE_PROOF_ENABLED", "false",
     ).strip().lower() == "true"
 
 
@@ -956,7 +966,8 @@ def _zk_login_finalize_sync(
         # A re-verification slot must never be exchangeable for a fresh login
         # session through the older finalize endpoint.
         if payload.slot_id.startswith(
-            (f"{VERIFY_SLOT_VERSION}.", f"{RECENT_PROOF_VERSION}.", "e1.")
+            (f"{VERIFY_SLOT_VERSION}.", f"{RECENT_PROOF_VERSION}.",
+             f"{PENDING_SLOT_VERSION}.", f"{PENDING_PROOF_VERSION}.", "e1.")
         ):
             raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
         ke3 = _b64url_decode(
@@ -1129,6 +1140,85 @@ def _verify_slot_belongs_to_session(
         return False
 
 
+def _pending_device_bytes(device_id: str) -> bytes:
+    raw = device_id.encode("ascii")
+    if not 16 <= len(raw) <= 128 or not all(
+        chr(char).isalnum() or char in (45, 95) for char in raw
+    ):
+        raise ValueError("invalid pending device id")
+    return len(raw).to_bytes(2, "big") + raw
+
+
+def _require_pending_session_device(
+    request: Request, principal: SessionPrincipal,
+) -> str:
+    if not pending_device_proof_enabled():
+        raise HTTPException(status_code=404, detail="not_found")
+    device_id = (request.headers.get("x-device-id") or "").strip()
+    try:
+        _pending_device_bytes(device_id)
+    except (UnicodeEncodeError, ValueError):
+        raise HTTPException(status_code=403, detail="pending_device_required")
+    if principal.get("device_id") != device_id:
+        raise HTTPException(status_code=403, detail="session_device_mismatch")
+    with _zk_login_connection() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT status FROM trusted_devices "
+            "WHERE vault_id = %s AND device_id = %s",
+            (principal["vault_id"], device_id),
+        )
+        row = cur.fetchone()
+    if row is None or row["status"] != "pending":
+        raise HTTPException(status_code=403, detail="pending_device_required")
+    return device_id
+
+
+def _pending_slot_tag(
+    nonce: bytes, principal: SessionPrincipal, device_id: str,
+) -> bytes:
+    binding = (
+        PENDING_SLOT_DOMAIN
+        + uuid.UUID(str(principal["vault_id"])).bytes
+        + uuid.UUID(str(principal["token_id"])).bytes
+        + _pending_device_bytes(device_id)
+        + nonce
+    )
+    return hmac.new(_get_secret(), binding, hashlib.sha256).digest()
+
+
+def _new_pending_slot_id(
+    principal: SessionPrincipal, device_id: str,
+) -> str:
+    nonce = secrets.token_bytes(24)
+    tag = _pending_slot_tag(nonce, principal, device_id)
+    return (
+        f"{PENDING_SLOT_VERSION}."
+        f"{_b64url_encode(nonce)}.{_b64url_encode(tag)}"
+    )
+
+
+def _pending_slot_belongs_to_session_device(
+    slot_id: str, principal: SessionPrincipal, device_id: str,
+) -> bool:
+    try:
+        version, nonce_text, tag_text = slot_id.split(".")
+        if version != PENDING_SLOT_VERSION:
+            return False
+        nonce = _b64url_decode(
+            nonce_text, name="slot_id", max_bytes=24,
+        )
+        tag = _b64url_decode(
+            tag_text, name="slot_id", max_bytes=32,
+        )
+        if len(nonce) != 24 or len(tag) != 32:
+            return False
+        expected = _pending_slot_tag(nonce, principal, device_id)
+        return hmac.compare_digest(tag, expected)
+    except (ValueError, KeyError, HTTPException, UnicodeEncodeError):
+        return False
+
+
 class ZkVerifyInitRequest(BaseModel):
     vault_handle: str = Field(..., min_length=1, max_length=200)
     ke1: str = Field(..., min_length=1)
@@ -1156,6 +1246,7 @@ def _zk_verify_init_sync(
     payload: ZkVerifyInitRequest,
     request: Request,
     principal: SessionPrincipal,
+    pending_device_id: Optional[str] = None,
 ) -> ZkVerifyInitResponse:
     try:
         with _zk_login_phase("validation"):
@@ -1199,7 +1290,11 @@ def _zk_verify_init_sync(
         except OpaqueError:
             raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
 
-        slot_id = _new_verify_slot_id(principal)
+        slot_id = (
+            _new_pending_slot_id(principal, pending_device_id)
+            if pending_device_id is not None
+            else _new_verify_slot_id(principal)
+        )
         expires_at = datetime.now(timezone.utc) + timedelta(
             seconds=LOGIN_SLOT_TTL_SECONDS,
         )
@@ -1259,6 +1354,70 @@ def _new_recent_proof(
         f"{_b64url_encode(nonce)}.{_b64url_encode(tag)}",
         expires_at,
     )
+
+
+def _pending_proof_tag(
+    nonce: bytes, expires_at_ts: int,
+    principal: SessionPrincipal, device_id: str,
+) -> bytes:
+    binding = (
+        PENDING_PROOF_DOMAIN
+        + uuid.UUID(str(principal["vault_id"])).bytes
+        + uuid.UUID(str(principal["token_id"])).bytes
+        + _pending_device_bytes(device_id)
+        + expires_at_ts.to_bytes(8, "big")
+        + nonce
+    )
+    return hmac.new(_get_secret(), binding, hashlib.sha256).digest()
+
+
+def _new_pending_proof(
+    principal: SessionPrincipal, device_id: str,
+) -> tuple[str, datetime]:
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        seconds=RECENT_PROOF_TTL_SECONDS,
+    )
+    expires_at_ts = int(expires_at.timestamp())
+    nonce = secrets.token_bytes(24)
+    tag = _pending_proof_tag(
+        nonce, expires_at_ts, principal, device_id,
+    )
+    return (
+        f"{PENDING_PROOF_VERSION}.{expires_at_ts}."
+        f"{_b64url_encode(nonce)}.{_b64url_encode(tag)}",
+        expires_at,
+    )
+
+
+def _pending_proof_belongs_to_session_device(
+    proof_token: str, principal: SessionPrincipal, device_id: str,
+    *, now_ts: Optional[int] = None,
+) -> bool:
+    try:
+        if principal.get("device_id") != device_id:
+            return False
+        version, expiry_text, nonce_text, tag_text = proof_token.split(".")
+        if version != PENDING_PROOF_VERSION:
+            return False
+        expiry = int(expiry_text)
+        now = int(time.time()) if now_ts is None else now_ts
+        if expiry <= now or expiry > now + RECENT_PROOF_TTL_SECONDS:
+            return False
+        nonce = _b64url_decode(
+            nonce_text, name="proof_token", max_bytes=24,
+        )
+        tag = _b64url_decode(
+            tag_text, name="proof_token", max_bytes=32,
+        )
+        if len(nonce) != 24 or len(tag) != 32:
+            return False
+        expected = _pending_proof_tag(
+            nonce, expiry, principal, device_id,
+        )
+        return hmac.compare_digest(tag, expected)
+    except (ValueError, OverflowError, KeyError, HTTPException,
+            UnicodeEncodeError):
+        return False
 
 
 def _recent_proof_belongs_to_session(
@@ -1323,6 +1482,33 @@ def consume_recent_zk_proof(
         raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
 
 
+def consume_pending_self_approval_proof(
+    proof_token: str,
+    principal: SessionPrincipal,
+    device_id: str,
+) -> None:
+    """Consume an OPAQUE proof scoped only to the current pending device."""
+    if not _pending_proof_belongs_to_session_device(
+        proof_token, principal, device_id,
+    ):
+        raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
+    with _zk_login_connection() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            DELETE FROM vault_zk_login_slots
+            WHERE slot_id = %s AND vault_id = %s
+              AND expires_at > NOW()
+            RETURNING slot_id
+            """,
+            (proof_token, principal["vault_id"]),
+        )
+        consumed = cur.fetchone()
+        conn.commit()
+    if consumed is None:
+        raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
+
+
 @router.post("/auth/zk-verify-finalize", response_model=ZkVerifyFinalizeResponse)
 async def zk_verify_finalize(
     payload: ZkVerifyFinalizeRequest,
@@ -1340,6 +1526,7 @@ def _zk_verify_finalize_sync(
     payload: ZkVerifyFinalizeRequest,
     request: Request,
     principal: SessionPrincipal,
+    pending_device_id: Optional[str] = None,
 ) -> ZkVerifyFinalizeResponse:
     with _zk_login_phase("limiter"):
         enforce_login_finalize_rate_limit(request)
@@ -1347,7 +1534,13 @@ def _zk_verify_finalize_sync(
         ke3 = _b64url_decode(
             payload.ke3, name="ke3", max_bytes=MAX_OPAQUE_MESSAGE_BYTES,
         )
-        if not _verify_slot_belongs_to_session(payload.slot_id, principal):
+        slot_valid = (
+            _pending_slot_belongs_to_session_device(
+                payload.slot_id, principal, pending_device_id,
+            ) if pending_device_id is not None
+            else _verify_slot_belongs_to_session(payload.slot_id, principal)
+        )
+        if not slot_valid:
             raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
     with _zk_login_connection() as conn:
         with _zk_login_phase("db"):
@@ -1372,7 +1565,11 @@ def _zk_verify_finalize_sync(
             raise HTTPException(status_code=503, detail="zk auth not available")
         except OpaqueError:
             raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
-        proof_token, proof_expires_at = _new_recent_proof(principal)
+        proof_token, proof_expires_at = (
+            _new_pending_proof(principal, pending_device_id)
+            if pending_device_id is not None
+            else _new_recent_proof(principal)
+        )
         with _zk_login_phase("db"):
             cur = conn.cursor()
             cur.execute(
@@ -1388,6 +1585,40 @@ def _zk_verify_finalize_sync(
         verified=True,
         proof_token=proof_token,
         proof_expires_at=proof_expires_at,
+    )
+
+
+@router.post(
+    "/auth/zk-pending-verify-init", response_model=ZkVerifyInitResponse,
+)
+async def zk_pending_verify_init(
+    payload: ZkVerifyInitRequest,
+    request: Request,
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> ZkVerifyInitResponse:
+    """OPAQUE recheck for the session's own pending device only."""
+    device_id = await run_in_threadpool(
+        _require_pending_session_device, request, principal,
+    )
+    return await run_in_threadpool(
+        _zk_verify_init_sync, payload, request, principal, device_id,
+    )
+
+
+@router.post(
+    "/auth/zk-pending-verify-finalize",
+    response_model=ZkVerifyFinalizeResponse,
+)
+async def zk_pending_verify_finalize(
+    payload: ZkVerifyFinalizeRequest,
+    request: Request,
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> ZkVerifyFinalizeResponse:
+    device_id = await run_in_threadpool(
+        _require_pending_session_device, request, principal,
+    )
+    return await run_in_threadpool(
+        _zk_verify_finalize_sync, payload, request, principal, device_id,
     )
 
 
