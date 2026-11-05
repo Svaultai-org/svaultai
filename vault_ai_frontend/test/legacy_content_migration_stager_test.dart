@@ -195,6 +195,8 @@ void main() {
     final calls = <String>[];
     final fileReadOrder = <String>[];
     final manifestLookups = <String>[];
+    var inFlightLookups = 0;
+    var maxInFlightLookups = 0;
     final result = await LegacyContentMigrationStager(
       enabled: true,
       prioritizeUnstagedFiles: true,
@@ -211,11 +213,17 @@ void main() {
             'ciphertext_chars': ciphertext.length,
             'file_size': 1,
           },
+          <String, dynamic>{
+            'file_id': 'synthetic-new-two',
+            'ciphertext_chars': ciphertext.length,
+            'file_size': 1,
+          },
         ],
         itemCiphertexts: const <int, String>{},
         fileCiphertexts: <String, String>{
           'synthetic-existing': ciphertext,
           'synthetic-new': ciphertext,
+          'synthetic-new-two': ciphertext,
         },
         calls: calls,
         fileReadOrder: fileReadOrder,
@@ -227,18 +235,34 @@ void main() {
         expect(method, 'GET');
         expect(path, endsWith('/manifest'));
         manifestLookups.add(path);
+        inFlightLookups++;
+        if (inFlightLookups > maxInFlightLookups) {
+          maxInFlightLookups = inFlightLookups;
+        }
+        // The second response completes first, but file processing must keep
+        // the original order within the unstaged and existing groups.
+        await Future<void>.delayed(Duration(
+          milliseconds: path.contains('/synthetic-existing/') ? 10 : 1,
+        ));
+        inFlightLookups--;
         if (path.contains('/synthetic-new/')) {
+          return const MigrationReply(404, {'detail': 'file_v2_not_found'});
+        }
+        if (path.contains('/synthetic-new-two/')) {
           return const MigrationReply(404, {'detail': 'file_v2_not_found'});
         }
         return const MigrationReply(200, {'manifest_ciphertext': 'synthetic'});
       },
     ).stageAndVerify();
-    expect(manifestLookups, hasLength(2));
-    expect(fileReadOrder, <String>['synthetic-new', 'synthetic-existing']);
-    // Both synthetic sources deliberately lack a name, so neither is counted
+    expect(manifestLookups, hasLength(3));
+    expect(maxInFlightLookups, 2);
+    expect(fileReadOrder, <String>[
+      'synthetic-new', 'synthetic-new-two', 'synthetic-existing',
+    ]);
+    // All synthetic sources deliberately lack a name, so none is counted
     // as verified and no legacy source is retired.
     expect(result.filesVerified, 0);
-    expect(result.filesDeferredForUnreadableSource, 2);
+    expect(result.filesDeferredForUnreadableSource, 3);
   });
 
   test('unexpected manifest preflight failure stops before source export',
@@ -845,6 +869,9 @@ void main() {
     Map<String, dynamic>? manifest;
     final chunks = <int, String>{};
     var interruptSecondChunkOnce = true;
+    var inFlightChunkGets = 0;
+    var maxInFlightChunkGets = 0;
+    final readbackCompletions = <int>[];
     final stager = LegacyContentMigrationStager(
       enabled: true,
       export: _export(
@@ -928,6 +955,19 @@ void main() {
         }
         if (path.contains('/chunk/') && method == 'GET') {
           final index = int.parse(path.split('/').last);
+          final readbackPhase =
+              chunks.length == (manifest?['chunk_count'] ?? -1);
+          inFlightChunkGets++;
+          if (inFlightChunkGets > maxInFlightChunkGets) {
+            maxInFlightChunkGets = inFlightChunkGets;
+          }
+          await Future<void>.delayed(Duration(
+            milliseconds: readbackPhase && index == 0
+                ? 10
+                : index == 1 && !readbackPhase ? 10 : 1,
+          ));
+          inFlightChunkGets--;
+          if (readbackPhase) readbackCompletions.add(index);
           final chunk = chunks[index];
           return chunk == null
               ? const MigrationReply(
@@ -940,6 +980,11 @@ void main() {
         }
         if (path == '/vault/file-v2/chunk' && method == 'PUT') {
           expect(body!.containsKey('pin'), isFalse);
+          if (body['chunk_index'] == 0 && interruptSecondChunkOnce) {
+            // The paired second write fails first. The stager must await this
+            // idempotent write before reporting failure or starting recovery.
+            await Future<void>.delayed(const Duration(milliseconds: 20));
+          }
           if (body['chunk_index'] == 1 && interruptSecondChunkOnce) {
             interruptSecondChunkOnce = false;
             throw StateError('Synthetic interrupted upload');
@@ -953,6 +998,11 @@ void main() {
     );
     await expectLater(stager.stageAndVerify(), throwsA(isA<StateError>()));
     expect(chunks.length, 1);
+    expect(
+      calls.where((call) => call.startsWith(
+          'GET /vault/file-v2/synthetic-file/chunk/')),
+      isEmpty,
+    );
     final second = await stager.stageAndVerify();
     expect(second.filesVerified, 1);
     expect(chunks.length, 2);
@@ -960,6 +1010,9 @@ void main() {
     final writes = calls.where((c) => c == 'PUT /vault/file-v2/chunk').length;
     final third = await stager.stageAndVerify();
     expect(third.filesVerified, 1);
+    expect(maxInFlightChunkGets, 2);
+    expect(readbackCompletions.sublist(readbackCompletions.length - 2),
+        <int>[1, 0]);
     expect(calls.where((c) => c == 'PUT /vault/file-v2/chunk').length, writes);
     expect(calls.any((c) => c.contains('retire')), isFalse);
     final manifestPlain = jsonDecode(utf8.decode(await aesGcmUnwrap(

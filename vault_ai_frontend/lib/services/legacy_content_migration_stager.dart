@@ -70,6 +70,9 @@ class LegacyContentMigrationStager {
   // and fetched readback chunks at once. Keep automatic unlock-time work
   // below a conservative per-record memory budget until it streams.
   static const int maxAutomaticCiphertextChars = 8 * 1024 * 1024;
+  // Only independent V2 status/chunk requests run together. Export grant
+  // pages, proof operations, and whole-file verification remain sequential.
+  static const int maxConcurrentV2Requests = 2;
 
   final bool enabled;
   final bool recoveryEnabled;
@@ -181,19 +184,48 @@ class LegacyContentMigrationStager {
           chars is! int || chars <= 0) {
         throw const FormatException('Invalid legacy file listing');
       }
-      final response = await request(
-        'GET', '/vault/file-v2/${Uri.encodeComponent(id)}/manifest',
-      );
-      if (response.statusCode == 404 &&
-          _detailCode(response) == 'file_v2_not_found') {
-        unstaged.add(file);
-      } else {
+    }
+    final hasManifest = await _boundedV2Requests<bool>(
+      files.length,
+      (index) async {
+        final id = files[index]['file_id'] as String;
+        final response = await request(
+          'GET', '/vault/file-v2/${Uri.encodeComponent(id)}/manifest',
+        );
+        if (response.statusCode == 404 &&
+            _detailCode(response) == 'file_v2_not_found') {
+          return false;
+        }
         _require200(response);
         _requireMap(response);
-        existing.add(file);
-      }
+        return true;
+      },
+    );
+    for (var index = 0; index < files.length; index++) {
+      (hasManifest[index] ? existing : unstaged).add(files[index]);
     }
     return <Map<String, dynamic>>[...unstaged, ...existing];
+  }
+
+  Future<List<T>> _boundedV2Requests<T>(
+    int count,
+    Future<T> Function(int index) task,
+  ) async {
+    final results = <T>[];
+    for (var start = 0; start < count; start += maxConcurrentV2Requests) {
+      final end = start + maxConcurrentV2Requests < count
+          ? start + maxConcurrentV2Requests
+          : count;
+      results.addAll(await Future.wait<T>(
+        <Future<T>>[
+          for (var index = start; index < end; index++) task(index),
+        ],
+        // A failed V2 write must not start a recovery reset while the paired
+        // idempotent request is still in flight.
+        eagerError: false,
+      ));
+    }
+    return results;
   }
 
   Future<bool> _stageItem(Map<String, dynamic> record) async {
@@ -468,8 +500,10 @@ class LegacyContentMigrationStager {
         }.contains(_detailCode(staged))) {
       final manifestPath = '/vault/file-v2/$encodedId/manifest';
       final manifest = await request('GET', manifestPath);
+      var manifestWasAbsent = false;
       if (manifest.statusCode == 404 &&
           _detailCode(manifest) == 'file_v2_not_found') {
+        manifestWasAbsent = true;
         final ack =
             await request('POST', '/vault/file-v2/manifest', <String, dynamic>{
               ...prepared.toManifestBody(),
@@ -509,21 +543,38 @@ class LegacyContentMigrationStager {
           throw const _StageConflict();
         }
       }
-      for (var i = 0; i < prepared.chunkCiphertexts.length; i++) {
-        final chunkPath = '/vault/file-v2/$encodedId/chunk/$i';
-        final existing = await request('GET', chunkPath);
-        if (existing.statusCode == 404 &&
-            _detailCode(existing) == 'file_v2_chunk_not_found') {
-          final ack = await request(
-            'PUT',
-            '/vault/file-v2/chunk',
-            Map<String, dynamic>.from(prepared.chunkBody(i)),
-          );
-          _require200(ack);
-        } else {
-          _require200(existing);
-        }
-      }
+      await _boundedV2Requests<bool>(
+        prepared.chunkCiphertexts.length,
+        (i) async {
+          if (manifestWasAbsent) {
+            // The manifest was missing before this pass. PUT is idempotent
+            // and the server compares exact ciphertext on conflict, so a
+            // speculative GET adds a round trip without improving safety.
+            // The full GET/readback pass below still verifies every byte.
+            final ack = await request(
+              'PUT',
+              '/vault/file-v2/chunk',
+              Map<String, dynamic>.from(prepared.chunkBody(i)),
+            );
+            _require200(ack);
+          } else {
+            final chunkPath = '/vault/file-v2/$encodedId/chunk/$i';
+            final existing = await request('GET', chunkPath);
+            if (existing.statusCode == 404 &&
+                _detailCode(existing) == 'file_v2_chunk_not_found') {
+              final ack = await request(
+                'PUT',
+                '/vault/file-v2/chunk',
+                Map<String, dynamic>.from(prepared.chunkBody(i)),
+              );
+              _require200(ack);
+            } else {
+              _require200(existing);
+            }
+          }
+          return true;
+        },
+      );
       staged = await request('GET', stagePath);
     }
     if (_hasExtraLegacyFileData(staged)) {
@@ -545,21 +596,23 @@ class LegacyContentMigrationStager {
         readback['chunk_count'] != prepared.chunkCiphertexts.length) {
       throw const _StageConflict();
     }
-    final chunks = <String>[];
-    for (var i = 0; i < prepared.chunkCiphertexts.length; i++) {
-      final response = await request(
-        'GET',
-        '/vault/file-v2/$encodedId/chunk/$i',
-      );
-      _require200(response);
-      final chunk = _requireMap(response);
-      if (chunk['file_id'] != id ||
-          chunk['chunk_index'] != i ||
-          chunk['ciphertext'] is! String) {
-        throw const FormatException('Invalid staged file chunk');
-      }
-      chunks.add(chunk['ciphertext'] as String);
-    }
+    final chunks = await _boundedV2Requests<String>(
+      prepared.chunkCiphertexts.length,
+      (i) async {
+        final response = await request(
+          'GET',
+          '/vault/file-v2/$encodedId/chunk/$i',
+        );
+        _require200(response);
+        final chunk = _requireMap(response);
+        if (chunk['file_id'] != id ||
+            chunk['chunk_index'] != i ||
+            chunk['ciphertext'] is! String) {
+          throw const FormatException('Invalid staged file chunk');
+        }
+        return chunk['ciphertext'] as String;
+      },
+    );
     if (!await codec.verifyStagedFile(
       fileId: id,
       legacyCiphertext: legacy,
