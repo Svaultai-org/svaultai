@@ -19,8 +19,10 @@ _METHOD = re.compile(
     r"^(?:  )?(?:Future(?:<[^)]*>)?|Map<[^)]*>|void|String|bool|int)"
     r"\s+([A-Za-z_]\w*)\s*\("
 )
-_JSON_PIN_KEY = re.compile(r"['\"]pin['\"]\s*:\s*pin\b")
-_FORM_PIN_KEY = re.compile(r"\.fields\[['\"]pin['\"]\]\s*=\s*pin\b")
+# Match the serialized field regardless of the Dart variable name. A future
+# refactor from `pin` to `currentPin` must not make this gate falsely green.
+_JSON_PIN_KEY = re.compile(r"['\"]pin['\"]\s*:")
+_FORM_PIN_KEY = re.compile(r"\.fields\[['\"]pin['\"]\]\s*=")
 
 
 def _pin_request_sinks() -> list[tuple[int, str]]:
@@ -33,6 +35,11 @@ def _pin_request_sinks() -> list[tuple[int, str]]:
         if _JSON_PIN_KEY.search(line) or _FORM_PIN_KEY.search(line):
             sinks.append((line_number, method))
     return sinks
+
+
+def test_pin_field_scan_survives_variable_rename():
+    assert _JSON_PIN_KEY.search("'pin': currentPinOrThrow()")
+    assert _FORM_PIN_KEY.search("request.fields['pin'] = cachedPin")
 
 
 def test_zk_client_has_no_raw_pin_api_sink_outside_legacy_migration():

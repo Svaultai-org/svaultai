@@ -132,6 +132,8 @@ class _LegacyDeleteCursor:
     def execute(self, sql, params):
         normalized = " ".join(sql.lower().split())
         self.queries.append(normalized)
+        if normalized.startswith("select pg_advisory_xact_lock"):
+            return
         if "from file_v2_records" not in normalized:
             raise AssertionError("legacy route attempted to mutate a file with V2 copy")
 
@@ -158,9 +160,10 @@ class _LegacyDeleteDb:
 
 
 def _assert_legacy_delete_refused(db):
-    assert len(db.cur.queries) == 1
-    assert "from file_v2_records" in db.cur.queries[0]
-    assert "for update" in db.cur.queries[0]
+    assert len(db.cur.queries) == 2
+    assert "pg_advisory_xact_lock" in db.cur.queries[0]
+    assert "from file_v2_records" in db.cur.queries[1]
+    assert "for update" in db.cur.queries[1]
     assert db.commits == 0
 
 
