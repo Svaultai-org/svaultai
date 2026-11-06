@@ -936,18 +936,40 @@ const bool kEnableZkImportSessionActions = bool.fromEnvironment(
 );
 
 Future<String?> _promptForActionPin(BuildContext context, String title) async {
-  final controller = TextEditingController();
-  final formKey = GlobalKey<FormState>();
-  try {
-    return await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(title),
+  return showDialog<String>(
+    context: context,
+    builder: (_) => ZkActionPinDialog(title: title),
+  );
+}
+
+class ZkActionPinDialog extends StatefulWidget {
+  const ZkActionPinDialog({super.key, required this.title});
+
+  final String title;
+
+  @override
+  State<ZkActionPinDialog> createState() => _ZkActionPinDialogState();
+}
+
+class _ZkActionPinDialogState extends State<ZkActionPinDialog> {
+  final _controller = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+
+  @override
+  void dispose() {
+    _controller.clear();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(widget.title),
         content: Form(
-          key: formKey,
+          key: _formKey,
           child: TextFormField(
             key: const Key('zk_action_pin_field'),
-            controller: controller,
+            controller: _controller,
             autofillHints: kIsWeb ? null : const <String>[],
             obscureText: true,
             keyboardType: TextInputType.number,
@@ -963,25 +985,20 @@ Future<String?> _promptForActionPin(BuildContext context, String title) async {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
+            onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
           FilledButton(
             onPressed: () {
-              if (!(formKey.currentState?.validate() ?? false)) return;
-              final pin = controller.text.trim();
-              controller.clear();
-              Navigator.pop(dialogContext, pin);
+              if (!(_formKey.currentState?.validate() ?? false)) return;
+              final pin = _controller.text.trim();
+              _controller.clear();
+              Navigator.pop(context, pin);
             },
             child: const Text('Continue'),
           ),
         ],
-      ),
-    );
-  } finally {
-    controller.clear();
-    controller.dispose();
-  }
+      );
 }
 
 Future<String> _zkActionProof(
