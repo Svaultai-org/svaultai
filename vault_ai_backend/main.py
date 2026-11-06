@@ -738,6 +738,7 @@ CORS_ALLOWED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 
 from signed_private_chat_prebody_gate import SignedPrivateChatPreBodyGate
 from strict_raw_pin_ingress_gate import StrictRawPinIngressGate
+from signed_offer_prebody_pin_fence import SignedOfferPrebodyPinFence
 
 # Inert for ordinary sessions. Keep CORS outside this gate so a rejected
 # browser request receives the usual response headers without body parsing.
@@ -746,6 +747,10 @@ app.add_middleware(SignedPrivateChatPreBodyGate)
 # Default-off strict cutover. CORS remains outside this gate so browsers see
 # the upgrade response; the outer logging/size middleware reads headers only.
 app.add_middleware(StrictRawPinIngressGate)
+
+# The currently deployed signed-offer fence remains active during the
+# opt-in migration and the later strict cutover.
+app.add_middleware(SignedOfferPrebodyPinFence)
 
 app.add_middleware(
     CORSMiddleware,
