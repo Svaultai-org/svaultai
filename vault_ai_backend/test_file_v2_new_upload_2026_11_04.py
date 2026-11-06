@@ -131,7 +131,8 @@ class _Db:
             "lifecycle_state": "file_v2_written",
             "verification_state": "not_verified",
         }
-        self.chunks = [{"chunk_index": 0, "ciphertext_bytes": 33}]
+        self.chunks = [{"chunk_index": 0,
+                        "ciphertext_bytes": 5 + route.AES_GCM_FRAME_OVERHEAD}]
         self.marker = None
         self.vault_bytes = 100
         self.account_bytes = 100
@@ -200,7 +201,8 @@ def test_publishes_exact_ciphertext_once_and_retries_without_double_charge(harne
 @pytest.mark.parametrize("change,detail", [
     (lambda db: db.chunks.clear(), "file_v2_chunks_incomplete"),
     (lambda db: db.chunks.__setitem__(0, {"chunk_index": 0,
-                                        "ciphertext_bytes": 34}),
+                                        "ciphertext_bytes": 5 +
+                                        route.AES_GCM_FRAME_OVERHEAD + 1}),
      "file_v2_invalid_chunk_size"),
     (lambda db: db.record.__setitem__("manifest_ciphertext", b"x" * 65537),
      "file_v2_invalid_framing"),
