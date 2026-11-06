@@ -1,0 +1,174 @@
+"""Real-PostgreSQL regression for the UUID/text file inventory join.
+
+Set TEST_DATABASE_URL to a disposable database. No production connection is
+accepted by the test runner. Tables are temporary and disappear on close.
+"""
+
+from __future__ import annotations
+
+import os
+import uuid
+
+import psycopg2
+import pytest
+
+from routes import auth_zk_routes, zk_metadata_inventory_routes
+
+
+@pytest.mark.skipif(
+    not os.getenv("TEST_DATABASE_URL"), reason="disposable PostgreSQL required",
+)
+def test_file_list_offer_and_inventory_match_schema_0056_types(monkeypatch):
+    conn = psycopg2.connect(os.environ["TEST_DATABASE_URL"])
+    vault_id = str(uuid.uuid4())
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TEMP TABLE uploaded_files (
+                id text PRIMARY KEY, vault_id uuid NOT NULL,
+                file_size bigint, storage_mode text, upload_status text,
+                chunk_size integer, chunk_count integer,
+                needs_naming boolean, autosaved_secret boolean,
+                file_name_ciphertext bytea, saved_name_ciphertext bytea,
+                content_type_ciphertext bytea, detected_type_ciphertext bytea,
+                detected_service_ciphertext bytea, asset_type_ciphertext bytea,
+                encrypted_file_data text, created_at timestamptz,
+                saved_name text, content_type text, detected_type text,
+                detected_service text, asset_type text, relative_path text
+            )
+        """)
+        cur.execute("""
+            CREATE TEMP TABLE file_v2_records (
+                file_id text, vault_id text,
+                saved_name_override_ciphertext bytea,
+                lifecycle_state text, verification_state text,
+                name_version integer, migrating_legacy boolean
+            )
+        """)
+        cur.execute("""
+            INSERT INTO uploaded_files (
+                id, vault_id, file_size, storage_mode, upload_status,
+                needs_naming, autosaved_secret, file_name_ciphertext,
+                encrypted_file_data, created_at
+            ) VALUES (%s, %s::uuid, 14, 'inline', 'complete',
+                      true, false, %s, 'ciphertext', NOW())
+        """, ("synthetic-file", vault_id, b"synthetic-encrypted-label"))
+        cur.execute("""
+            INSERT INTO uploaded_files (
+                id, vault_id, file_size, storage_mode, upload_status,
+                needs_naming, autosaved_secret, file_name_ciphertext,
+                encrypted_file_data, created_at
+            ) VALUES (%s, %s::uuid, 14, 'inline', 'incomplete',
+                      false, false, NULL, 'ciphertext', NOW())
+        """, ("unfinished-file", vault_id))
+        cur.execute("""
+            INSERT INTO file_v2_records (
+                file_id, vault_id, lifecycle_state, verification_state,
+                migrating_legacy
+            ) VALUES (%s, %s, 'file_v2_written', 'not_verified', true)
+        """, ("synthetic-file", vault_id))
+    conn.commit()
+
+    try:
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is True
+        assert auth_zk_routes._pin_free_legacy_file_download_ready(
+            conn, vault_id,
+        ) is True
+        monkeypatch.setenv("VAULTAI_ZK_METADATA_INVENTORY_ENABLED", "true")
+        monkeypatch.setattr(
+            zk_metadata_inventory_routes, "is_vault_zk_adopted",
+            lambda candidate: candidate == vault_id,
+        )
+        monkeypatch.setattr(
+            zk_metadata_inventory_routes, "get_db", lambda: conn,
+        )
+        result = zk_metadata_inventory_routes.file_metadata_inventory(
+            after_file_id="", limit=100,
+            principal={"vault_id": vault_id},
+        )
+        assert len(result["records"]) == 1
+        assert result["records"][0]["file_id"] == "synthetic-file"
+        assert result["records"][0]["needs_naming"] is True
+        assert result["records"][0]["lifecycle_state"] == "file_v2_written"
+    finally:
+        if not conn.closed:
+            conn.close()
+
+
+@pytest.mark.skipif(
+    not os.getenv("TEST_DATABASE_URL"), reason="disposable PostgreSQL required",
+)
+def test_file_list_offer_rejects_missing_labels_and_new_v2(monkeypatch):
+    conn = psycopg2.connect(os.environ["TEST_DATABASE_URL"])
+    vault_id = str(uuid.uuid4())
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TEMP TABLE uploaded_files (
+                    vault_id uuid, upload_status text, file_size bigint,
+                    storage_mode text, encrypted_file_data text,
+                    chunk_size integer, chunk_count integer,
+                    file_name_ciphertext bytea, saved_name text,
+                    saved_name_ciphertext bytea, content_type text,
+                    content_type_ciphertext bytea, detected_type text,
+                    detected_type_ciphertext bytea, detected_service text,
+                    detected_service_ciphertext bytea, asset_type text,
+                    asset_type_ciphertext bytea, relative_path text
+                )
+            """)
+            cur.execute("""
+                CREATE TEMP TABLE file_v2_records (
+                    vault_id text, verification_state text,
+                    migrating_legacy boolean
+                )
+            """)
+            cur.execute("""
+                INSERT INTO uploaded_files
+                    (vault_id, upload_status, file_size, storage_mode,
+                     encrypted_file_data)
+                VALUES (%s::uuid, 'complete', 14, 'inline', 'ciphertext')
+            """, (vault_id,))
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is False
+        assert auth_zk_routes._pin_free_legacy_file_download_ready(
+            conn, vault_id,
+        ) is True
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE uploaded_files
+                   SET storage_mode='chunks', file_size=3,
+                       chunk_size=16777216, chunk_count=1,
+                       encrypted_file_data=NULL
+            """)
+        assert auth_zk_routes._pin_free_legacy_file_download_ready(
+            conn, vault_id,
+        ) is True
+        with conn.cursor() as cur:
+            cur.execute("UPDATE uploaded_files SET chunk_size=16777217")
+        assert auth_zk_routes._pin_free_legacy_file_download_ready(
+            conn, vault_id,
+        ) is False
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE uploaded_files
+                   SET storage_mode='inline', file_size=14,
+                       encrypted_file_data='ciphertext'
+            """)
+        with conn.cursor() as cur:
+            cur.execute("UPDATE uploaded_files SET file_name_ciphertext=%s",
+                        (b"synthetic-label",))
+            cur.execute("""
+                INSERT INTO file_v2_records
+                    (vault_id, verification_state, migrating_legacy)
+                VALUES (%s, 'not_verified', false)
+            """, (vault_id,))
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is False
+        assert auth_zk_routes._pin_free_legacy_file_download_ready(
+            conn, vault_id,
+        ) is False
+    finally:
+        conn.close()

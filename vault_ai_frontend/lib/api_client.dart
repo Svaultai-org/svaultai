@@ -14,6 +14,8 @@ import 'services/memory_title_identity.dart';
 import 'services/saved_file_rename.dart';
 import 'services/session_termination.dart' as st;
 import 'services/zk_pin_free_item_read_session.dart';
+import 'services/zk_pin_free_file_session.dart';
+import 'services/zk_proof_token_guard.dart';
 import 'services/saved_item_mutation_feedback.dart';
 export 'services/saved_item_mutation_feedback.dart'
     show SavedItemUpdateRequiredException, savedItemUpdateRequiredMessage;
@@ -4208,6 +4210,20 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
+    if (ZkPinFreeFileSession.instance.listOfferedForToken(authToken)) {
+      if (zk_mvk_store.ZkActiveMvk.current() == null) {
+        throw StateError('Vault encryption key is unavailable');
+      }
+      final result = await listZkFileMetadata(authToken: authToken);
+      final files = (result['files'] as List).cast<Map<String, dynamic>>();
+      files.sort((a, b) {
+        final aTime = DateTime.tryParse('${a['created_at']}');
+        final bTime = DateTime.tryParse('${b['created_at']}');
+        return (bTime ?? DateTime.fromMillisecondsSinceEpoch(0))
+            .compareTo(aTime ?? DateTime.fromMillisecondsSinceEpoch(0));
+      });
+      return result;
+    }
     _rejectLegacyFilePinForActiveZk();
     final uri = Uri.parse('$baseUrl/list-files');
 
@@ -4285,7 +4301,7 @@ class VaultAIClient {
               raw['verification_state'] == 'client_verified',
           'v2_ready': raw['lifecycle_state'] == 'client_v2_ready' &&
               raw['verification_state'] == 'client_verified',
-          'needs_naming': false,
+          'needs_naming': raw['needs_naming'] == true,
         });
       }
       if (decoded['has_more'] == false) {
@@ -5092,6 +5108,46 @@ class VaultAIClient {
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) {
       throw Exception('Invalid abort response format');
+    }
+    return decoded;
+  }
+
+  /// Proof-bound token for encrypted older chunks; no PIN or plaintext name.
+  Future<Map<String, dynamic>> getZkLegacyChunkedManifest({
+    required String authToken,
+    required String fileId,
+    required String zkProofToken,
+    void Function()? accessGuard,
+  }) async {
+    if (fileId.isEmpty || fileId.length > 128) {
+      throw const FormatException('Invalid older file identity');
+    }
+    rejectPinShapedZkProof(zkProofToken);
+    accessGuard?.call();
+    final response = await _sessionHttpWithGuard(accessGuard).post(
+      Uri.parse('$baseUrl/vault/legacy-file/chunked/manifest'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(<String, String>{
+        'file_id': fileId,
+        'zk_proof_token': zkProofToken,
+      }),
+    );
+    accessGuard?.call();
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw StateError('Older file download unavailable (${response.statusCode})');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic> ||
+        decoded['file_id'] != fileId ||
+        decoded['storage_mode'] != 'chunks' ||
+        decoded['file_size'] is! int ||
+        decoded['chunk_size'] is! int ||
+        decoded['chunk_count'] is! int ||
+        decoded['download_token'] is! String ||
+        (decoded['download_token'] as String).isEmpty) {
+      throw const FormatException('Invalid older chunked-file manifest');
     }
     return decoded;
   }

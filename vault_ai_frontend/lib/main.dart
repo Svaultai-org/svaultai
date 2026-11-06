@@ -61,6 +61,9 @@ import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/vault_key_hierarchy.dart' as vk_hier;
 import 'services/zk_auth_service.dart';
 import 'services/zk_pin_free_item_read_session.dart';
+import 'services/zk_pin_free_file_session.dart';
+import 'services/legacy_file_local_download.dart' as legacy_file_download;
+import 'services/legacy_chunked_local_download.dart' as legacy_chunked_download;
 import 'services/auth_retry.dart';
 import 'services/billing_me_diagnostic.dart';
 import 'services/upload_queue.dart';
@@ -1491,6 +1494,7 @@ class AppState extends ChangeNotifier {
     _disposed = true;
     _clearLegacySavedItemReadSession();
     ZkPinFreeItemReadSession.instance.clear();
+    ZkPinFreeFileSession.instance.clear();
     _sessionEpoch++;
     _sessionProbeEpoch++;
     _sessionCheckRequestedAfterPending = false;
@@ -2278,6 +2282,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> hydrate() async {
     ZkPinFreeItemReadSession.instance.clear();
+    ZkPinFreeFileSession.instance.clear();
     final epoch = _sessionEpoch;
     final sp = await SharedPreferences.getInstance();
     // Older web builds stored auth identity in localStorage. Web sessions now
@@ -2356,6 +2361,8 @@ class AppState extends ChangeNotifier {
     String? displayNameValue,
     String? vaultHandleValue,
     bool pinFreeLegacyItemRead = false,
+    bool pinFreeLegacyFileList = false,
+    bool pinFreeLegacyFileDownload = false,
   }) async {
     // Bind before the first await. Late responses/cleanup from an old login
     // cannot revoke, resurrect, or overwrite this replacement session.
@@ -2367,6 +2374,13 @@ class AppState extends ChangeNotifier {
     ZkPinFreeItemReadSession.instance.bind(
       sessionToken: token,
       offered: pinFreeLegacyItemRead && vaultHandleValue?.isNotEmpty == true,
+    );
+    ZkPinFreeFileSession.instance.bind(
+      sessionToken: token,
+      listOffered: pinFreeLegacyFileList &&
+          vaultHandleValue?.isNotEmpty == true,
+      downloadOffered: pinFreeLegacyFileDownload &&
+          vaultHandleValue?.isNotEmpty == true,
     );
     _signedOutCode = null;
     _sessionVerificationBlocked = false;
@@ -2408,6 +2422,7 @@ class AppState extends ChangeNotifier {
   }) async {
     PrivateZkPinTransportSession.clear();
     ZkPinFreeItemReadSession.instance.clear();
+    ZkPinFreeFileSession.instance.clear();
     _clearLegacySavedItemReadSession();
     final departingToken = sessionToken;
     final epoch = ++_sessionEpoch;
@@ -2791,6 +2806,9 @@ class AppState extends ChangeNotifier {
         displayNameValue: activeDisplay,
         vaultHandleValue: activeVaultHandle,
         pinFreeLegacyItemRead: zkRestore?.pinFreeLegacyItemRead ?? false,
+        pinFreeLegacyFileList: zkRestore?.pinFreeLegacyFileList ?? false,
+        pinFreeLegacyFileDownload:
+            zkRestore?.pinFreeLegacyFileDownload ?? false,
       );
 
       if (kPrivateOnlyUnlockEnabled) {
@@ -6044,6 +6062,8 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           vaultHandleValue: loginResult.vaultHandle,
           displayNameValue: loginResult.displayName,
           pinFreeLegacyItemRead: loginResult.pinFreeLegacyItemRead,
+          pinFreeLegacyFileList: loginResult.pinFreeLegacyFileList,
+          pinFreeLegacyFileDownload: loginResult.pinFreeLegacyFileDownload,
         );
         pageTiming('secure_store_complete');
         final LoginVaultMeta? loginMeta;
@@ -7093,6 +7113,8 @@ class _UnlockPageState extends State<UnlockPage> {
           vaultHandleValue: loginResult.vaultHandle,
           displayNameValue: loginResult.displayName,
           pinFreeLegacyItemRead: loginResult.pinFreeLegacyItemRead,
+          pinFreeLegacyFileList: loginResult.pinFreeLegacyFileList,
+          pinFreeLegacyFileDownload: loginResult.pinFreeLegacyFileDownload,
         );
         pageTiming('secure_store_complete');
         final LoginVaultMeta? loginMeta;
@@ -11390,6 +11412,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         vaultHandleValue: loginResult.vaultHandle,
         displayNameValue: loginResult.displayName,
         pinFreeLegacyItemRead: loginResult.pinFreeLegacyItemRead,
+        pinFreeLegacyFileList: loginResult.pinFreeLegacyFileList,
+        pinFreeLegacyFileDownload: loginResult.pinFreeLegacyFileDownload,
       );
       await _registerDeviceBestEffort(loginResult.sessionToken);
       await _autoConsumeInheritanceTokenIfPresent(
@@ -14087,7 +14111,17 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         throw StateError('Unlock your private files on an updated app.');
       }
       final client = VaultAIClient(baseUrl: backendBaseUrl);
-      final result = kEnableFileV2UiRead &&
+      final pinFreeFileListOffered = ZkPinFreeFileSession.instance
+          .listOfferedForToken(token);
+      if (pinFreeFileListOffered &&
+          zk_mvk_store.ZkActiveMvk.current() == null) {
+        throw StateError('Vault encryption key is unavailable');
+      }
+      final result = pinFreeFileListOffered
+          ? await client.listVaultFiles(
+              vaultName: app.vaultName!, pin: '', authToken: token,
+            )
+          : kEnableFileV2UiRead &&
               zk_mvk_store.ZkActiveMvk.current() != null
           ? await client.listZkVaultFilesWithRetiredV2(authToken: token)
           : await client.listVaultFiles(
@@ -15951,6 +15985,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required String? fallbackMime,
     bool requireReadyV2 = false,
   }) async {
+    final pinFreeLegacyDownloadOffered = ZkPinFreeFileSession.instance
+        .downloadOfferedForToken(authToken);
+    if (pinFreeLegacyDownloadOffered &&
+        zk_mvk_store.ZkActiveMvk.current() == null) {
+      throw StateError('Vault encryption key is unavailable');
+    }
     final pinFreeZkFile = kRequirePinFreeZkFiles &&
         context.read<AppState>().vaultHandle?.isNotEmpty == true;
     if (pinFreeZkFile &&
@@ -15979,6 +16019,129 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         bytes: v2.bytes,
         contentType: v2.manifest.contentType ?? fallbackMime,
         fileName: v2.manifest.displayName,
+      );
+    }
+    if (pinFreeLegacyDownloadOffered) {
+      final app = context.read<AppState>();
+      final mvk = zk_mvk_store.ZkActiveMvk.current();
+      final vaultId = app.vaultId;
+      final legacyKey = vaultId == null ? null :
+          _VaultCrypto._keyCache[_VaultCrypto._ck(vaultId, vaultName)];
+      final sessionEpoch = app._sessionEpoch;
+      final foregroundEpoch = app._sessionProbeEpoch;
+      final terminationGeneration = st.SessionTermination.instance.generation;
+      if (app.vaultHandle?.isNotEmpty != true || mvk == null ||
+          vaultId == null || legacyKey == null) {
+        throw StateError('Unlock this older file before downloading it.');
+      }
+      bool currentAccess() => mounted && app.authed && app.unlocked &&
+          app._sessionForeground && !app.sessionVerificationBlocked &&
+          app.sessionToken == authToken && app.vaultId == vaultId &&
+          app.vaultName == vaultName &&
+          app._sessionEpoch == sessionEpoch &&
+          app._sessionProbeEpoch == foregroundEpoch &&
+          st.SessionTermination.instance.generation == terminationGeneration &&
+          !st.SessionTermination.instance.isTerminated &&
+          identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
+          identical(_VaultCrypto._keyCache[_VaultCrypto._ck(vaultId, vaultName)],
+              legacyKey);
+      Future<Map<String, dynamic>> post(
+        String path, Map<String, dynamic> body,
+      ) async {
+        if (!currentAccess()) throw StateError('Vault session changed');
+        if (path != '/vault/legacy-ciphertext/export/start' &&
+            path != '/vault/legacy-ciphertext/export/page') {
+          throw StateError('Unsupported older file export route');
+        }
+        final result = await _zkHttpPost(
+          path, body, bearerToken: authToken,
+        );
+        if (!currentAccess()) throw StateError('Vault session changed');
+        return result;
+      }
+      Future<String> proofProvider() async {
+        if (!currentAccess()) throw StateError('Vault session changed');
+        final proof = await resolveZkActionProof(
+          promptForPrivateSession: true,
+          promptPin: () => _promptForActionPin(context, 'Verify file download'),
+          cachedPin: _VaultCrypto.currentPinOrThrow,
+          verifyPin: (pin) {
+            if (!currentAccess()) throw StateError('Vault session changed');
+            return _zkActionProof(app, authToken, pin);
+          },
+        );
+        if (proof == null) throw const _ZkActionPromptCancelled();
+        if (!currentAccess()) throw StateError('Vault session changed');
+        return proof;
+      }
+      final inventory = await client.listZkFileMetadata(
+        authToken: authToken,
+      );
+      if (!currentAccess()) throw StateError('Vault session changed');
+      final matches = (inventory['files'] as List)
+          .whereType<Map<String, dynamic>>()
+          .where((row) => row['id'] == fileId)
+          .toList();
+      if (matches.length != 1) {
+        throw const FormatException('Older file is unavailable');
+      }
+      final listed = matches.single;
+      final storageMode = listed['storage_mode'] ?? 'inline';
+      if (storageMode == 'chunks') {
+        final proof = await proofProvider();
+        final manifest = await client.getZkLegacyChunkedManifest(
+          authToken: authToken,
+          fileId: fileId,
+          zkProofToken: proof,
+          accessGuard: () {
+            if (!currentAccess()) throw StateError('Vault session changed');
+          },
+        );
+        if (!currentAccess() ||
+            manifest['file_size'] != listed['file_size'] ||
+            manifest['chunk_size'] != listed['chunk_size'] ||
+            manifest['chunk_count'] != listed['chunk_count']) {
+          throw const FormatException('Older file changed before download');
+        }
+        final keyBytes = await _VaultCrypto.currentKeyBytesOrThrow();
+        if (!currentAccess()) throw StateError('Vault session changed');
+        final bytes = await legacy_chunked_download.LegacyChunkedLocalDownload(
+          readEncryptedFrame: (index) => client.downloadChunk(
+            authToken: authToken,
+            fileId: fileId,
+            chunkIndex: index,
+            downloadToken: manifest['download_token'] as String,
+          ),
+          legacyKey: keyBytes,
+          accessIsCurrent: currentAccess,
+        ).read(
+          fileSize: manifest['file_size'] as int,
+          chunkSize: manifest['chunk_size'] as int,
+          chunkCount: manifest['chunk_count'] as int,
+        );
+        return (
+          bytes: bytes,
+          contentType: fallbackMime,
+          fileName: fallbackFileName,
+        );
+      }
+      if (storageMode != 'inline') {
+        throw const FormatException('Unsupported older file storage');
+      }
+      final export = legacy_export.LegacyCiphertextExportClient(
+        post: post, proofProvider: proofProvider,
+      );
+      final bytes = await legacy_file_download.LegacyFileLocalDownload(
+        export: export,
+        codec: legacy_codec.LegacyCiphertextMigrationCodec(
+          legacyKey: legacyKey, mvk: mvk,
+        ),
+        accessIsCurrent: currentAccess,
+      ).read(fileId);
+      return (
+        bytes: bytes,
+        contentType: fallbackMime,
+        fileName: fallbackFileName,
       );
     }
     final pin = await _VaultCrypto.currentPinOrThrow();

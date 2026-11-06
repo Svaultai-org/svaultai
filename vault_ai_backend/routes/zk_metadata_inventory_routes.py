@@ -110,6 +110,7 @@ def file_metadata_inventory(
         cur.execute(
             """
             SELECT u.id, u.file_size, u.storage_mode, u.upload_status,
+                   u.needs_naming, u.autosaved_secret,
                    u.file_name_ciphertext,
                    COALESCE(r.saved_name_override_ciphertext,
                             u.saved_name_ciphertext) AS saved_name_ciphertext,
@@ -120,8 +121,9 @@ def file_metadata_inventory(
                    r.name_version
               FROM uploaded_files u
               LEFT JOIN file_v2_records r
-                ON r.file_id = u.id AND r.vault_id = u.vault_id
-             WHERE u.vault_id = %s AND u.id > %s
+                ON r.file_id = u.id AND r.vault_id = u.vault_id::text
+             WHERE u.vault_id = %s AND u.upload_status = 'complete'
+               AND u.id > %s
              ORDER BY u.id LIMIT %s
             """,
             (principal["vault_id"], after_file_id, limit + 1),
@@ -136,6 +138,8 @@ def file_metadata_inventory(
             "file_size": int(row["file_size"]),
             "storage_mode": row["storage_mode"],
             "upload_status": row["upload_status"],
+            "needs_naming": bool(row.get("needs_naming")),
+            "autosaved_secret": bool(row.get("autosaved_secret")),
             "has_inline_ciphertext": bool(row["has_inline_ciphertext"]),
             "created_at": row["created_at"],
             "lifecycle_state": row["lifecycle_state"],

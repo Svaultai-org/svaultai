@@ -361,6 +361,10 @@ class LegacyCiphertextMigrationCodec {
       await _legacyAesGcm.decrypt(box, secretKey: legacyKey),
     );
   }
+
+  /// Decode a proof-exported older inline file on the owner device.
+  Future<Uint8List> decodeLegacyFileBytes(String encoded) =>
+      _legacyBytes(encoded);
 }
 
 bool _sameBytes(List<int> a, List<int> b) {

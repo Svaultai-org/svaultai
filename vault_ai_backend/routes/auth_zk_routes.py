@@ -62,7 +62,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from typing import Optional
+from typing import Any, Optional
 
 from starlette.concurrency import run_in_threadpool
 
@@ -896,10 +896,80 @@ class ZkLoginFinalizeResponse(BaseModel):
     wrapped_mvk: str
     wrapped_sk_vault: str
     display_name_ciphertext: str
+    pin_free_legacy_item_read: bool = False
+    pin_free_legacy_file_list: bool = False
+    pin_free_legacy_file_download: bool = False
     # Additive hints: old clients ignore these and keep their existing
     # registration + metadata fetch. False/null always requires fallback.
     device_trust_complete: bool = False
     vault_meta: Optional[dict[str, object]] = None
+
+
+def _pin_free_legacy_file_list_ready(conn, vault_id: str) -> bool:
+    """Offer the metadata list only when its labels cover the old list."""
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT NOT EXISTS (
+            SELECT 1 FROM uploaded_files u
+             WHERE u.vault_id = %s::uuid AND u.upload_status = 'complete'
+               AND (
+                    u.file_name_ciphertext IS NULL
+                 OR (u.saved_name IS NOT NULL AND u.saved_name_ciphertext IS NULL)
+                 OR (u.content_type IS NOT NULL AND u.content_type_ciphertext IS NULL)
+                 OR (u.detected_type IS NOT NULL AND u.detected_type_ciphertext IS NULL)
+                 OR (u.detected_service IS NOT NULL AND u.detected_service_ciphertext IS NULL)
+                 OR (u.asset_type IS NOT NULL AND u.asset_type_ciphertext IS NULL)
+                 OR COALESCE(u.relative_path, '') <> ''
+               )
+        ) AND NOT EXISTS (
+            SELECT 1 FROM file_v2_records r
+             WHERE r.vault_id = %s
+               AND (r.verification_state = 'client_verified'
+                    OR r.migrating_legacy IS NOT TRUE)
+        )
+        """,
+        (vault_id, vault_id),
+    )
+    row = cur.fetchone()
+    return bool(row and row[0] is True)
+
+
+def _pin_free_legacy_file_download_ready(conn, vault_id: str) -> bool:
+    """Offer only file shapes the owner-device reader supports."""
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT NOT EXISTS (
+            SELECT 1 FROM uploaded_files u
+             WHERE u.vault_id = %s::uuid AND u.upload_status = 'complete'
+               AND (
+                    u.file_size IS NULL OR u.file_size < 0
+                 OR (COALESCE(u.storage_mode, 'inline') = 'inline' AND
+                     (u.encrypted_file_data IS NULL OR
+                      LENGTH(u.encrypted_file_data) > 67108864 OR
+                      u.file_size > 67108864))
+                 OR (u.storage_mode = 'chunks' AND
+                     (u.file_size > 536870912 OR
+                      u.chunk_size IS NULL OR u.chunk_size <= 0 OR
+                      u.chunk_size > 16777216 OR
+                      u.chunk_count IS NULL OR u.chunk_count <= 0 OR
+                      u.chunk_count > 4096 OR
+                      u.file_size > u.chunk_count * u.chunk_size OR
+                      u.file_size <= (u.chunk_count - 1) * u.chunk_size))
+                 OR COALESCE(u.storage_mode, 'inline') NOT IN ('inline', 'chunks')
+               )
+        ) AND NOT EXISTS (
+            SELECT 1 FROM file_v2_records r
+             WHERE r.vault_id = %s
+               AND (r.verification_state = 'client_verified'
+                    OR r.migrating_legacy IS NOT TRUE)
+        )
+        """,
+        (vault_id, vault_id),
+    )
+    row = cur.fetchone()
+    return bool(row and row[0] is True)
 
 
 def _fresh_login_metadata(
@@ -1034,7 +1104,7 @@ def _zk_login_finalize_sync(
                   WHERE vault_id = %s
                   RETURNING vault_id, wrapped_mvk, wrapped_sk_vault,
                             display_name_ciphertext, vault_handle,
-                            pin_salt, kdf_iterations
+                            pin_salt, kdf_iterations, pin_verifier
                 """,
                 (row["vault_id"],),
             )
@@ -1083,6 +1153,39 @@ def _zk_login_finalize_sync(
                 device_trust_complete = False
                 logger.exception("[ZK-LOGIN-FINALIZE] fast-path freshness check failed")
 
+        offer_base = (
+            device_trust_complete
+            and vault_row["vault_handle"] is not None
+            and vault_row["wrapped_mvk"] is not None
+            and vault_row["pin_verifier"] is not None
+            and os.getenv("VAULTAI_ZK_METADATA_INVENTORY_ENABLED", "false")
+            .strip().lower() == "true"
+            and os.getenv("VAULTAI_ZK_LEGACY_EXPORT_ENABLED", "false")
+            .strip().lower() == "true"
+        )
+        file_list_offer = False
+        file_download_offer = False
+        if offer_base:
+            try:
+                with _zk_login_phase("metadata"):
+                    file_list_offer = _pin_free_legacy_file_list_ready(
+                        conn, str(vault_row["vault_id"]),
+                    )
+            except Exception:
+                conn.rollback()
+                logger.exception("[ZK-LOGIN-FINALIZE] file-list offer check failed")
+        if (offer_base and
+                os.getenv("VAULTAI_ZK_LEGACY_CHUNK_MANIFEST_ENABLED", "false")
+                .strip().lower() == "true"):
+            try:
+                with _zk_login_phase("metadata"):
+                    file_download_offer = _pin_free_legacy_file_download_ready(
+                        conn, str(vault_row["vault_id"]),
+                    )
+            except Exception:
+                conn.rollback()
+                logger.exception("[ZK-LOGIN-FINALIZE] file-download offer check failed")
+
         return ZkLoginFinalizeResponse(
             vault_id=str(vault_row["vault_id"]),
             vault_handle=to_display(bytes(vault_row["vault_handle"])),
@@ -1092,6 +1195,9 @@ def _zk_login_finalize_sync(
             display_name_ciphertext=_b64url_encode(
                 bytes(vault_row["display_name_ciphertext"]),
             ),
+            pin_free_legacy_item_read=offer_base,
+            pin_free_legacy_file_list=file_list_offer,
+            pin_free_legacy_file_download=file_download_offer,
             device_trust_complete=device_trust_complete,
             vault_meta=metadata,
         )
@@ -1505,6 +1611,27 @@ def consume_recent_zk_proof(
         consumed = cur.fetchone()
         conn.commit()
     if consumed is None:
+        raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
+
+
+def consume_recent_zk_proof_on_cursor(
+    proof_token: str,
+    principal: SessionPrincipal,
+    cur: Any,
+) -> None:
+    """Consume a session-bound OPAQUE proof in the caller's transaction."""
+    if not _recent_proof_belongs_to_session(proof_token, principal):
+        raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
+    cur.execute(
+        """
+        DELETE FROM vault_zk_login_slots
+        WHERE slot_id = %s AND vault_id = %s
+          AND expires_at > NOW()
+        RETURNING slot_id
+        """,
+        (proof_token, principal["vault_id"]),
+    )
+    if cur.fetchone() is None:
         raise HTTPException(status_code=401, detail=GENERIC_ZK_AUTH_ERROR)
 
 

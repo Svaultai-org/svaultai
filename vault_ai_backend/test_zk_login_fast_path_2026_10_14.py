@@ -184,7 +184,8 @@ def finalizer(monkeypatch, guard):
     slot = PlaybackConnection(dict(vault_id=VAULT_ID, server_state=b"synthetic-state"))
     updated = PlaybackConnection(dict(vault_id=VAULT_ID, vault_handle=bytes(range(15)),
         wrapped_mvk=b"wrapped-mvk", wrapped_sk_vault=b"wrapped-sk",
-        display_name_ciphertext=b"display-ciphertext", pin_salt=SALT,
+        display_name_ciphertext=b"display-ciphertext", pin_verifier="synthetic",
+        pin_salt=SALT,
         kdf_iterations=600_000))
     connection = FinalizeConnection(slot, updated, guard)
     db = mock.Mock(return_value=connection)
@@ -221,6 +222,27 @@ def test_successful_api_returns_additive_hints_and_existing_crypto_fields(finali
     finalizer["finish"].assert_called_once_with(b"synthetic-state", b"synthetic-proof")
     assert finalizer["slot"].commits == finalizer["updated"].commits == 1
     assert finalizer["issue"].call_args.kwargs["include_vault_meta"] is True
+
+
+def test_file_offers_require_trusted_finalize_and_enabled_routes(
+    finalizer, monkeypatch,
+):
+    monkeypatch.setenv("VAULTAI_ZK_METADATA_INVENTORY_ENABLED", "true")
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_EXPORT_ENABLED", "true")
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_CHUNK_MANIFEST_ENABLED", "true")
+    monkeypatch.setattr(routes, "_pin_free_legacy_file_list_ready",
+                        lambda _conn, _vault_id: True)
+    monkeypatch.setattr(routes, "_pin_free_legacy_file_download_ready",
+                        lambda _conn, _vault_id: True)
+    offered = run_finalizer(finalizer)
+    assert offered.pin_free_legacy_item_read is True
+    assert offered.pin_free_legacy_file_list is True
+    assert offered.pin_free_legacy_file_download is True
+    finalizer["issue"].return_value = issued_token(device_id="other-device")
+    blocked = run_finalizer(finalizer)
+    assert blocked.pin_free_legacy_item_read is False
+    assert blocked.pin_free_legacy_file_list is False
+    assert blocked.pin_free_legacy_file_download is False
 
 
 @pytest.mark.parametrize("device_id", [None, "", "other-device"])

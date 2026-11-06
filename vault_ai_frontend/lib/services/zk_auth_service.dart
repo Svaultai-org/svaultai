@@ -187,6 +187,8 @@ class LoginResult {
   final bool deviceTrustComplete;
   final LoginVaultMeta? vaultMeta;
   final bool pinFreeLegacyItemRead;
+  final bool pinFreeLegacyFileList;
+  final bool pinFreeLegacyFileDownload;
   LoginResult({
     required this.vaultId,
     required this.vaultHandle,
@@ -198,6 +200,8 @@ class LoginResult {
     this.deviceTrustComplete = false,
     this.vaultMeta,
     this.pinFreeLegacyItemRead = false,
+    this.pinFreeLegacyFileList = false,
+    this.pinFreeLegacyFileDownload = false,
   });
 }
 
@@ -943,6 +947,12 @@ class ZkAuthService {
       ),
       pinFreeLegacyItemRead:
           finalizeResponse['pin_free_legacy_item_read'] == true &&
+          finalizeResponse['device_trust_complete'] == true,
+      pinFreeLegacyFileList:
+          finalizeResponse['pin_free_legacy_file_list'] == true &&
+          finalizeResponse['device_trust_complete'] == true,
+      pinFreeLegacyFileDownload:
+          finalizeResponse['pin_free_legacy_file_download'] == true &&
           finalizeResponse['device_trust_complete'] == true,
     );
   }
