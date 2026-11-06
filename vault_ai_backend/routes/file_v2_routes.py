@@ -22,7 +22,9 @@ MAX_MANIFEST_CIPHERTEXT_BYTES = 64 * 1024
 MAX_EXTRA_MANIFEST_CIPHERTEXT_BYTES = 512 * 1024
 MAX_EXTRA_V3_MANIFEST_CIPHERTEXT_BYTES = 2 * 1024 * 1024
 MAX_ENCRYPTED_SAVED_NAME_BYTES = 4096
-GCM_FRAMING_BYTES = 12 + 16
+# vault_key_hierarchy.aesGcmWrap emits version(1) || nonce(12) ||
+# ciphertext || tag(16). The version byte is part of every client V2 chunk.
+GCM_FRAMING_BYTES = 1 + 12 + 16
 FORBIDDEN = ('filename','filename_plaintext','file_content','file_content_plaintext',
  'content_type_plaintext','mime_plaintext','relative_path_plaintext','extracted_text',
  'ocr_text','document_text','thumbnail_plaintext','PIN','MVK','file_key','decryption_key')
@@ -325,18 +327,12 @@ def put_chunk(payload: Chunk, principal: SessionPrincipal = Depends(verify_trust
 def list_files(principal: SessionPrincipal = Depends(verify_trusted_device)):
     _enabled(False); conn = get_db(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        # A tab can disappear before publish, with or without all chunks.
-        # Keep uploads resumable for 24 hours. Migration rows already have an
-        # uploaded_files marker and are never reaped through this path.
-        cur.execute('''DELETE FROM file_v2_records r
-                       WHERE r.vault_id=%s
-                         AND r.lifecycle_state='file_v2_written'
-                         AND r.created_at < NOW() - INTERVAL '24 hours'
-                         AND NOT EXISTS (
-                           SELECT 1 FROM uploaded_files u
-                            WHERE u.id=r.file_id AND u.vault_id=r.vault_id
-                         )''', (principal['vault_id'],))
-        conn.commit()
+        # Listing must be read-only. The previous best-effort stale-upload
+        # deletion compared uploaded_files.vault_id (UUID) with
+        # file_v2_records.vault_id (TEXT), so PostgreSQL rejected every list
+        # with "operator does not exist: uuid = text". More importantly, a
+        # GET must not delete an unfinished upload or a migration sidecar as
+        # a side effect of opening Files.
         cur.execute('''SELECT file_id,crypto_version,total_bytes,chunk_size,chunk_count,lifecycle_state,verification_state,created_at FROM file_v2_records WHERE vault_id=%s ORDER BY created_at DESC''', (principal['vault_id'],)); return {'files':[dict(r) for r in cur.fetchall()]}
     finally: conn.close()
 

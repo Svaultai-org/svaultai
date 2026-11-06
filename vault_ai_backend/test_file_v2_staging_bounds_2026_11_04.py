@@ -257,13 +257,14 @@ def test_published_new_file_cannot_be_changed_or_deleted(staged):
     assert delete.value.detail == "file_v2_verified_delete_requires_confirmed_path"
 
 
-def test_stale_cleanup_excludes_published_and_legacy_migration_rows(monkeypatch):
+def test_file_list_does_not_delete_unfinished_or_migration_rows(monkeypatch):
     monkeypatch.setattr(route, "_enabled", lambda *_: None)
     db = MagicMock()
     db.cursor.return_value.fetchall.return_value = []
     monkeypatch.setattr(route, "get_db", lambda: db)
     assert route.list_files({"vault_id": "synthetic-vault"}) == {"files": []}
-    sql = db.cursor.return_value.execute.call_args_list[0].args[0]
-    assert "INTERVAL '24 hours'" in sql
-    assert "lifecycle_state='file_v2_written'" in sql
-    assert "NOT EXISTS" in sql and "uploaded_files" in sql
+    db.cursor.return_value.execute.assert_called_once()
+    sql, params = db.cursor.return_value.execute.call_args.args
+    assert sql.lstrip().startswith("SELECT file_id,crypto_version")
+    assert params == ("synthetic-vault",)
+    db.commit.assert_not_called()
