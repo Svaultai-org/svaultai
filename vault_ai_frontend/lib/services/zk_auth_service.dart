@@ -186,6 +186,7 @@ class LoginResult {
   final String? vaultName;
   final bool deviceTrustComplete;
   final LoginVaultMeta? vaultMeta;
+  final bool pinFreeLegacyItemRead;
   LoginResult({
     required this.vaultId,
     required this.vaultHandle,
@@ -196,6 +197,7 @@ class LoginResult {
     this.vaultName,
     this.deviceTrustComplete = false,
     this.vaultMeta,
+    this.pinFreeLegacyItemRead = false,
   });
 }
 
@@ -939,6 +941,9 @@ class ZkAuthService {
         finalizeResponse['vault_meta'],
         expectedVaultId: finalizeResponse['vault_id'] as String,
       ),
+      pinFreeLegacyItemRead:
+          finalizeResponse['pin_free_legacy_item_read'] == true &&
+          finalizeResponse['device_trust_complete'] == true,
     );
   }
 

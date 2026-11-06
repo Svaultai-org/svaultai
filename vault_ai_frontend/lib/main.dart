@@ -38,6 +38,7 @@ import 'services/inheritance_credentials.dart' as inh_cred;
 import 'services/legacy_adoption.dart' as legacy_adopt;
 import 'services/metadata_migration_client.dart' as mmc;
 import 'services/legacy_ciphertext_export_client.dart' as legacy_export;
+import 'services/legacy_saved_item_read_session.dart' as legacy_item_read;
 import 'services/legacy_ciphertext_migration_codec.dart' as legacy_codec;
 import 'services/legacy_content_migration_stager.dart' as legacy_stage;
 import 'services/legacy_stage_pin_lease.dart';
@@ -59,6 +60,7 @@ import 'services/zk_private_chat_index.dart' as zk_chat_index;
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/vault_key_hierarchy.dart' as vk_hier;
 import 'services/zk_auth_service.dart';
+import 'services/zk_pin_free_item_read_session.dart';
 import 'services/auth_retry.dart';
 import 'services/billing_me_diagnostic.dart';
 import 'services/upload_queue.dart';
@@ -1487,6 +1489,8 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _clearLegacySavedItemReadSession();
+    ZkPinFreeItemReadSession.instance.clear();
     _sessionEpoch++;
     _sessionProbeEpoch++;
     _sessionCheckRequestedAfterPending = false;
@@ -1709,6 +1713,8 @@ class AppState extends ChangeNotifier {
 
   set unlocked(bool value) {
     if (!value) {
+      ZkPinFreeItemReadSession.instance.lock();
+      _clearLegacySavedItemReadSession();
       // Legacy lock paths clear their PIN cache/context. Also discard the ZK
       // keys so a locked screen does not retain decrypt-capable material.
       // Keep PrivateZkPinTransportSession bound to the current session: it
@@ -2271,6 +2277,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> hydrate() async {
+    ZkPinFreeItemReadSession.instance.clear();
     final epoch = _sessionEpoch;
     final sp = await SharedPreferences.getInstance();
     // Older web builds stored auth identity in localStorage. Web sessions now
@@ -2348,13 +2355,19 @@ class AppState extends ChangeNotifier {
     required String vaultNameValue,
     String? displayNameValue,
     String? vaultHandleValue,
+    bool pinFreeLegacyItemRead = false,
   }) async {
     // Bind before the first await. Late responses/cleanup from an old login
     // cannot revoke, resurrect, or overwrite this replacement session.
     PrivateZkPinTransportSession.clear();
+    _clearLegacySavedItemReadSession();
     final epoch = ++_sessionEpoch;
     _sessionProbeEpoch++;
     st.SessionTermination.instance.bindSession(token);
+    ZkPinFreeItemReadSession.instance.bind(
+      sessionToken: token,
+      offered: pinFreeLegacyItemRead && vaultHandleValue?.isNotEmpty == true,
+    );
     _signedOutCode = null;
     _sessionVerificationBlocked = false;
     _sessionVerificationUnavailable = false;
@@ -2394,6 +2407,8 @@ class AppState extends ChangeNotifier {
     st.SessionTerminationCode? signedOutCode,
   }) async {
     PrivateZkPinTransportSession.clear();
+    ZkPinFreeItemReadSession.instance.clear();
+    _clearLegacySavedItemReadSession();
     final departingToken = sessionToken;
     final epoch = ++_sessionEpoch;
     _sessionProbeEpoch++;
@@ -2775,6 +2790,7 @@ class AppState extends ChangeNotifier {
         vaultNameValue: activeVaultName,
         displayNameValue: activeDisplay,
         vaultHandleValue: activeVaultHandle,
+        pinFreeLegacyItemRead: zkRestore?.pinFreeLegacyItemRead ?? false,
       );
 
       if (kPrivateOnlyUnlockEnabled) {
@@ -5498,9 +5514,37 @@ Future<void> _stageLegacyContentBestEffort({
   }
 }
 
+final class _BoundLegacySavedItemReadSession {
+  const _BoundLegacySavedItemReadSession({
+    required this.token,
+    required this.vaultId,
+    required this.mvk,
+    required this.legacyKey,
+    required this.generation,
+    required this.reader,
+  });
+
+  final String token;
+  final String vaultId;
+  final SecretKey mvk;
+  final SecretKey legacyKey;
+  final int generation;
+  final legacy_item_read.LegacySavedItemReadSession reader;
+}
+
+_BoundLegacySavedItemReadSession? _boundLegacySavedItemReadSession;
+
+void _clearLegacySavedItemReadSession() {
+  _boundLegacySavedItemReadSession?.reader.close();
+  _boundLegacySavedItemReadSession = null;
+}
+
 VaultAIClient _savedItemClient(AppState app) => VaultAIClient(
       baseUrl: backendBaseUrl,
-      legacyZkItemReader: kEnableKeylessSavedItemRead
+      legacyZkItemReader: (kEnableKeylessSavedItemRead ||
+              (app.sessionToken != null &&
+                  ZkPinFreeItemReadSession.instance
+                      .activeForToken(app.sessionToken!)))
           ? (itemId) => _readLegacyZkSavedItem(app, itemId)
           : null,
     );
@@ -5527,42 +5571,56 @@ Future<Map<String, dynamic>> _readLegacyZkSavedItem(
   if (legacyKey == null) {
     throw StateError('Private saved-item reader is unavailable');
   }
-  final pin = await _VaultCrypto.currentPinOrThrow();
   final generation = st.SessionTermination.instance.generation;
+  bool currentSession() => app.unlocked && app.sessionToken == token &&
+      app.vaultId == vaultId && app.vaultName == vaultName &&
+      app.vaultHandle == handle &&
+      identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
+      identical(_VaultCrypto._keyCache[_VaultCrypto._ck(vaultId, vaultName)],
+          legacyKey) &&
+      st.SessionTermination.instance.generation == generation &&
+      !st.SessionTermination.instance.isTerminated;
   void checkSession() {
-    if (!app.unlocked || app.sessionToken != token ||
-        app.vaultId != vaultId ||
-        !identical(zk_mvk_store.ZkActiveMvk.current(), mvk) ||
-        st.SessionTermination.instance.generation != generation ||
-        st.SessionTermination.instance.isTerminated) {
+    if (!currentSession()) {
       throw StateError('Vault session changed during saved-item read');
     }
   }
-  final export = legacy_export.LegacyCiphertextExportClient(
-    proofProvider: () async {
-      checkSession();
-      final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
-        vaultHandle: handle, pin: pin, sessionToken: token,
-      );
-      checkSession();
-      return proof.token;
-    },
-    post: (path, body) async {
-      checkSession();
-      final result = await _zkHttpPost(path, body, bearerToken: token);
-      checkSession();
-      return result;
-    },
-  );
+  var bound = _boundLegacySavedItemReadSession;
+  if (bound == null || bound.token != token || bound.vaultId != vaultId ||
+      !identical(bound.mvk, mvk) ||
+      !identical(bound.legacyKey, legacyKey) ||
+      bound.generation != generation) {
+    _clearLegacySavedItemReadSession();
+    final export = legacy_export.LegacyCiphertextExportClient(
+      proofProvider: () async {
+        checkSession();
+        final pin = await _VaultCrypto.currentPinOrThrow();
+        checkSession();
+        final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
+          vaultHandle: handle, pin: pin, sessionToken: token,
+        );
+        checkSession();
+        return proof.token;
+      },
+      post: (path, body) async {
+        checkSession();
+        final result = await _zkHttpPost(path, body, bearerToken: token);
+        checkSession();
+        return result;
+      },
+    );
+    bound = _BoundLegacySavedItemReadSession(
+      token: token, vaultId: vaultId, mvk: mvk, legacyKey: legacyKey,
+      generation: generation,
+      reader: legacy_item_read.LegacySavedItemReadSession(
+        export: export, isCurrent: currentSession,
+      ),
+    );
+    _boundLegacySavedItemReadSession = bound;
+  }
+  final source = await bound.reader.readItem(itemId);
+  final record = source.record;
   try {
-    final records = await export.listItems();
-    final matches = records.where((row) => row['item_id'] == itemId).toList();
-    if (matches.length != 1) {
-      throw StateError('Saved item is unavailable');
-    }
-    final record = matches.single;
-    final chars = record['ciphertext_chars'];
-    if (chars is! int) throw const FormatException('Invalid saved-item size');
     final key = await vk_hier.VaultKeyHierarchy(mvk).metadataKey();
     Future<String> label(String plainField, String cipherField) async {
       final encrypted = record[cipherField];
@@ -5577,12 +5635,9 @@ Future<Map<String, dynamic>> _readLegacyZkSavedItem(
     }
     final itemType = await label('item_type', 'item_type_ciphertext');
     final service = await label('service', 'service_ciphertext');
-    final ciphertext = await export.readItemCiphertext(
-      itemId: itemId, ciphertextChars: chars,
-    );
     final raw = await legacy_codec.LegacyCiphertextMigrationCodec(
       legacyKey: legacyKey, mvk: mvk,
-    ).decodeLegacyItem(ciphertext);
+    ).decodeLegacyItem(source.ciphertext);
     checkSession();
     final hasEnvelope = const {'category', 'title', 'fields', 'item_id'}
         .any(raw.containsKey);
@@ -5596,8 +5651,9 @@ Future<Map<String, dynamic>> _readLegacyZkSavedItem(
       'notes': hasEnvelope ? raw['notes'] : null,
       'storage_engine': 'legacy_compatibility',
     };
-  } finally {
-    export.clearGrant();
+  } catch (_) {
+    bound.reader.invalidate();
+    rethrow;
   }
 }
 
@@ -5992,6 +6048,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           vaultNameValue: resolvedVaultName,
           vaultHandleValue: loginResult.vaultHandle,
           displayNameValue: loginResult.displayName,
+          pinFreeLegacyItemRead: loginResult.pinFreeLegacyItemRead,
         );
         pageTiming('secure_store_complete');
         final LoginVaultMeta? loginMeta;
@@ -7040,6 +7097,7 @@ class _UnlockPageState extends State<UnlockPage> {
           vaultNameValue: resolvedVaultName,
           vaultHandleValue: loginResult.vaultHandle,
           displayNameValue: loginResult.displayName,
+          pinFreeLegacyItemRead: loginResult.pinFreeLegacyItemRead,
         );
         pageTiming('secure_store_complete');
         final LoginVaultMeta? loginMeta;
@@ -11336,6 +11394,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         vaultNameValue: resolvedVaultName,
         vaultHandleValue: loginResult.vaultHandle,
         displayNameValue: loginResult.displayName,
+        pinFreeLegacyItemRead: loginResult.pinFreeLegacyItemRead,
       );
       await _registerDeviceBestEffort(loginResult.sessionToken);
       await _autoConsumeInheritanceTokenIfPresent(
@@ -13923,6 +13982,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _reloadVaultLoginsAfterMutation() async {
+    _clearLegacySavedItemReadSession();
     final active = _vaultLoginsLoadFuture;
     if (active != null) await active;
     await _loadVaultLogins();
@@ -13945,7 +14005,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     try {
       final pin = (kEnableKeylessSavedItemRead ||
-                  kEnableZkPinFreeSavedItemIndex) &&
+                  kEnableZkPinFreeSavedItemIndex ||
+                  ZkPinFreeItemReadSession.instance.activeForToken(token)) &&
               zk_mvk_store.ZkActiveMvk.current() != null
           ? ''
           : await _VaultCrypto.currentPinOrThrow();

@@ -13,6 +13,7 @@ import 'services/auth_retry.dart';
 import 'services/memory_title_identity.dart';
 import 'services/saved_file_rename.dart';
 import 'services/session_termination.dart' as st;
+import 'services/zk_pin_free_item_read_session.dart';
 import 'services/saved_item_mutation_feedback.dart';
 export 'services/saved_item_mutation_feedback.dart'
     show SavedItemUpdateRequiredException, savedItemUpdateRequiredMessage;
@@ -3016,9 +3017,15 @@ class VaultAIClient {
     required String authToken,
   }) async {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
+    final itemRead = ZkPinFreeItemReadSession.instance;
+    final sessionPinFreeRead = itemRead.activeForToken(authToken);
+    if (itemRead.wasOfferedForToken(authToken) &&
+        (!sessionPinFreeRead || mvk == null)) {
+      throw StateError('Vault encryption key is unavailable');
+    }
     if (mvk != null) {
       final ciphertext = await _listZkVaultItems(authToken: authToken);
-      final legacy = (kEnableKeylessSavedItemRead ||
+      final legacy = (kEnableKeylessSavedItemRead || sessionPinFreeRead ||
               kEnableZkPinFreeSavedItemIndex)
           ? await _listZkItemMetadata(authToken: authToken, mvk: mvk)
           : await _listLegacyVaultSecureItems(
@@ -3534,6 +3541,12 @@ class VaultAIClient {
     required String authToken,
     String? itemId,
   }) async {
+    final itemRead = ZkPinFreeItemReadSession.instance;
+    final sessionPinFreeRead = itemRead.activeForToken(authToken);
+    if (itemRead.wasOfferedForToken(authToken) &&
+        (!sessionPinFreeRead || zk_mvk_store.ZkActiveMvk.current() == null)) {
+      throw StateError('Vault encryption key is unavailable');
+    }
     if (zk_mvk_store.ZkActiveMvk.current() != null) {
       final mvk = zk_mvk_store.ZkActiveMvk.current();
       final item = await _resolveSavedItem(
@@ -3547,7 +3560,7 @@ class VaultAIClient {
       _requireSavedItemKey(mvk);
       if (item?['storage_engine'] == 'ciphertext') return item!;
       itemId = item?['id']?.toString() ?? itemId;
-      if (kEnableKeylessSavedItemRead) {
+      if (kEnableKeylessSavedItemRead || sessionPinFreeRead) {
         final exactId = int.tryParse(itemId ?? '');
         final reader = legacyZkItemReader;
         if (exactId == null || exactId <= 0 || reader == null) {
@@ -5814,6 +5827,7 @@ class VaultAIClient {
     }
     if (existingItemId == null) {
       final legacy = (kEnableKeylessSavedItemRead ||
+              ZkPinFreeItemReadSession.instance.activeForToken(authToken) ||
               kEnableZkPinFreeSavedItemIndex)
           ? await _listZkItemMetadata(authToken: authToken, mvk: mvk)
           : await _listLegacyVaultSecureItems(
