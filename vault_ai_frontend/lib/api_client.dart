@@ -43,6 +43,15 @@ const bool kRequirePinFreeZkFiles = bool.fromEnvironment(
   defaultValue: false,
 );
 
+/// A newer or older device changed files after this session's list offer.
+/// The caller must obtain a new offer; retrying the same bearer cannot fix it.
+class ZkLegacyFileListChangedException implements Exception {
+  const ZkLegacyFileListChangedException();
+
+  @override
+  String toString() => 'Files changed. Sign in once to refresh access.';
+}
+
 // The private-only unlock build cannot use inheritance routes that require
 // the server to derive a content key from a raw PIN. The OPAQUE-proof
 // beneficiary actions use separate methods and remain available.
@@ -4214,7 +4223,10 @@ class VaultAIClient {
       if (zk_mvk_store.ZkActiveMvk.current() == null) {
         throw StateError('Vault encryption key is unavailable');
       }
-      final result = await listZkFileMetadata(authToken: authToken);
+      final result = await listZkFileMetadata(
+        authToken: authToken,
+        requireLegacyComplete: true,
+      );
       final files = (result['files'] as List).cast<Map<String, dynamic>>();
       files.sort((a, b) {
         final aTime = DateTime.tryParse('${a['created_at']}');
@@ -4260,6 +4272,7 @@ class VaultAIClient {
   /// structural fields, never inline file ciphertext or a PIN-derived key.
   Future<Map<String, dynamic>> listZkFileMetadata({
     required String authToken,
+    bool requireLegacyComplete = false,
   }) async {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) throw StateError('Vault encryption key is unavailable');
@@ -4269,7 +4282,7 @@ class VaultAIClient {
     for (var page = 0; page < 1000; page++) {
       _requireSavedItemKey(mvk);
       final uri = Uri.parse(
-        '$baseUrl/vault/files/metadata?after_file_id=${Uri.encodeQueryComponent(after)}&limit=100',
+        '$baseUrl/vault/files/metadata?after_file_id=${Uri.encodeQueryComponent(after)}&limit=100${requireLegacyComplete ? '&require_legacy_complete=true' : ''}',
       );
       final response = await _sessionHttpWithGuard(
         () => _requireSavedItemKey(mvk),
@@ -4278,6 +4291,19 @@ class VaultAIClient {
       if (response.statusCode != 200) {
         _throwIfAuthExpired(response.statusCode, response.body);
         _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        if (requireLegacyComplete && response.statusCode == 409) {
+          try {
+            final error = jsonDecode(response.body);
+            if (error is Map<String, dynamic> &&
+                error['detail'] == 'legacy_file_list_changed') {
+              throw const ZkLegacyFileListChangedException();
+            }
+          } on ZkLegacyFileListChangedException {
+            rethrow;
+          } catch (_) {
+            // Unknown conflict is reported normally below.
+          }
+        }
         throw StateError(
             'ZK file inventory unavailable (${response.statusCode})');
       }
@@ -5141,7 +5167,7 @@ class VaultAIClient {
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic> ||
         decoded['file_id'] != fileId ||
-        decoded['storage_mode'] != 'chunks' ||
+        decoded['storage_mode'] != 'chunked' ||
         decoded['file_size'] is! int ||
         decoded['chunk_size'] is! int ||
         decoded['chunk_count'] is! int ||

@@ -48,6 +48,7 @@ void main() {
         expect(request.body, isEmpty);
         expect(request.headers['authorization'], 'Bearer opaque-session');
         expect(request.url.path, '/vault/files/metadata');
+        expect(request.url.queryParameters['require_legacy_complete'], 'true');
         return http.Response(
             jsonEncode(<String, dynamic>{
               'records': <Map<String, dynamic>>[
@@ -120,5 +121,41 @@ void main() {
       throwsStateError,
     );
     expect(paths, isEmpty);
+  });
+
+  test('folder upload after offer asks for one sign-in, without PIN fallback',
+      () async {
+    SessionTermination.instance.bindSession('opaque-session');
+    ZkPinFreeFileSession.instance.bind(
+      sessionToken: 'opaque-session',
+      listOffered: true,
+      downloadOffered: false,
+    );
+    ZkActiveMvk.set(
+      mvk: SecretKey(List<int>.filled(32, 31)),
+      vaultId: 'synthetic-vault',
+      vaultHandle: 'synthetic-handle',
+    );
+    final requests = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        expect(request.body, isNot(contains('raw-pin-marker')));
+        return http.Response('{"detail":"legacy_file_list_changed"}', 409);
+      }),
+    );
+    await expectLater(
+      client.listVaultFiles(
+        vaultName: 'synthetic-vault',
+        pin: 'raw-pin-marker',
+        authToken: 'opaque-session',
+      ),
+      throwsA(isA<ZkLegacyFileListChangedException>()),
+    );
+    expect(requests, hasLength(1));
+    expect(requests.single.url.path, '/vault/files/metadata');
+    expect(requests.single.url.queryParameters['require_legacy_complete'],
+        'true');
   });
 }

@@ -915,17 +915,26 @@ def _pin_free_legacy_file_list_ready(conn, vault_id: str) -> bool:
              WHERE u.vault_id = %s::uuid AND u.upload_status = 'complete'
                AND (
                     u.file_name_ciphertext IS NULL
-                 OR (u.saved_name IS NOT NULL AND u.saved_name_ciphertext IS NULL)
-                 OR (u.content_type IS NOT NULL AND u.content_type_ciphertext IS NULL)
-                 OR (u.detected_type IS NOT NULL AND u.detected_type_ciphertext IS NULL)
-                 OR (u.detected_service IS NOT NULL AND u.detected_service_ciphertext IS NULL)
-                 OR (u.asset_type IS NOT NULL AND u.asset_type_ciphertext IS NULL)
+                 OR LENGTH(u.id) > 128
+                 OR u.file_name IS NOT NULL
+                 OR u.saved_name IS NOT NULL
+                 OR u.content_type IS NOT NULL
+                 OR u.detected_type IS NOT NULL
+                 OR u.detected_service IS NOT NULL
+                 OR u.asset_type IS NOT NULL
+                 OR OCTET_LENGTH(u.file_name_ciphertext) > 4096
+                 OR OCTET_LENGTH(u.saved_name_ciphertext) > 4096
+                 OR OCTET_LENGTH(u.content_type_ciphertext) > 4096
+                 OR OCTET_LENGTH(u.detected_type_ciphertext) > 4096
+                 OR OCTET_LENGTH(u.detected_service_ciphertext) > 4096
+                 OR OCTET_LENGTH(u.asset_type_ciphertext) > 4096
                  OR COALESCE(u.relative_path, '') <> ''
                )
         ) AND NOT EXISTS (
             SELECT 1 FROM file_v2_records r
              WHERE r.vault_id = %s
-               AND (r.verification_state = 'client_verified'
+               AND (r.saved_name_override_ciphertext IS NOT NULL
+                    OR r.verification_state = 'client_verified'
                     OR r.migrating_legacy IS NOT TRUE)
         )
         """,
@@ -935,7 +944,9 @@ def _pin_free_legacy_file_list_ready(conn, vault_id: str) -> bool:
     return bool(row and row[0] is True)
 
 
-def _pin_free_legacy_file_download_ready(conn, vault_id: str) -> bool:
+def _pin_free_legacy_file_download_ready(
+    conn, vault_id: str, *, chunked_route_enabled: bool = True,
+) -> bool:
     """Offer only file shapes the owner-device reader supports."""
     cur = conn.cursor()
     cur.execute(
@@ -949,24 +960,26 @@ def _pin_free_legacy_file_download_ready(conn, vault_id: str) -> bool:
                      (u.encrypted_file_data IS NULL OR
                       LENGTH(u.encrypted_file_data) > 67108864 OR
                       u.file_size > 67108864))
-                 OR (u.storage_mode = 'chunks' AND
-                     (u.file_size > 536870912 OR
+                 OR (u.storage_mode IN ('chunks', 'chunked') AND
+                     (NOT %s OR u.file_size > 536870912 OR
                       u.chunk_size IS NULL OR u.chunk_size <= 0 OR
                       u.chunk_size > 16777216 OR
                       u.chunk_count IS NULL OR u.chunk_count <= 0 OR
                       u.chunk_count > 4096 OR
                       u.file_size > u.chunk_count * u.chunk_size OR
                       u.file_size <= (u.chunk_count - 1) * u.chunk_size))
-                 OR COALESCE(u.storage_mode, 'inline') NOT IN ('inline', 'chunks')
+                 OR u.storage_mode IS NULL
+                 OR u.storage_mode NOT IN ('inline', 'chunks', 'chunked')
                )
         ) AND NOT EXISTS (
             SELECT 1 FROM file_v2_records r
              WHERE r.vault_id = %s
-               AND (r.verification_state = 'client_verified'
+               AND (r.saved_name_override_ciphertext IS NOT NULL
+                    OR r.verification_state = 'client_verified'
                     OR r.migrating_legacy IS NOT TRUE)
         )
         """,
-        (vault_id, vault_id),
+        (vault_id, chunked_route_enabled, vault_id),
     )
     row = cur.fetchone()
     return bool(row and row[0] is True)
@@ -1157,7 +1170,7 @@ def _zk_login_finalize_sync(
             device_trust_complete
             and vault_row["vault_handle"] is not None
             and vault_row["wrapped_mvk"] is not None
-            and vault_row["pin_verifier"] is not None
+            and bool(vault_row.get("pin_verifier"))
             and os.getenv("VAULTAI_ZK_METADATA_INVENTORY_ENABLED", "false")
             .strip().lower() == "true"
             and os.getenv("VAULTAI_ZK_LEGACY_EXPORT_ENABLED", "false")
@@ -1174,13 +1187,17 @@ def _zk_login_finalize_sync(
             except Exception:
                 conn.rollback()
                 logger.exception("[ZK-LOGIN-FINALIZE] file-list offer check failed")
-        if (offer_base and
-                os.getenv("VAULTAI_ZK_LEGACY_CHUNK_MANIFEST_ENABLED", "false")
-                .strip().lower() == "true"):
+        if offer_base and file_list_offer:
             try:
                 with _zk_login_phase("metadata"):
                     file_download_offer = _pin_free_legacy_file_download_ready(
                         conn, str(vault_row["vault_id"]),
+                        chunked_route_enabled=(
+                            os.getenv(
+                                "VAULTAI_ZK_LEGACY_CHUNK_MANIFEST_ENABLED", "false",
+                            ).strip().lower() == "true"
+                            and bool(os.getenv("VAULTAI_UPLOAD_TOKEN_SECRET"))
+                        ),
                     )
             except Exception:
                 conn.rollback()

@@ -32,7 +32,7 @@ def test_file_list_offer_and_inventory_match_schema_0056_types(monkeypatch):
                 content_type_ciphertext bytea, detected_type_ciphertext bytea,
                 detected_service_ciphertext bytea, asset_type_ciphertext bytea,
                 encrypted_file_data text, created_at timestamptz,
-                saved_name text, content_type text, detected_type text,
+                file_name text, saved_name text, content_type text, detected_type text,
                 detected_service text, asset_type text, relative_path text
             )
         """)
@@ -75,6 +75,9 @@ def test_file_list_offer_and_inventory_match_schema_0056_types(monkeypatch):
         assert auth_zk_routes._pin_free_legacy_file_download_ready(
             conn, vault_id,
         ) is True
+        assert auth_zk_routes._pin_free_legacy_file_download_ready(
+            conn, vault_id, chunked_route_enabled=False,
+        ) is True
         monkeypatch.setenv("VAULTAI_ZK_METADATA_INVENTORY_ENABLED", "true")
         monkeypatch.setattr(
             zk_metadata_inventory_routes, "is_vault_zk_adopted",
@@ -106,10 +109,10 @@ def test_file_list_offer_rejects_missing_labels_and_new_v2(monkeypatch):
         with conn.cursor() as cur:
             cur.execute("""
                 CREATE TEMP TABLE uploaded_files (
-                    vault_id uuid, upload_status text, file_size bigint,
+                    id text, vault_id uuid, upload_status text, file_size bigint,
                     storage_mode text, encrypted_file_data text,
                     chunk_size integer, chunk_count integer,
-                    file_name_ciphertext bytea, saved_name text,
+                    file_name text, file_name_ciphertext bytea, saved_name text,
                     saved_name_ciphertext bytea, content_type text,
                     content_type_ciphertext bytea, detected_type text,
                     detected_type_ciphertext bytea, detected_service text,
@@ -120,14 +123,15 @@ def test_file_list_offer_rejects_missing_labels_and_new_v2(monkeypatch):
             cur.execute("""
                 CREATE TEMP TABLE file_v2_records (
                     vault_id text, verification_state text,
-                    migrating_legacy boolean
+                    migrating_legacy boolean,
+                    saved_name_override_ciphertext bytea
                 )
             """)
             cur.execute("""
                 INSERT INTO uploaded_files
-                    (vault_id, upload_status, file_size, storage_mode,
+                    (id, vault_id, upload_status, file_size, storage_mode,
                      encrypted_file_data)
-                VALUES (%s::uuid, 'complete', 14, 'inline', 'ciphertext')
+                VALUES ('synthetic-file', %s::uuid, 'complete', 14, 'inline', 'ciphertext')
             """, (vault_id,))
         assert auth_zk_routes._pin_free_legacy_file_list_ready(
             conn, vault_id,
@@ -135,16 +139,22 @@ def test_file_list_offer_rejects_missing_labels_and_new_v2(monkeypatch):
         assert auth_zk_routes._pin_free_legacy_file_download_ready(
             conn, vault_id,
         ) is True
+        assert auth_zk_routes._pin_free_legacy_file_download_ready(
+            conn, vault_id, chunked_route_enabled=False,
+        ) is True
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE uploaded_files
-                   SET storage_mode='chunks', file_size=3,
+                   SET storage_mode='chunked', file_size=3,
                        chunk_size=16777216, chunk_count=1,
                        encrypted_file_data=NULL
             """)
         assert auth_zk_routes._pin_free_legacy_file_download_ready(
             conn, vault_id,
         ) is True
+        assert auth_zk_routes._pin_free_legacy_file_download_ready(
+            conn, vault_id, chunked_route_enabled=False,
+        ) is False
         with conn.cursor() as cur:
             cur.execute("UPDATE uploaded_files SET chunk_size=16777217")
         assert auth_zk_routes._pin_free_legacy_file_download_ready(
@@ -159,6 +169,60 @@ def test_file_list_offer_rejects_missing_labels_and_new_v2(monkeypatch):
         with conn.cursor() as cur:
             cur.execute("UPDATE uploaded_files SET file_name_ciphertext=%s",
                         (b"synthetic-label",))
+            cur.execute("UPDATE uploaded_files SET relative_path='Folder/file.txt'")
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is False
+        with conn.cursor() as cur:
+            cur.execute("UPDATE uploaded_files SET relative_path=NULL")
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is True
+        with conn.cursor() as cur:
+            cur.execute("UPDATE uploaded_files SET saved_name='AI name'")
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is False
+        with conn.cursor() as cur:
+            cur.execute("UPDATE uploaded_files SET saved_name_ciphertext=%s",
+                        (b"synthetic-encrypted-ai-name",))
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is False
+        with conn.cursor() as cur:
+            cur.execute("UPDATE uploaded_files SET saved_name=NULL")
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is True
+        with conn.cursor() as cur:
+            cur.execute("UPDATE uploaded_files SET file_name='old-client-name'")
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is False
+        with conn.cursor() as cur:
+            cur.execute("UPDATE uploaded_files SET file_name=NULL")
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is True
+        with conn.cursor() as cur:
+            cur.execute("UPDATE uploaded_files SET file_name_ciphertext=%s",
+                        (b"x" * 4097,))
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is False
+        with conn.cursor() as cur:
+            cur.execute("UPDATE uploaded_files SET file_name_ciphertext=%s",
+                        (b"synthetic-label",))
+            cur.execute("UPDATE uploaded_files SET id=%s", ("x" * 129,))
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is False
+        with conn.cursor() as cur:
+            cur.execute("UPDATE uploaded_files SET id='synthetic-file'")
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is True
+        with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO file_v2_records
                     (vault_id, verification_state, migrating_legacy)

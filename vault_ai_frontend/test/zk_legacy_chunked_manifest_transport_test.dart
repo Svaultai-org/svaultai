@@ -15,7 +15,7 @@ void main() {
         return http.Response(
             jsonEncode(<String, dynamic>{
               'file_id': 'synthetic-file',
-              'storage_mode': 'chunks',
+          'storage_mode': 'chunked',
               'file_size': 3,
               'chunk_size': 3,
               'chunk_count': 1,

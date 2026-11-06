@@ -11205,7 +11205,7 @@ async def beneficiary_claim_transfer_endpoint(
                     pass
                 continue
 
-            if storage_mode != "chunks":
+            if storage_mode not in ("chunked", "chunks"):
                                                                       
                                                                 
                 raise HTTPException(

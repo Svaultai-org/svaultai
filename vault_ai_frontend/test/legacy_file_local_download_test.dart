@@ -106,6 +106,14 @@ void main() {
     ]);
   });
 
+  test('source metadata stays paired with decrypted bytes', () async {
+    final expected = Uint8List.fromList([2, 4, 6]);
+    final harness = _Harness(await _ciphertext(expected, legacyKey), 3);
+    final result = await reader(harness).readWithSource(_fileId);
+    expect(result.bytes, expected);
+    expect(result.sourceMetadata['file_size'], 3);
+  });
+
   test('changed source size fails without yielding bytes', () async {
     final payload = List<int>.filled(32, 1);
     final harness = _Harness(await _ciphertext(payload, legacyKey), 32)

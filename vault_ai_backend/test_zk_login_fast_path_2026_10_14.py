@@ -233,7 +233,7 @@ def test_file_offers_require_trusted_finalize_and_enabled_routes(
     monkeypatch.setattr(routes, "_pin_free_legacy_file_list_ready",
                         lambda _conn, _vault_id: True)
     monkeypatch.setattr(routes, "_pin_free_legacy_file_download_ready",
-                        lambda _conn, _vault_id: True)
+                        lambda _conn, _vault_id, **_kwargs: True)
     offered = run_finalizer(finalizer)
     assert offered.pin_free_legacy_item_read is True
     assert offered.pin_free_legacy_file_list is True

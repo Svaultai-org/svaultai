@@ -62,8 +62,9 @@ import 'services/vault_key_hierarchy.dart' as vk_hier;
 import 'services/zk_auth_service.dart';
 import 'services/zk_pin_free_item_read_session.dart';
 import 'services/zk_pin_free_file_session.dart';
-import 'services/legacy_file_local_download.dart' as legacy_file_download;
+import 'services/legacy_file_read_session.dart' as legacy_file_read;
 import 'services/legacy_chunked_local_download.dart' as legacy_chunked_download;
+import 'services/legacy_file_metadata_consistency.dart';
 import 'services/auth_retry.dart';
 import 'services/billing_me_diagnostic.dart';
 import 'services/upload_queue.dart';
@@ -1493,6 +1494,7 @@ class AppState extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _clearLegacySavedItemReadSession();
+    _clearLegacyFileReadSession();
     ZkPinFreeItemReadSession.instance.clear();
     ZkPinFreeFileSession.instance.clear();
     _sessionEpoch++;
@@ -1719,6 +1721,7 @@ class AppState extends ChangeNotifier {
     if (!value) {
       ZkPinFreeItemReadSession.instance.lock();
       _clearLegacySavedItemReadSession();
+      _clearLegacyFileReadSession();
       // The lock transition itself must discard the PIN and derived keys.
       // Callers cannot be trusted to remember a separate cache clear, and
       // even a repeated lock must not retain credentials from a failed
@@ -2372,6 +2375,7 @@ class AppState extends ChangeNotifier {
     // cannot revoke, resurrect, or overwrite this replacement session.
     PrivateZkPinTransportSession.clear();
     _clearLegacySavedItemReadSession();
+    _clearLegacyFileReadSession();
     final epoch = ++_sessionEpoch;
     _sessionProbeEpoch++;
     st.SessionTermination.instance.bindSession(token);
@@ -2428,6 +2432,7 @@ class AppState extends ChangeNotifier {
     ZkPinFreeItemReadSession.instance.clear();
     ZkPinFreeFileSession.instance.clear();
     _clearLegacySavedItemReadSession();
+    _clearLegacyFileReadSession();
     final departingToken = sessionToken;
     final epoch = ++_sessionEpoch;
     _sessionProbeEpoch++;
@@ -5559,6 +5564,37 @@ _BoundLegacySavedItemReadSession? _boundLegacySavedItemReadSession;
 void _clearLegacySavedItemReadSession() {
   _boundLegacySavedItemReadSession?.reader.close();
   _boundLegacySavedItemReadSession = null;
+}
+
+final class _BoundLegacyFileReadSession {
+  const _BoundLegacyFileReadSession({
+    required this.owner,
+    required this.token,
+    required this.vaultId,
+    required this.mvk,
+    required this.legacyKey,
+    required this.generation,
+    required this.sessionEpoch,
+    required this.foregroundEpoch,
+    required this.reader,
+  });
+
+  final Object owner;
+  final String token;
+  final String vaultId;
+  final SecretKey mvk;
+  final SecretKey legacyKey;
+  final int generation;
+  final int sessionEpoch;
+  final int foregroundEpoch;
+  final legacy_file_read.LegacyFileReadSession reader;
+}
+
+_BoundLegacyFileReadSession? _boundLegacyFileReadSession;
+
+void _clearLegacyFileReadSession() {
+  _boundLegacyFileReadSession?.reader.close();
+  _boundLegacyFileReadSession = null;
 }
 
 VaultAIClient _savedItemClient(AppState app) => VaultAIClient(
@@ -9405,6 +9441,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   String? _pendingClientSecureItemDeleteId;
   String? _pendingClientSecureItemDeleteToken;
   bool loadingFiles = false;
+  bool _fileListRefreshRequired = false;
   bool loadingLogins = false;
   Future<void>? _vaultLoginsLoadFuture;
   String? _vaultLoginsLoadToken;
@@ -13613,6 +13650,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _zkPrivateChatFlow?.clear();
     _zkPrivateChatFlow = null;
     _zkPrivateChatMvk = null;
+    if (identical(_boundLegacyFileReadSession?.owner, this)) {
+      _clearLegacyFileReadSession();
+    }
     _clearConciergeExposureBindings();
     _chatMainnetSendApprovalSession.clear();
     if (_speech.isListening) {
@@ -14098,6 +14138,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   Future<void> _loadVaultFiles() async {
     if (!mounted) return;
+    // A stale offer cannot become current by retrying the same bearer.
+    if (_fileListRefreshRequired) return;
     final app = context.read<AppState>();
     final token = app.sessionToken;
 
@@ -14150,10 +14192,27 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       if (!mounted ||
           labelMutationGeneration != _savedFileLabelMutationGeneration) return;
+      final oldIds = vaultFiles.map((file) => file.id).toSet();
+      final newIds = parsed.map((file) => file.id).toSet();
+      if (oldIds.length != newIds.length || !oldIds.containsAll(newIds)) {
+        _boundLegacyFileReadSession?.reader.invalidate();
+      }
       setState(() {
         vaultFiles = parsed;
+        _fileListRefreshRequired = false;
       });
     } catch (e) {
+      if (e is ZkLegacyFileListChangedException) {
+        if (mounted) {
+          setState(() {
+            _fileListRefreshRequired = true;
+            vaultFiles = [];
+            _folderTreeData = null;
+          });
+          _showSnack('Files changed on another device. Sign in once to refresh them.');
+        }
+        return;
+      }
       if (app.handleApiException(e)) return;
       _showSnack('Could not load files: $e');
     } finally {
@@ -14168,6 +14227,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _loadFolderTree() async {
+    if (_fileListRefreshRequired) return;
     final app = context.read<AppState>();
     final token = app.sessionToken;
     if (token == null) return;
@@ -14206,7 +14266,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               }(),
         ];
       }
-      if (!mounted ||
+      if (!mounted || _fileListRefreshRequired ||
           labelMutationGeneration != _savedFileLabelMutationGeneration) return;
       setState(() {
         _folderTreeData = FolderTreeData.fromJson(response);
@@ -16090,8 +16150,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         throw const FormatException('Older file is unavailable');
       }
       final listed = matches.single;
+      final listedFileName = listed['saved_name'] is String &&
+              (listed['saved_name'] as String).trim().isNotEmpty
+          ? listed['saved_name'] as String
+          : listed['file_name'] is String &&
+                  (listed['file_name'] as String).trim().isNotEmpty
+              ? listed['file_name'] as String
+              : fallbackFileName;
+      final listedMime = listed['content_type'] is String &&
+              (listed['content_type'] as String).trim().isNotEmpty
+          ? listed['content_type'] as String
+          : fallbackMime;
       final storageMode = listed['storage_mode'] ?? 'inline';
-      if (storageMode == 'chunks') {
+      if (storageMode == 'chunked' || storageMode == 'chunks') {
         final proof = await proofProvider();
         final manifest = await client.getZkLegacyChunkedManifest(
           authToken: authToken,
@@ -16123,29 +16194,66 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           chunkSize: manifest['chunk_size'] as int,
           chunkCount: manifest['chunk_count'] as int,
         );
+        final refreshed = await client.listZkFileMetadata(
+          authToken: authToken,
+        );
+        if (!currentAccess()) throw StateError('Vault session changed');
+        final currentRows = (refreshed['files'] as List)
+            .whereType<Map<String, dynamic>>()
+            .where((row) => row['id'] == fileId)
+            .toList();
+        if (currentRows.length != 1) {
+          throw const FormatException('Older file changed during download');
+        }
+        requireUnchangedLegacyFileMetadata(listed, currentRows.single);
         return (
           bytes: bytes,
-          contentType: fallbackMime,
-          fileName: fallbackFileName,
+          contentType: listedMime,
+          fileName: listedFileName,
         );
       }
       if (storageMode != 'inline') {
         throw const FormatException('Unsupported older file storage');
       }
-      final export = legacy_export.LegacyCiphertextExportClient(
-        post: post, proofProvider: proofProvider,
-      );
-      final bytes = await legacy_file_download.LegacyFileLocalDownload(
-        export: export,
-        codec: legacy_codec.LegacyCiphertextMigrationCodec(
-          legacyKey: legacyKey, mvk: mvk,
-        ),
-        accessIsCurrent: currentAccess,
-      ).read(fileId);
+      var bound = _boundLegacyFileReadSession;
+      if (bound == null || !identical(bound.owner, this) ||
+          bound.token != authToken || bound.vaultId != vaultId ||
+          !identical(bound.mvk, mvk) ||
+          !identical(bound.legacyKey, legacyKey) ||
+          bound.generation != terminationGeneration ||
+          bound.sessionEpoch != sessionEpoch ||
+          bound.foregroundEpoch != foregroundEpoch) {
+        _clearLegacyFileReadSession();
+        final export = legacy_export.LegacyCiphertextExportClient(
+          post: post, proofProvider: proofProvider,
+        );
+        bound = _BoundLegacyFileReadSession(
+          owner: this, token: authToken, vaultId: vaultId,
+          mvk: mvk, legacyKey: legacyKey,
+          generation: terminationGeneration,
+          sessionEpoch: sessionEpoch,
+          foregroundEpoch: foregroundEpoch,
+          reader: legacy_file_read.LegacyFileReadSession(
+            export: export,
+            codec: legacy_codec.LegacyCiphertextMigrationCodec(
+              legacyKey: legacyKey, mvk: mvk,
+            ),
+            isCurrent: currentAccess,
+          ),
+        );
+        _boundLegacyFileReadSession = bound;
+      }
+      final opened = await bound.reader.readFileWith(fileId, (opened) async {
+        requireUnchangedLegacyFileMetadata(
+          listed, opened.sourceMetadata, sourceIsExport: true,
+        );
+        return opened;
+      });
+      if (!currentAccess()) throw StateError('Vault session changed');
       return (
-        bytes: bytes,
-        contentType: fallbackMime,
-        fileName: fallbackFileName,
+        bytes: opened.bytes,
+        contentType: listedMime,
+        fileName: listedFileName,
       );
     }
     final pin = await _VaultCrypto.currentPinOrThrow();
@@ -16195,7 +16303,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return (bytes: bytes, contentType: mime, fileName: fileName);
     }
 
-    if (mode != 'chunks') {
+    if (mode != 'chunked' && mode != 'chunks') {
       throw Exception('Unsupported storage_mode from backend: $mode');
     }
 
@@ -19744,6 +19852,37 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Widget _buildFilesSection(bool isMobile) {
+    if (_fileListRefreshRequired) {
+      return Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Your files changed during this session. They are still saved.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton(
+                  key: const Key('files_changed_sign_in_button'),
+                  onPressed: () async {
+                    await context.read<AppState>().signOut();
+                    if (!mounted) return;
+                    Navigator.pushNamedAndRemoveUntil(
+                      context, '/login', (route) => false,
+                    );
+                  },
+                  child: const Text('Sign in once to refresh files'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     if (loadingFiles) {
       return const Center(
         child: CircularProgressIndicator(),

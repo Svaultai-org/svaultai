@@ -101,12 +101,23 @@ def item_metadata_inventory(
 def file_metadata_inventory(
     after_file_id: str = Query(default="", max_length=128),
     limit: int = Query(default=MAX_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+    require_legacy_complete: bool = False,
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     _require_inventory(principal["vault_id"])
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        if require_legacy_complete:
+            # A second device can write an older row after this bearer was
+            # offered the PIN-free list. Recheck under one stable snapshot so
+            # an incomplete list cannot silently omit its newest file.
+            cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            from routes.auth_zk_routes import _pin_free_legacy_file_list_ready
+            if not _pin_free_legacy_file_list_ready(conn, principal["vault_id"]):
+                raise HTTPException(
+                    status_code=409, detail="legacy_file_list_changed",
+                )
         cur.execute(
             """
             SELECT u.id, u.file_size, u.storage_mode, u.upload_status,

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from routes import zk_metadata_inventory_routes as inventory
+from routes import auth_zk_routes, zk_metadata_inventory_routes as inventory
 
 
 VAULT = "11111111-1111-1111-1111-111111111111"
@@ -20,9 +20,11 @@ class _Cursor:
         self.db = db
         self.rows = []
 
-    def execute(self, sql, params):
+    def execute(self, sql, params=None):
         normalized = " ".join(sql.lower().split())
         self.db.queries.append(normalized)
+        if normalized.startswith("set transaction isolation level"):
+            return
         vault_id, after, count = params
         assert vault_id == self.db.principal["vault_id"]
         if "from vault_items" in normalized:
@@ -129,6 +131,30 @@ def test_file_inventory_includes_retired_marker_without_plaintext(monkeypatch):
     assert records[0]["file_name_ciphertext"]
     for forbidden in ("encrypted_file_data", "file_name\"", "content_type\""):
         assert forbidden not in response.text
+
+
+def test_offered_file_list_rechecks_after_another_device_changes_files(monkeypatch):
+    client, db = _client(monkeypatch)
+    monkeypatch.setattr(
+        auth_zk_routes, "_pin_free_legacy_file_list_ready",
+        lambda _conn, _vault_id: False,
+    )
+    blocked = client.get(
+        "/vault/files/metadata?require_legacy_complete=true",
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"] == "legacy_file_list_changed"
+    assert not any("from uploaded_files u" in query for query in db.queries)
+    db.queries.clear()
+    monkeypatch.setattr(
+        auth_zk_routes, "_pin_free_legacy_file_list_ready",
+        lambda _conn, _vault_id: True,
+    )
+    current = client.get(
+        "/vault/files/metadata?require_legacy_complete=true",
+    )
+    assert current.status_code == 200
+    assert len(current.json()["records"]) == 2
 
 
 def test_inventory_flag_and_vault_guard_fail_closed(monkeypatch):

@@ -6,6 +6,16 @@ import 'dart:typed_data';
 import 'legacy_ciphertext_export_client.dart';
 import 'legacy_ciphertext_migration_codec.dart';
 
+class LegacyFileLocalDownloadResult {
+  final Uint8List bytes;
+  final Map<String, dynamic> sourceMetadata;
+
+  const LegacyFileLocalDownloadResult({
+    required this.bytes,
+    required this.sourceMetadata,
+  });
+}
+
 class LegacyFileLocalDownload {
   final LegacyCiphertextExportClient export;
   final LegacyCiphertextMigrationCodec codec;
@@ -17,7 +27,10 @@ class LegacyFileLocalDownload {
     required this.accessIsCurrent,
   });
 
-  Future<Uint8List> read(String fileId) async {
+  Future<Uint8List> read(String fileId) async =>
+      (await readWithSource(fileId)).bytes;
+
+  Future<LegacyFileLocalDownloadResult> readWithSource(String fileId) async {
     if (fileId.isEmpty || fileId.length > 128) {
       throw const FormatException('Invalid file identity');
     }
@@ -61,7 +74,10 @@ class LegacyFileLocalDownload {
       if (bytes.length != declaredSize) {
         throw const FormatException('Older file size did not match');
       }
-      return bytes;
+      return LegacyFileLocalDownloadResult(
+        bytes: bytes,
+        sourceMetadata: source.sourceMetadata,
+      );
     } finally {
       export.clearGrant();
     }

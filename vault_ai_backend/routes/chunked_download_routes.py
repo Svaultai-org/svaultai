@@ -74,7 +74,8 @@ def _pin_free_chunked_manifest_sync(
         row = cur.fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="file_not_found")
-        if row["storage_mode"] != "chunks" or row["upload_status"] != "complete":
+        if (row["storage_mode"] not in ("chunked", "chunks") or
+                row["upload_status"] != "complete"):
             raise HTTPException(status_code=409, detail="chunked_file_unavailable")
         file_size = int(row["file_size"] or 0)
         chunk_size = int(row["chunk_size"] or 0)
@@ -95,7 +96,7 @@ def _pin_free_chunked_manifest_sync(
         conn.commit()
         return {
             "file_id": file_id,
-            "storage_mode": "chunks",
+            "storage_mode": "chunked",
             "file_size": file_size,
             "chunk_size": chunk_size,
             "chunk_count": chunk_count,
@@ -195,7 +196,7 @@ async def download_file_manifest(
             "next": "legacy",
         }
 
-    if storage_mode == "chunks":
+    if storage_mode in ("chunked", "chunks"):
         download_token, exp = issue_chunk_token(
             kind="download",
             vault_id=vault_id,
@@ -252,7 +253,7 @@ async def download_file_chunk(
             raise HTTPException(status_code=404, detail="File not found")
         if str(row["vault_id"]) != str(vault_id):
             raise HTTPException(status_code=403, detail="File not yours")
-        if (row["storage_mode"] or "inline") != "chunks":
+        if (row["storage_mode"] or "inline") not in ("chunked", "chunks"):
             raise HTTPException(
                 status_code=400,
                 detail="Inline file - use the legacy POST /download-file endpoint",

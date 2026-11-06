@@ -88,7 +88,7 @@ def harness(monkeypatch):
             "file_size": 2_100_000,
             "chunk_size": 1_048_576,
             "chunk_count": 3,
-            "storage_mode": "chunks",
+            "storage_mode": "chunked",
             "upload_status": "complete",
         },
         "proofs": set(),
@@ -144,7 +144,7 @@ def test_manifest_uses_real_one_time_session_proof_and_existing_chunk_token(harn
         "file_id", "storage_mode", "file_size", "chunk_size",
         "chunk_count", "download_token", "download_token_expires_at",
     }
-    assert response.json()["storage_mode"] == "chunks"
+    assert response.json()["storage_mode"] == "chunked"
     assert response.json()["file_size"] == state["row"]["file_size"]
     assert state["reads"] == [(principal["vault_id"], state["row"]["file_size"])]
     assert state["commits"] == 1

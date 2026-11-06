@@ -334,7 +334,7 @@ async def upload_file_init(
                     NULL, NULL, FALSE,
                     NULL, NULL, FALSE,
                     NULL, NULL, %s,
-                    'chunks', %s, %s, 'uploading',
+                    'chunked', %s, %s, 'uploading',
                     %s, %s,
                     %s, %s
                 )
@@ -363,7 +363,7 @@ async def upload_file_init(
                     NULL, NULL, FALSE,
                     %s, %s, FALSE,
                     %s, %s, %s,
-                    'chunks', %s, %s, 'uploading',
+                    'chunked', %s, %s, 'uploading',
                     %s, %s
                 )
                 """,
@@ -470,7 +470,8 @@ async def upload_file_chunk(
         if str(row["vault_id"]) != str(vault_id):
             conn.rollback()
             raise HTTPException(status_code=403, detail="Upload not yours")
-        if row["storage_mode"] != "chunks" or row["upload_status"] != "uploading":
+        if (row["storage_mode"] not in ("chunked", "chunks") or
+                row["upload_status"] != "uploading"):
             conn.rollback()
             raise HTTPException(
                 status_code=409,
@@ -555,7 +556,7 @@ async def upload_file_finalize(
         if not row:
             conn.rollback()
             raise HTTPException(status_code=404, detail="Upload not found")
-        if row["storage_mode"] != "chunks":
+        if row["storage_mode"] not in ("chunked", "chunks"):
             conn.rollback()
             raise HTTPException(status_code=409, detail="Not a chunked upload")
         if row["upload_status"] == "complete":
