@@ -147,23 +147,60 @@ bool _containsRawPinField(Object? value) {
   return false;
 }
 
-/// Catch PIN requests from the active private ZK session before transport.
-/// A lost MVK cannot turn this guard off; logout or session rebinding does.
-void assertPrivateOnlyPinFreeBody(Object? body) {
-  if (!PrivateZkPinTransportSession.active || body == null) return;
+bool _requestBodyContainsPin(Object? body) {
   Object? parsed = body;
   if (body is String) {
     try {
       parsed = jsonDecode(body);
     } on FormatException {
-      if (RegExp(r'(^|[?&])pin=', caseSensitive: false).hasMatch(body)) {
-        throw StateError('Raw PIN requests are unavailable in private mode.');
-      }
-      return;
+      return RegExp(r'(^|[?&])pin=', caseSensitive: false).hasMatch(body);
     }
   }
-  if (_containsRawPinField(parsed)) {
+  return _containsRawPinField(parsed);
+}
+
+/// Catch PIN requests from the active private ZK session before transport.
+/// A lost MVK cannot turn this guard off; logout or session rebinding does.
+void assertPrivateOnlyPinFreeBody(Object? body) {
+  if (!PrivateZkPinTransportSession.active || body == null) return;
+  if (_requestBodyContainsPin(body)) {
     throw StateError('Raw PIN requests are unavailable in private mode.');
+  }
+}
+
+/// An authenticated OPAQUE offer replaces a specific older read route for the
+/// life of that bearer. Keep this check at the HTTP boundary as well as at
+/// the feature call sites: a direct or late caller must not revive a PIN read
+/// after a file or saved-item read was offered without one. Other legacy
+/// actions remain available while their replacements are being built.
+void assertOfferedReadPinFreeRequest(
+  Uri uri,
+  Map<String, String>? headers, {
+  Object? body,
+}) {
+  final authorization = headers?['Authorization'] ?? headers?['authorization'];
+  if (authorization == null || !authorization.startsWith('Bearer ')) return;
+  final token = authorization.substring(7);
+  if (token.isEmpty) return;
+  // FastAPI can redirect a trailing slash while preserving the POST body.
+  final path = uri.path.replaceFirst(RegExp(r'/+$'), '');
+  final fileSession = ZkPinFreeFileSession.instance;
+  final itemSession = ZkPinFreeItemReadSession.instance;
+  final offered = switch (path) {
+    '/list-files' => fileSession.listOfferedForToken(token),
+    '/download-file' || '/download-file/manifest' =>
+      fileSession.downloadOfferedForToken(token),
+    '/list-secure-items' || '/get-secure-item' =>
+      itemSession.wasOfferedForToken(token),
+    _ when RegExp(r'^/files/[^/]+/related$').hasMatch(path) =>
+      fileSession.listOfferedForToken(token) ||
+          fileSession.downloadOfferedForToken(token),
+    _ => false,
+  };
+  if (!offered) return;
+  if (_requestBodyContainsPin(body) ||
+      uri.queryParametersAll.keys.any((key) => key.toLowerCase() == 'pin')) {
+    throw StateError('This read uses the private vault route.');
   }
 }
 
@@ -591,9 +628,10 @@ class _SessionBoundHttp {
   final http.Client? _client;
   final void Function()? _beforeResponse;
 
-  Future<http.Response> _send(Map<String, String>? headers,
+  Future<http.Response> _send(Uri url, Map<String, String>? headers,
       Future<http.Response> Function() send, {Object? body}) async {
     assertPrivateOnlyPinFreeBody(body);
+    assertOfferedReadPinFreeRequest(url, headers, body: body);
     final scope = _requestScopeFor(headers);
     _assertCurrentRequest(scope);
     final response = await send();
@@ -605,7 +643,7 @@ class _SessionBoundHttp {
   }
 
   Future<http.Response> get(Uri url, {Map<String, String>? headers}) => _send(
-      headers,
+      url, headers,
       () =>
           _client?.get(url, headers: headers) ??
           http.get(url, headers: headers));
@@ -613,7 +651,7 @@ class _SessionBoundHttp {
   Future<http.Response> post(Uri url,
           {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
       _send(
-          headers,
+          url, headers,
           () =>
               _client?.post(url,
                   headers: headers, body: body, encoding: encoding) ??
@@ -623,7 +661,7 @@ class _SessionBoundHttp {
   Future<http.Response> put(Uri url,
           {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
       _send(
-          headers,
+          url, headers,
           () =>
               _client?.put(url,
                   headers: headers, body: body, encoding: encoding) ??
@@ -633,7 +671,7 @@ class _SessionBoundHttp {
   Future<http.Response> patch(Uri url,
           {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
       _send(
-          headers,
+          url, headers,
           () =>
               _client?.patch(url,
                   headers: headers, body: body, encoding: encoding) ??
@@ -644,7 +682,7 @@ class _SessionBoundHttp {
   Future<http.Response> delete(Uri url,
           {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
       _send(
-          headers,
+          url, headers,
           () =>
               _client?.delete(url,
                   headers: headers, body: body, encoding: encoding) ??
