@@ -5618,18 +5618,16 @@ Future<Map<String, dynamic>> _readLegacyZkSavedItem(
     );
     _boundLegacySavedItemReadSession = bound;
   }
-  final source = await bound.reader.readItem(itemId);
-  final record = source.record;
-  try {
+  return bound.reader.readItemWith(itemId, (_, source) async {
     final key = await vk_hier.VaultKeyHierarchy(mvk).metadataKey();
     Future<String> label(String plainField, String cipherField) async {
-      final encrypted = record[cipherField];
+      final encrypted = source.sourceMetadata[cipherField];
       if (encrypted is String && encrypted.isNotEmpty) {
         return utf8.decode(await vk_hier.aesGcmUnwrap(
           key, vk_hier.b64urlDecode(encrypted),
         ));
       }
-      final plain = record[plainField];
+      final plain = source.sourceMetadata[plainField];
       if (plain is String && plain.isNotEmpty) return plain;
       throw const FormatException('Saved-item label is unavailable');
     }
@@ -5651,10 +5649,7 @@ Future<Map<String, dynamic>> _readLegacyZkSavedItem(
       'notes': hasEnvelope ? raw['notes'] : null,
       'storage_engine': 'legacy_compatibility',
     };
-  } catch (_) {
-    bound.reader.invalidate();
-    rethrow;
-  }
+  });
 }
 
 /// Best-effort transparent adoption after successful legacy unlock.
