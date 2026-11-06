@@ -5059,7 +5059,7 @@ InheritanceRevealLoginIdentifier selectInheritanceRevealLoginIdentifier({
       source: 'none',
     );
   }
-  if (vh.isValidVaultHandleDisplay(name)) {
+  if (vh.isExplicitVaultHandleEntry(name)) {
     return InheritanceRevealLoginIdentifier(
       vaultName: null,
       vaultHandle: name,
@@ -5847,7 +5847,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
   }
 
   void _maybeMarkZkHandle() {
-    final zk = vh.isValidVaultHandleDisplay(vaultNameCtrl.text.trim());
+    final zk = vh.isExplicitVaultHandleEntry(vaultNameCtrl.text);
     if (zk != _isZkHandleInput) {
       setState(() => _isZkHandleInput = zk);
     }
@@ -6012,7 +6012,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     // accepted — routed via the handle branch of loginVault.
     // An unknown OPAQUE identifier stays on the ZK path in normal builds.
     // A dedicated legacy migration build can opt into /auth/login below.
-    final bool entryIsHandle = vh.isValidVaultHandleDisplay(vaultName);
+    final bool entryIsHandle = vh.isExplicitVaultHandleEntry(vaultName);
 
     // Preflight: verify the entered identifier is derivable BEFORE
     // touching the network. Any exception (InvalidUsername from a

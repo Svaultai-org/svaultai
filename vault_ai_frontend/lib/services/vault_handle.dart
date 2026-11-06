@@ -60,6 +60,10 @@ const Map<String, int> _crockfordDecode = {
 };
 
 final RegExp _validInputCharsRe = RegExp(r'^[0-9A-Za-z\- ]+$');
+final RegExp _explicitHandleEntryRe = RegExp(
+  r'^VLT-(?:[0-9A-Za-z]{4}-){5}[0-9A-Za-z]{4}$',
+  caseSensitive: false,
+);
 
 class InvalidVaultHandle implements Exception {
   final String message;
@@ -253,6 +257,16 @@ bool isValidVaultHandleDisplay(String text) {
   } on InvalidVaultHandle {
     return false;
   }
+}
+
+/// Classify a user-entered login identifier. The permissive handle parser
+/// also accepts a bare 24-character Crockford string; a normal vault name
+/// can accidentally have that shape after punctuation is removed. Only an
+/// explicit six-group VLT- display form selects the handle login path.
+bool isExplicitVaultHandleEntry(String text) {
+  final entry = text.trim();
+  return _explicitHandleEntryRe.hasMatch(entry) &&
+      isValidVaultHandleDisplay(entry);
 }
 
 /// Base64url-encode without padding (matches Python's b64url helper).

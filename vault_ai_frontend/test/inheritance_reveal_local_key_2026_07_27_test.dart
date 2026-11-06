@@ -55,6 +55,30 @@ void main() {
       expect(selected.vaultHandle, isNull);
       expect(selected.source, 'vault_name');
     });
+
+    test('Crockford-shaped ordinary name is still routed as a name', () {
+      const name = 'synthetic-offer-b0e501a04d';
+      final selected = selectInheritanceRevealLoginIdentifier(
+        vaultName: name,
+        lastVaultName: name,
+        vaultHandle: null,
+      );
+
+      expect(selected.vaultName, name);
+      expect(selected.vaultHandle, isNull);
+      expect(selected.source, 'vault_name');
+    });
+
+    test('VLT-like name without the full display shape stays a name', () {
+      final selected = selectInheritanceRevealLoginIdentifier(
+        vaultName: 'VLT-Quarterly vault',
+        lastVaultName: null,
+        vaultHandle: null,
+      );
+
+      expect(selected.vaultName, 'VLT-Quarterly vault');
+      expect(selected.vaultHandle, isNull);
+    });
   });
 
   group('resolveInheritanceRevealLocalKey', () {

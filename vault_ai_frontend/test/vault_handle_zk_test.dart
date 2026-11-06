@@ -75,6 +75,27 @@ void main() {
       expect(isValidVaultHandleDisplay('not a handle'), isFalse);
     });
 
+    test('ordinary 24-character vault names never select handle login', () {
+      const name = 'synthetic-offer-b0e501a04d';
+      // The low-level parser intentionally tolerates bare Crockford input.
+      // Login classification must not infer a handle from that tolerance.
+      expect(isValidVaultHandleDisplay(name), isTrue);
+      expect(isExplicitVaultHandleEntry(name), isFalse);
+      expect(isExplicitVaultHandleEntry('0123456789ABCDEFGHJKMNPQ'), isFalse);
+      expect(deriveVaultHandleFromUsername(name), isA<Uint8List>());
+    });
+
+    test('only an explicit VLT display form selects handle login', () {
+      const canonical = 'VLT-0000-1111-2222-3333-4444-5555';
+      expect(isExplicitVaultHandleEntry(canonical), isTrue);
+      expect(isExplicitVaultHandleEntry(canonical.toLowerCase()), isTrue);
+      expect(isExplicitVaultHandleEntry(' $canonical '), isTrue);
+      expect(isExplicitVaultHandleEntry('VLT-Quarterly vault'), isFalse);
+      expect(isExplicitVaultHandleEntry('VLT-0000-1111-2222-3333-4444'),
+          isFalse);
+      expect(isExplicitVaultHandleEntry('$canonical notes'), isFalse);
+    });
+
     test('confusable chars normalized (I=1, L=1, O=0, U=V)', () {
       final raw = generateVaultHandle();
       final disp = vaultHandleToDisplay(raw);
