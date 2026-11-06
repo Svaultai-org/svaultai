@@ -579,9 +579,13 @@ async def _global_exception_handler(request: Request, exc: Exception):
     except Exception:
         pass
     from fastapi.responses import JSONResponse
-    logger.exception(
-        "[CHAT-DEBUG] unhandled 500 path=%s origin=%s err=%s",
-        request.url.path, origin, repr(exc),
+    # Exception messages and tracebacks can contain request data from a
+    # dependency. Keep only framework-owned route metadata and the class.
+    route = getattr(request.scope.get("route"), "path", None)
+    logger.error(
+        "[SERVER] unhandled 500 route=%s error_type=%s",
+        route if isinstance(route, str) else "<unmatched>",
+        type(exc).__name__,
     )
     return JSONResponse(
         status_code=500,
@@ -591,10 +595,7 @@ async def _global_exception_handler(request: Request, exc: Exception):
             "error_class": type(exc).__name__,
                                                            
                                                              
-            "hint": (
-                "Server-side error. Check the backend logs for "
-                "the stack trace."
-            ),
+            "hint": "Server-side error. Please try again later.",
         },
     )
 
@@ -681,6 +682,8 @@ CORS_ALLOWED_HEADERS = [
     # regression tests.
     "X-App-Release",
     "X-SVaultAI-File-V2-Reader",
+    "X-SVaultAI-Pin-Free-Read-Offers",
+    "X-SVaultAI-Pin-Free-File-Create",
     "X-Chat-Request-Id",
     # 2026-07-22 (4) Safari-specific CORS regression follow-up.
     # After the (3) fix landed, the Safari production frontend still
@@ -2426,7 +2429,7 @@ def enqueue_semantic_profile_for_file(
     except Exception as exc:
         print(
             "[CHAT-DEBUG] enqueue_semantic_profile_failed "
-            f"file_id={file_id} error_type={type(exc).__name__} repr={exc!r}",
+            f"error_type={type(exc).__name__}",
             flush=True,
         )
 
@@ -2478,8 +2481,7 @@ def _persist_naming_text_classification(
     except Exception as exc:
         print(
             "[CHAT-DEBUG] persist_naming_classification_db_failed "
-            f"file_id={file_id} doc_type={doc_type!r} "
-            f"error_type={type(exc).__name__} repr={exc!r}",
+            f"error_type={type(exc).__name__}",
             flush=True,
         )
         return None
@@ -10010,7 +10012,7 @@ async def debug_whoami(request: Request):
 
 
 @app.get("/health")
-async def health():
+def health():
 
 
     try:
@@ -10214,61 +10216,19 @@ async def verify_pin_endpoint(
         raise
     from zk_raw_pin_content_gate import reject_zk_raw_pin_content
     reject_zk_raw_pin_content(vault_id)
-    print("[PIN-DEBUG] ROUTE_ENTRY", flush=True)
-    print(
-        f"[PIN-DEBUG] AUTH_OK vault=...{str(vault_id)[-6:]}",
-        flush=True,
-    )
-    print("[PIN-DEBUG] DEVICE_GATE_OK", flush=True)
-    print(
-        f"[PIN-DEBUG] VERIFY_ROUTE_ENTRY vault=...{str(vault_id)[-6:]} "
-        f"pin_len={len(payload.pin or '')}",
-        flush=True,
-    )
 
     try:
-        print("[PIN-DEBUG] VERIFY_START", flush=True)
-                                                                           
-                                                    
         verify_vault_pin(vault_id, payload.pin)
-        print(
-            f"[PIN-DEBUG] VERIFY_ROUTE_OK vault=...{str(vault_id)[-6:]}",
-            flush=True,
-        )
         return {"valid": True}
     except HTTPException as exc:
-        print(
-            f"[PIN-DEBUG] HTTP_FAIL status={exc.status_code} "
-            f"detail={exc.detail!r}",
-            flush=True,
-        )
-                                                                  
         if exc.status_code in (401, 423):
             detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
-            print(
-                f"[PIN-DEBUG] VERIFY_ROUTE_REJECT vault=...{str(vault_id)[-6:]} "
-                f"status={exc.status_code} code={detail.get('code')!r} "
-                f"attempts_left={detail.get('attempts_left')!r}",
-                flush=True,
-            )
             return {
                 "valid": False,
                 "code": detail.get("code"),
                 "message": detail.get("message"),
                 "attempts_left": detail.get("attempts_left"),
             }
-        print(
-            f"[PIN-DEBUG] VERIFY_ROUTE_HTTPEXC vault=...{str(vault_id)[-6:]} "
-            f"status={exc.status_code}",
-            flush=True,
-        )
-        raise
-    except Exception as exc:
-        print(
-            f"[PIN-DEBUG] VERIFY_ROUTE_EXC vault=...{str(vault_id)[-6:]} "
-            f"error_type={type(exc).__name__} repr={exc!r}",
-            flush=True,
-        )
         raise
 
 from datetime import datetime, timedelta, timezone
@@ -11205,7 +11165,7 @@ async def beneficiary_claim_transfer_endpoint(
                     pass
                 continue
 
-            if storage_mode not in ("chunked", "chunks"):
+            if storage_mode != "chunks":
                                                                       
                                                                 
                 raise HTTPException(
@@ -11805,8 +11765,7 @@ async def upload_file_endpoint(
                                                                     
                 print(
                     "[CHAT-DEBUG] upload_naming_classification_failed "
-                    f"file_id={result.get('file_id')} "
-                    f"error_type={type(exc).__name__} repr={exc!r}",
+                    f"error_type={type(exc).__name__}",
                     flush=True,
                 )
 
@@ -13710,13 +13669,6 @@ async def chat_endpoint(
     reject_zk_raw_pin_content(vault_id)
 
                                                                    
-    print(
-        f"[CHAT-DEBUG] entry vault_id={vault_id} "
-        f"pin_len={len(req.pin or '')} encrypted_len={len(req.encrypted_message or '')} "
-        f"uploaded_file_count={len(req.uploaded_file_ids or [])}",
-        flush=True,
-    )
-
     if not req.encrypted_message:
         print("[CHAT-DEBUG] missing_encrypted_message", flush=True)
         raise HTTPException(status_code=400, detail="Missing encrypted message")
@@ -18001,8 +17953,8 @@ async def chat_endpoint(
                     )
                 except Exception as exc:
                     print(
-                        f"[CHAT-DEBUG] username_policy_failed service={service!r} "
-                        f"error_type={type(exc).__name__} repr={exc!r}",
+                        f"[CHAT-DEBUG] username_policy_failed "
+                        f"error_type={type(exc).__name__}",
                         flush=True,
                     )
                     resolved_policy = conservative_username_policy(service)

@@ -114,6 +114,13 @@ def reset_secret_for_tests() -> None:
 
 _TOKEN_ID_BYTES = 16
 _HMAC_BYTES = 32                  
+_SIGNED_OFFER_VERSION = b"\x03"
+_SIGNED_OFFER_DOMAIN = b"svaultai/session/opaque-read-offers-v1\x00"
+PIN_FREE_ITEM_READ_OFFER = 1
+PIN_FREE_FILE_LIST_OFFER = 2
+PIN_FREE_FILE_DOWNLOAD_OFFER = 4
+PIN_FREE_FILE_CREATE_OFFER = 8
+_SIGNED_OFFER_MASK = 15
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -151,7 +158,7 @@ def _format_token(token_id_bytes: bytes) -> str:
     return _b64url_encode(token_id_bytes + sig)
 
 
-def _parse_token(token: str) -> Optional[bytes]:
+def _parse_token_claims(token: str) -> Optional[tuple[bytes, int]]:
 
 
     if not token or not isinstance(token, str):
@@ -160,14 +167,49 @@ def _parse_token(token: str) -> Optional[bytes]:
         raw = _b64url_decode(token.strip())
     except Exception:
         return None
-    if len(raw) != _TOKEN_ID_BYTES + _HMAC_BYTES:
+    if len(raw) == _TOKEN_ID_BYTES + _HMAC_BYTES:
+        token_id_bytes = raw[:_TOKEN_ID_BYTES]
+        provided_sig = raw[_TOKEN_ID_BYTES:]
+        expected_sig = _sign_token_id(token_id_bytes)
+        offer_bits = 0
+    elif (len(raw) == 2 + _TOKEN_ID_BYTES + _HMAC_BYTES and
+          raw[:1] == _SIGNED_OFFER_VERSION and
+          not (raw[1] & ~_SIGNED_OFFER_MASK)):
+        payload = raw[:2 + _TOKEN_ID_BYTES]
+        token_id_bytes = raw[2:2 + _TOKEN_ID_BYTES]
+        provided_sig = raw[2 + _TOKEN_ID_BYTES:]
+        expected_sig = hmac.new(
+            _get_secret(), _SIGNED_OFFER_DOMAIN + payload, "sha256",
+        ).digest()
+        offer_bits = raw[1]
+    else:
         return None
-    token_id_bytes = raw[:_TOKEN_ID_BYTES]
-    provided_sig = raw[_TOKEN_ID_BYTES:]
-    expected_sig = _sign_token_id(token_id_bytes)
     if not hmac.compare_digest(provided_sig, expected_sig):
         return None
-    return token_id_bytes
+    return token_id_bytes, offer_bits
+
+
+def _parse_token(token: str) -> Optional[bytes]:
+    claims = _parse_token_claims(token)
+    return claims[0] if claims is not None else None
+
+
+def sign_opaque_read_offer_token(token: str, offer_bits: int) -> str:
+    """Re-sign the just-issued OPAQUE login bearer with exact offer bits.
+
+    The live schema does not distinguish OPAQUE from legacy sessions. Only
+    the OPAQUE finalize handler calls this after the proof succeeds; the
+    version-3 MAC then proves that handler issued the returned bearer.
+    """
+    if type(offer_bits) is not int or offer_bits & ~_SIGNED_OFFER_MASK:
+        raise ValueError("invalid signed offers")
+    claims = _parse_token_claims(token)
+    if claims is None or len(_b64url_decode(token)) != 48:
+        raise ValueError("fresh login bearer required")
+    payload = _SIGNED_OFFER_VERSION + bytes([offer_bits]) + claims[0]
+    sig = hmac.new(_get_secret(), _SIGNED_OFFER_DOMAIN + payload,
+                   "sha256").digest()
+    return _b64url_encode(payload + sig)
 
 
 # ============================================================
@@ -275,6 +317,7 @@ class SessionPrincipal(TypedDict):
     token_id: str
     device_id: Optional[str]
     file_v2_reader_capable: NotRequired[bool]
+    pin_free_read_offers: NotRequired[int]
 
 
 def issue_session_token(
@@ -690,6 +733,31 @@ def _load_principal(
         conn.close()
 
 
+def require_signed_offer_route(principal: SessionPrincipal, *, path: str) -> None:
+    """Keep offered routes PIN-free for the lifetime of the signed bearer."""
+    offers = principal.get("pin_free_read_offers", 0)
+    if type(offers) is not int or offers & ~_SIGNED_OFFER_MASK:
+        raise _auth_401("invalid_session")
+    path = path.rstrip("/")
+    if (path in ("/upload-file", "/upload-file/init") and
+            offers & PIN_FREE_FILE_CREATE_OFFER):
+        raise HTTPException(status_code=409, detail="pin_free_file_create_required")
+    blocked_read = (
+        (path in ("/list-secure-items", "/get-secure-item") and
+         bool(offers & PIN_FREE_ITEM_READ_OFFER))
+        or (path == "/list-files" and
+            bool(offers & PIN_FREE_FILE_LIST_OFFER))
+        or (path in ("/download-file", "/download-file/manifest") and
+            bool(offers & PIN_FREE_FILE_DOWNLOAD_OFFER))
+        or (path.startswith("/files/") and path.endswith("/related") and
+            path.count("/") == 3 and
+            bool(offers & (PIN_FREE_FILE_LIST_OFFER |
+                           PIN_FREE_FILE_DOWNLOAD_OFFER)))
+    )
+    if blocked_read:
+        raise HTTPException(status_code=409, detail="pin_free_read_required")
+
+
 async def verify_session_token(request: Request) -> SessionPrincipal:
     """FastAPI dependency: authenticate a request or raise a coded 401.
 
@@ -701,9 +769,10 @@ async def verify_session_token(request: Request) -> SessionPrincipal:
         raise _auth_401("invalid_session")
 
     token = auth_header.split(" ", 1)[1].strip()
-    token_id_bytes = _parse_token(token)
-    if token_id_bytes is None:
+    claims = _parse_token_claims(token)
+    if claims is None:
         raise _auth_401("invalid_session")
+    token_id_bytes, signed_offers = claims
 
     token_id = str(uuid.UUID(bytes=token_id_bytes))
     token_id_hash = _hash_token_id(token_id_bytes)
@@ -711,6 +780,8 @@ async def verify_session_token(request: Request) -> SessionPrincipal:
     principal, error_code = _load_principal(token_id, token_id_hash)
     if principal is None:
         raise _auth_401(error_code or "invalid_session")
+    principal["pin_free_read_offers"] = signed_offers
+    require_signed_offer_route(principal, path=request.url.path)
 
     # Best-effort device presence signal; never blocks or logs the token.
     try:

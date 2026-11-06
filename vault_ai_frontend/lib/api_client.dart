@@ -168,6 +168,17 @@ void assertPrivateOnlyPinFreeBody(Object? body) {
   }
 }
 
+int _signedOfferBits(String token) {
+  try {
+    final wire = base64Url.decode(base64Url.normalize(token));
+    if (wire.isEmpty || wire[0] != 3) return 0;
+    if (wire.length != 50 || (wire[1] & ~15) != 0) return 15;
+    return wire[1];
+  } on FormatException {
+    return 0;
+  }
+}
+
 /// An authenticated OPAQUE offer replaces a specific older read route for the
 /// life of that bearer. Keep this check at the HTTP boundary as well as at
 /// the feature call sites: a direct or late caller must not revive a PIN read
@@ -182,19 +193,22 @@ void assertOfferedReadPinFreeRequest(
   if (authorization == null || !authorization.startsWith('Bearer ')) return;
   final token = authorization.substring(7);
   if (token.isEmpty) return;
+  final signedOffers = _signedOfferBits(token);
   // FastAPI can redirect a trailing slash while preserving the POST body.
   final path = uri.path.replaceFirst(RegExp(r'/+$'), '');
   final fileSession = ZkPinFreeFileSession.instance;
   final itemSession = ZkPinFreeItemReadSession.instance;
   final offered = switch (path) {
-    '/list-files' => fileSession.listOfferedForToken(token),
+    '/list-files' =>
+      (signedOffers & 2) != 0 || fileSession.listOfferedForToken(token),
     '/download-file' || '/download-file/manifest' =>
-      fileSession.downloadOfferedForToken(token),
+      (signedOffers & 4) != 0 || fileSession.downloadOfferedForToken(token),
     '/list-secure-items' || '/get-secure-item' =>
-      itemSession.wasOfferedForToken(token),
+      (signedOffers & 1) != 0 || itemSession.wasOfferedForToken(token),
     _ when RegExp(r'^/files/[^/]+/related$').hasMatch(path) =>
-      fileSession.listOfferedForToken(token) ||
+      (signedOffers & 6) != 0 || fileSession.listOfferedForToken(token) ||
           fileSession.downloadOfferedForToken(token),
+    '/upload-file' || '/upload-file/init' => (signedOffers & 8) != 0,
     _ => false,
   };
   if (!offered) return;
@@ -3861,6 +3875,9 @@ class VaultAIClient {
     );
 
     assertPrivateOnlyPinFreeBody(request.fields);
+    assertOfferedReadPinFreeRequest(
+      request.url, request.headers, body: request.fields,
+    );
     _assertCurrentRequest(requestScope);
     final response = await (_httpClient?.send(request) ?? request.send());
     _assertCurrentRequest(requestScope);

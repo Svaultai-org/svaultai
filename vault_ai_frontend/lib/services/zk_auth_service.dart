@@ -57,6 +57,42 @@ const bool kVerifierFreeZkRegistration = bool.fromEnvironment(
   'VAULTAI_ENABLE_VERIFIER_FREE_ZK_REGISTRATION',
   defaultValue: false,
 );
+const bool kSignedReadOffersClientEnabled = bool.fromEnvironment(
+  'VAULTAI_ENABLE_SIGNED_READ_OFFERS',
+  defaultValue: false,
+);
+const bool kSignedFileCreateClientEnabled = bool.fromEnvironment(
+  'VAULTAI_ENABLE_SIGNED_FILE_CREATE',
+  defaultValue: false,
+);
+
+/// Public shape check; only the API can verify the signed bearer MAC.
+bool signedOfferTokenMatches(
+  Map<String, dynamic> response, {
+  bool requireFileCreateOffer = false,
+}) {
+  if (response['pin_free_read_offers_signed'] != true) return false;
+  if (requireFileCreateOffer &&
+      (response['pin_free_file_create_signed'] != true ||
+          response['pin_free_v2_file_upload'] is! bool)) return false;
+  if (!requireFileCreateOffer &&
+      response['pin_free_file_create_signed'] == true) {
+    return false;
+  }
+  final token = response['session_token'];
+  if (token is! String || token.isEmpty) return false;
+  try {
+    final wire = base64Url.decode(base64Url.normalize(token));
+    final expected = (response['pin_free_legacy_item_read'] == true ? 1 : 0) |
+        (response['pin_free_legacy_file_list'] == true ? 2 : 0) |
+        (response['pin_free_legacy_file_download'] == true ? 4 : 0) |
+        (requireFileCreateOffer ? 8 : 0);
+    if ((expected & 4) != 0 && (expected & 2) == 0) return false;
+    return wire.length == 50 && wire[0] == 3 && wire[1] == expected;
+  } on FormatException {
+    return false;
+  }
+}
 
 /// Legacy PIN-verifier constants.
 ///
@@ -416,7 +452,8 @@ class ZkAuthService {
     required String vaultHandle,
     required String pin,
     required String sessionToken,
-  }) => _verifyPinProof(
+  }) =>
+      _verifyPinProof(
         vaultHandle: vaultHandle,
         pin: pin,
         sessionToken: sessionToken,
@@ -429,7 +466,8 @@ class ZkAuthService {
     required String vaultHandle,
     required String pin,
     required String sessionToken,
-  }) => _verifyPinProof(
+  }) =>
+      _verifyPinProof(
         vaultHandle: vaultHandle,
         pin: pin,
         sessionToken: sessionToken,
@@ -451,15 +489,16 @@ class ZkAuthService {
         String? clientIdentifier) async {
       final start = await _opaque.startLogin(password: pin);
       final init = await _post(
-        pendingDevice
-            ? '/auth/zk-pending-verify-init'
-            : '/auth/zk-verify-init',
+        pendingDevice ? '/auth/zk-pending-verify-init' : '/auth/zk-verify-init',
         {'vault_handle': handleDisplay, 'ke1': start.startLoginRequest},
         bearerToken: sessionToken,
       );
       final slotId = init['slot_id'];
       final ke2 = init['ke2'];
-      if (slotId is! String || slotId.isEmpty || ke2 is! String || ke2.isEmpty) {
+      if (slotId is! String ||
+          slotId.isEmpty ||
+          ke2 is! String ||
+          ke2.isEmpty) {
         throw StateError('Invalid OPAQUE verification response.');
       }
       final finish = await _opaque.finishLogin(
@@ -490,9 +529,11 @@ class ZkAuthService {
       bearerToken: sessionToken,
     );
     final proofToken = response['proof_token'];
-    final expires = DateTime.tryParse(response['proof_expires_at']?.toString() ?? '');
+    final expires =
+        DateTime.tryParse(response['proof_expires_at']?.toString() ?? '');
     if (response['verified'] != true ||
-        proofToken is! String || proofToken.isEmpty ||
+        proofToken is! String ||
+        proofToken.isEmpty ||
         expires == null) {
       throw StateError('Invalid OPAQUE verification result.');
     }
@@ -724,7 +765,6 @@ class ZkAuthService {
         'username_lookup': lookupV1B64,
       },
     );
-
     return RegisterResult(
       vaultId: finalizeResponse['vault_id'] as String,
       vaultHandle: handleDisplay,
@@ -904,6 +944,13 @@ class ZkAuthService {
         'ke3': finish.finishLoginRequest,
       },
     );
+    if ((kSignedReadOffersClientEnabled || kSignedFileCreateClientEnabled) &&
+        !signedOfferTokenMatches(
+          finalizeResponse,
+          requireFileCreateOffer: kSignedFileCreateClientEnabled,
+        )) {
+      throw OpaqueUnavailable('Authenticated session offer unavailable');
+    }
     step('post_login_finalize');
     timing('zk_login_finalize_complete', httpStatus: 200);
 
@@ -947,13 +994,13 @@ class ZkAuthService {
       ),
       pinFreeLegacyItemRead:
           finalizeResponse['pin_free_legacy_item_read'] == true &&
-          finalizeResponse['device_trust_complete'] == true,
+              finalizeResponse['device_trust_complete'] == true,
       pinFreeLegacyFileList:
           finalizeResponse['pin_free_legacy_file_list'] == true &&
-          finalizeResponse['device_trust_complete'] == true,
+              finalizeResponse['device_trust_complete'] == true,
       pinFreeLegacyFileDownload:
           finalizeResponse['pin_free_legacy_file_download'] == true &&
-          finalizeResponse['device_trust_complete'] == true,
+              finalizeResponse['device_trust_complete'] == true,
     );
   }
 

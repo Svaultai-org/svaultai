@@ -55,8 +55,14 @@ def issued_token(**overrides):
     return token
 
 
-def request(device_id=DEVICE_ID):
+def request(device_id=DEVICE_ID, *, signed=False, create=False, reader=False):
     headers = [] if device_id is None else [(b"x-device-id", device_id.encode())]
+    if signed:
+        headers.append((b"x-svaultai-pin-free-read-offers", b"1"))
+    if create:
+        headers.append((b"x-svaultai-pin-free-file-create", b"1"))
+    if reader:
+        headers.append((b"x-svaultai-file-v2-reader", b"1"))
     return Request({"type": "http", "headers": headers,
                     "client": ("192.0.2.1", 12345)})
 
@@ -201,8 +207,64 @@ def finalizer(monkeypatch, guard):
                 db=db, finish=finish, issue=issue, payload=payload)
 
 
-def run_finalizer(state, *, header=DEVICE_ID):
-    return asyncio.run(routes.zk_login_finalize(state["payload"], request(header)))
+def run_finalizer(state, *, header=DEVICE_ID, signed=False, create=False,
+                  reader=False):
+    return asyncio.run(routes.zk_login_finalize(
+        state["payload"], request(header, signed=signed, create=create,
+                                   reader=reader),
+    ))
+
+
+def test_negotiated_live56_login_signs_exact_offers_and_fails_closed(
+    finalizer, monkeypatch,
+):
+    monkeypatch.setenv("VAULT_SESSION_SECRET", "synthetic-live56-signing-secret-" * 3)
+    auth_local.reset_secret_for_tests()
+    try:
+        old = auth_local._format_token(bytes(range(16)))
+        finalizer["issue"].return_value = issued_token(token=old)
+        monkeypatch.setenv("VAULTAI_SIGNED_READ_OFFERS_ENABLED", "true")
+        monkeypatch.setenv("VAULTAI_SIGNED_FILE_CREATE_ENABLED", "true")
+        monkeypatch.setenv("VAULTAI_ZK_METADATA_INVENTORY_ENABLED", "true")
+        monkeypatch.setenv("VAULTAI_ZK_LEGACY_EXPORT_ENABLED", "true")
+        for key in ("FILE_V2_READ_ENABLED", "FILE_V2_WRITE_ENABLED",
+                    "VAULTAI_ZK_NEW_FILE_V2_ENABLED"):
+            monkeypatch.setenv(key, "true")
+        monkeypatch.setattr(routes, "_pin_free_legacy_file_list_ready",
+                            lambda _conn, _vault_id: True)
+        monkeypatch.setattr(routes, "_pin_free_legacy_file_download_ready",
+                            lambda _conn, _vault_id, **_kwargs: True)
+        offered = run_finalizer(finalizer, signed=True, create=True, reader=True)
+        assert offered.pin_free_read_offers_signed is True
+        assert offered.pin_free_file_create_signed is True
+        assert offered.pin_free_v2_file_upload is True
+        assert auth_local._parse_token_claims(offered.session_token) == (
+            bytes(range(16)), 15,
+        )
+        # A transient writer-gate change may hide the V2 write, but the
+        # signed PIN fence must still cover this negotiated bearer.
+        monkeypatch.setenv("VAULTAI_ZK_NEW_FILE_V2_ENABLED", "false")
+        degraded = run_finalizer(finalizer, signed=True, create=True, reader=True)
+        assert degraded.pin_free_v2_file_upload is False
+        assert auth_local._parse_token_claims(degraded.session_token)[1] == 15
+        old_client = run_finalizer(finalizer)
+        assert old_client.session_token == old
+        assert old_client.pin_free_read_offers_signed is False
+        assert old_client.pin_free_file_create_signed is False
+        assert finalizer["issue"].call_args.kwargs["file_v2_reader_capable"] is False
+    finally:
+        auth_local.reset_secret_for_tests()
+
+
+def test_disabled_signed_offer_rejects_before_consuming_login_slot(
+    finalizer, monkeypatch,
+):
+    monkeypatch.setenv("VAULTAI_SIGNED_READ_OFFERS_ENABLED", "false")
+    with pytest.raises(Exception) as exc:
+        run_finalizer(finalizer, signed=True, reader=True)
+    assert getattr(exc.value, "status_code", None) == 409
+    finalizer["issue"].assert_not_called()
+    assert finalizer["slot"].queries == []
 
 
 def test_successful_api_returns_additive_hints_and_existing_crypto_fields(finalizer):

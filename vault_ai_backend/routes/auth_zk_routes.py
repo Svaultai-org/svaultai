@@ -54,6 +54,7 @@ import hmac
 import logging
 import os
 from file_v2_client_capability import request_has_file_v2_reader
+from zk_migration_flags import ZkMigrationFlags
 from zk_raw_pin_content_gate import raw_pin_content_disabled
 import secrets
 import time
@@ -192,7 +193,12 @@ from psycopg2.extras import RealDictCursor
 from auth_local import (
     SessionPrincipal,
     _get_secret,
+    PIN_FREE_ITEM_READ_OFFER,
+    PIN_FREE_FILE_LIST_OFFER,
+    PIN_FREE_FILE_DOWNLOAD_OFFER,
+    PIN_FREE_FILE_CREATE_OFFER,
     issue_session_token,
+    sign_opaque_read_offer_token,
     _vault_meta_snapshot,
     normalize_client_label,
     verify_session_token,
@@ -899,10 +905,68 @@ class ZkLoginFinalizeResponse(BaseModel):
     pin_free_legacy_item_read: bool = False
     pin_free_legacy_file_list: bool = False
     pin_free_legacy_file_download: bool = False
+    pin_free_v2_file_upload: bool = False
+    pin_free_read_offers_signed: bool = False
+    pin_free_file_create_signed: bool = False
     # Additive hints: old clients ignore these and keep their existing
     # registration + metadata fetch. False/null always requires fallback.
     device_trust_complete: bool = False
     vault_meta: Optional[dict[str, object]] = None
+
+
+def pin_free_v2_file_upload_server_enabled() -> bool:
+    """Mirror the live V2 read/write and new-file route gates."""
+    flags = ZkMigrationFlags.from_environment(os.environ)
+    try:
+        flags.validate_dependencies()
+    except ValueError:
+        return False
+    return (flags.file_read_enabled and flags.file_write_enabled and
+            os.getenv("VAULTAI_ZK_NEW_FILE_V2_ENABLED", "false")
+            .strip().lower() == "true")
+
+
+def _signed_read_offer_negotiation(request: Request) -> bool:
+    header = request.headers.get("x-svaultai-pin-free-read-offers", "")
+    if header not in ("", "1"):
+        raise HTTPException(status_code=400, detail="invalid_read_offer_capability")
+    if header != "1":
+        return False
+    if os.getenv("VAULTAI_SIGNED_READ_OFFERS_ENABLED", "false").strip().lower() != "true":
+        raise HTTPException(status_code=409, detail="signed_read_offers_unavailable")
+    if not request_has_file_v2_reader(request):
+        raise HTTPException(status_code=409, detail="file_v2_reader_required")
+    return True
+
+
+def _signed_file_create_negotiation(request: Request, *, signed_reads: bool) -> bool:
+    header = request.headers.get("x-svaultai-pin-free-file-create", "")
+    if header not in ("", "1"):
+        raise HTTPException(status_code=400, detail="invalid_file_create_capability")
+    if header != "1":
+        return False
+    if not signed_reads or not request_has_file_v2_reader(request):
+        raise HTTPException(status_code=409, detail="signed_read_offers_required")
+    if os.getenv("VAULTAI_SIGNED_FILE_CREATE_ENABLED", "false").strip().lower() != "true":
+        raise HTTPException(status_code=409, detail="signed_file_create_unavailable")
+    return True
+
+
+def _signed_offer_token(
+    token: str, *, signed_reads: bool, item_read: bool,
+    file_list: bool, file_download: bool, file_create: bool,
+) -> str:
+    if not signed_reads:
+        if file_create:
+            raise ValueError("file creation requires negotiated session offers")
+        return token
+    if file_download and not file_list:
+        raise ValueError("file download cannot be offered without file list")
+    bits = ((PIN_FREE_ITEM_READ_OFFER if item_read else 0) |
+            (PIN_FREE_FILE_LIST_OFFER if file_list else 0) |
+            (PIN_FREE_FILE_DOWNLOAD_OFFER if file_download else 0) |
+            (PIN_FREE_FILE_CREATE_OFFER if file_create else 0))
+    return sign_opaque_read_offer_token(token, bits)
 
 
 def _pin_free_legacy_file_list_ready(conn, vault_id: str) -> bool:
@@ -1059,6 +1123,10 @@ def _zk_login_finalize_sync(
     with _zk_login_phase("limiter"):
         enforce_login_finalize_rate_limit(request)
     with _zk_login_phase("validation"):
+        signed_read_offers_requested = _signed_read_offer_negotiation(request)
+        signed_file_create_requested = _signed_file_create_negotiation(
+            request, signed_reads=signed_read_offers_requested,
+        )
         # A re-verification slot must never be exchangeable for a fresh login
         # session through the older finalize endpoint.
         if payload.slot_id.startswith(
@@ -1203,10 +1271,27 @@ def _zk_login_finalize_sync(
                 conn.rollback()
                 logger.exception("[ZK-LOGIN-FINALIZE] file-download offer check failed")
 
+        file_create_capable = (
+            device_trust_complete
+            and request_has_file_v2_reader(request)
+            and vault_row["vault_handle"] is not None
+            and vault_row["wrapped_mvk"] is not None
+            and vault_row["wrapped_sk_vault"] is not None
+            and pin_free_v2_file_upload_server_enabled()
+        )
+        response_session_token = _signed_offer_token(
+            token["token"], signed_reads=signed_read_offers_requested,
+            item_read=offer_base, file_list=file_list_offer,
+            file_download=file_download_offer,
+            # A negotiated client must never fall back to the old PIN upload
+            # if a transient trust/route check prevents its V2 write.
+            file_create=signed_file_create_requested,
+        )
+
         return ZkLoginFinalizeResponse(
             vault_id=str(vault_row["vault_id"]),
             vault_handle=to_display(bytes(vault_row["vault_handle"])),
-            session_token=token["token"],
+            session_token=response_session_token,
             wrapped_mvk=_b64url_encode(bytes(vault_row["wrapped_mvk"])),
             wrapped_sk_vault=_b64url_encode(bytes(vault_row["wrapped_sk_vault"])),
             display_name_ciphertext=_b64url_encode(
@@ -1215,6 +1300,9 @@ def _zk_login_finalize_sync(
             pin_free_legacy_item_read=offer_base,
             pin_free_legacy_file_list=file_list_offer,
             pin_free_legacy_file_download=file_download_offer,
+            pin_free_v2_file_upload=file_create_capable,
+            pin_free_read_offers_signed=signed_read_offers_requested,
+            pin_free_file_create_signed=signed_file_create_requested,
             device_trust_complete=device_trust_complete,
             vault_meta=metadata,
         )

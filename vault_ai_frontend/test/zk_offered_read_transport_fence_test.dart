@@ -1,15 +1,20 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/services/session_termination.dart';
+import 'package:vault_ai_frontend/services/zk_auth_service.dart';
 import 'package:vault_ai_frontend/services/zk_pin_free_file_session.dart';
 import 'package:vault_ai_frontend/services/zk_pin_free_item_read_session.dart';
 
 void main() {
   const token = 'synthetic-opaque-bearer';
+  String signedToken(int bits) => base64Url.encode(
+        <int>[3, bits, ...List<int>.filled(48, 7)],
+      ).replaceAll('=', '');
   const pinMarker = 'synthetic-pin-marker';
   final headers = <String, String>{'Authorization': 'Bearer $token'};
 
@@ -111,6 +116,103 @@ void main() {
       <String, String>{'Authorization': 'Bearer replacement-bearer'},
       body: '{"pin":"$pinMarker"}',
     );
+  });
+
+  test('signed bearer retains read and create fences after local state clears',
+      () {
+    final offeredToken = signedToken(15);
+    final offeredHeaders = <String, String>{
+      'Authorization': 'Bearer $offeredToken',
+    };
+    ZkPinFreeFileSession.instance.clear();
+    ZkPinFreeItemReadSession.instance.clear();
+    for (final path in <String>[
+      '/list-secure-items',
+      '/list-files',
+      '/download-file',
+      '/upload-file',
+      '/upload-file/init',
+    ]) {
+      expect(
+        () => assertOfferedReadPinFreeRequest(
+          Uri.parse('https://synthetic.example$path'),
+          offeredHeaders,
+          body: <String, String>{'pin': pinMarker},
+        ),
+        throwsStateError,
+      );
+    }
+    // Finishing or aborting an upload begun before the offer remains usable.
+    for (final path in <String>[
+      '/upload-file/finalize',
+      '/upload-file/abort',
+    ]) {
+      assertOfferedReadPinFreeRequest(
+        Uri.parse('https://synthetic.example$path'),
+        offeredHeaders,
+        body: <String, String>{'pin': pinMarker},
+      );
+    }
+  });
+
+  test('negotiated token shape must match exact server offer fields', () {
+    final response = <String, dynamic>{
+      'session_token': signedToken(15),
+      'pin_free_read_offers_signed': true,
+      'pin_free_file_create_signed': true,
+      'pin_free_legacy_item_read': true,
+      'pin_free_legacy_file_list': true,
+      'pin_free_legacy_file_download': true,
+      'pin_free_v2_file_upload': true,
+    };
+    expect(signedOfferTokenMatches(response, requireFileCreateOffer: true),
+        isTrue);
+    response['pin_free_v2_file_upload'] = false;
+    // Capability can disappear while the signed legacy-PIN fence remains.
+    expect(signedOfferTokenMatches(response, requireFileCreateOffer: true),
+        isTrue);
+    response['session_token'] = signedToken(7);
+    expect(signedOfferTokenMatches(response, requireFileCreateOffer: true),
+        isFalse);
+    response['session_token'] = token;
+    expect(signedOfferTokenMatches(response, requireFileCreateOffer: true),
+        isFalse);
+  });
+
+  test('actual multipart and chunk-init uploads cannot send PIN after offer',
+      () async {
+    final offeredToken = signedToken(8);
+    final sent = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        sent.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+    await expectLater(
+      client.uploadVaultFile(
+        vaultName: 'synthetic-vault',
+        pin: pinMarker,
+        authToken: offeredToken,
+        filename: 'synthetic.txt',
+        fileBytes: Uint8List.fromList(<int>[1, 2, 3]),
+      ),
+      throwsStateError,
+    );
+    await expectLater(
+      client.initChunkedUpload(
+        vaultName: 'synthetic-vault',
+        pin: pinMarker,
+        authToken: offeredToken,
+        filename: 'synthetic.txt',
+        contentType: 'text/plain',
+        totalBytes: 3,
+        chunkSize: 3,
+      ),
+      throwsStateError,
+    );
+    expect(sent, isEmpty);
   });
 
   test('actual API download cannot transmit a PIN after its offer', () async {

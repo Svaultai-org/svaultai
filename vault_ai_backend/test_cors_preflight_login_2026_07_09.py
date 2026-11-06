@@ -80,6 +80,8 @@ def _mount_preflight_app(regex: str) -> TestClient:
             # to this stub falling behind the real allowlist.
             "X-App-Release",
             "X-SVaultAI-File-V2-Reader",
+            "X-SVaultAI-Pin-Free-Read-Offers",
+            "X-SVaultAI-Pin-Free-File-Create",
             # 2026-07-22 (4) Safari preflight adds Cache-Control and
             # Pragma to Access-Control-Request-Headers for GETs. Same
             # lock-step invariant: this stub must mirror the real
@@ -369,6 +371,12 @@ class ProdPreflightRejectsUnknownOrigins(unittest.TestCase):
 
 class CorsHeadersAndMethodsInvariants(unittest.TestCase):
     """Static invariants that must hold in every environment."""
+
+    def test_signed_offer_headers_are_allowed(self) -> None:
+        import main
+        lower = [h.lower() for h in main.CORS_ALLOWED_HEADERS]
+        self.assertIn("x-svaultai-pin-free-read-offers", lower)
+        self.assertIn("x-svaultai-pin-free-file-create", lower)
 
     def test_x_device_id_is_in_allow_headers_list(self) -> None:
         import main
@@ -687,6 +695,23 @@ class ProdPreflightAcceptsXAppReleaseFromSvaultai(unittest.TestCase):
                          self._ORIGIN)
         self.assertIn("x-svaultai-file-v2-reader",
                       resp.headers.get("access-control-allow-headers", "").lower())
+
+    def test_signed_offer_preflight_from_svaultai(self) -> None:
+        resp = self._client().options(
+            "/auth/zk-login-finalize",
+            headers={
+                "Origin": self._ORIGIN,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers":
+                    "content-type,x-device-id,x-svaultai-file-v2-reader,"
+                    "x-svaultai-pin-free-read-offers,"
+                    "x-svaultai-pin-free-file-create",
+            },
+        )
+        self.assertEqual(resp.status_code, 200, msg=resp.text)
+        allowed = resp.headers.get("access-control-allow-headers", "").lower()
+        self.assertIn("x-svaultai-pin-free-read-offers", allowed)
+        self.assertIn("x-svaultai-pin-free-file-create", allowed)
 
     def test_every_reported_endpoint_preflight_from_svaultai_returns_200(
         self,

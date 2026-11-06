@@ -1,0 +1,10 @@
+# Local-only candidate. Load the exact current live image by immutable ID
+# before building; do not use a source-tree Dockerfile or retag production.
+ARG BASE_IMAGE=sha256:db07d4719ba70581eaa934f78eecd0ce3ddc8d7219d991770abd215240f8e207
+FROM ${BASE_IMAGE}
+
+# The live base retains all other backend files, installed packages, entrypoint,
+# user, and startup settings. Only these reviewed modules differ at runtime.
+COPY auth_local.py /app/auth_local.py
+COPY routes/auth_zk_routes.py /app/routes/auth_zk_routes.py
+COPY main.py /app/main.py

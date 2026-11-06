@@ -5266,6 +5266,19 @@ Future<Map<String, dynamic>> _zkHttpPost(
   if (kEnableFileV2UiRead) {
     headers['X-SVaultAI-File-V2-Reader'] = '1';
   }
+  if (path == '/auth/zk-login-finalize' && kSignedReadOffersClientEnabled) {
+    if (!kEnableFileV2UiRead) {
+      throw OpaqueUnavailable('Signed offers need the V2 reader.');
+    }
+    headers['X-SVaultAI-Pin-Free-Read-Offers'] = '1';
+  }
+  if (path == '/auth/zk-login-finalize' && kSignedFileCreateClientEnabled) {
+    if (!kSignedReadOffersClientEnabled ||
+        !kEnableFileV2UiRead || !kEnableNewFileV2Upload) {
+      throw OpaqueUnavailable('Signed file creation needs the V2 writer.');
+    }
+    headers['X-SVaultAI-Pin-Free-File-Create'] = '1';
+  }
   final deviceId = apiClientDeviceId();
   if (deviceId != null && deviceId.isNotEmpty) {
     headers['X-Device-Id'] = deviceId;
