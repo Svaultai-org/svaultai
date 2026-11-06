@@ -14,6 +14,7 @@ const Map<String, String> kSecureItemTypeLabelsForDetail = <String, String>{
   'imei': 'Phone IMEI',
   'serial_number': 'Serial number',
   'document_note': 'Note',
+  'note': 'Note',
   'recovery_code': 'Recovery code',
   'recovery_phrase': 'Recovery phrase',
   'backup_code': 'Backup code',
@@ -131,6 +132,15 @@ List<SecureItemEditField> secureItemEditFieldsFor(String itemType) {
         label: 'Private note',
         maxLines: 6,
       ),
+    ];
+  }
+  if (itemType == 'note') {
+    // Older saved items can use `note`/`text`. Retain the generic value and
+    // notes fields so an edit cannot silently drop either older variant.
+    return const [
+      SecureItemEditField(key: 'text', label: 'Note', maxLines: 6),
+      SecureItemEditField(key: 'secret_value', label: 'Value', maxLines: 4),
+      SecureItemEditField(key: 'notes', label: 'Notes', maxLines: 3),
     ];
   }
   if (itemType == 'account_note') {

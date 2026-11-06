@@ -21,6 +21,26 @@ void main() {
     expect(text, contains('Note: Encrypted retrieval regression test'));
   });
 
+  test('older note View reveals text and keeps generic value fields', () {
+    expect(
+      secureItemViewTextFor('note', const <String, String>{
+        'text': 'synthetic note content',
+      }),
+      'Note: synthetic note content',
+    );
+    expect(
+      secureItemViewTextFor('note', const <String, String>{
+        'secret_value': 'older generic value',
+        'notes': 'older generic annotation',
+      }),
+      'Value: older generic value\n\nNotes: older generic annotation',
+    );
+    expect(
+      secureItemEditFieldsFor('note').map((field) => field.key).toList(),
+      <String>['text', 'secret_value', 'notes'],
+    );
+  });
+
   testWidgets('View preserves a title that itself ends in Login',
       (tester) async {
     String? viewedTitle;
