@@ -1719,10 +1719,14 @@ class AppState extends ChangeNotifier {
     if (!value) {
       ZkPinFreeItemReadSession.instance.lock();
       _clearLegacySavedItemReadSession();
-      // Legacy lock paths clear their PIN cache/context. Also discard the ZK
-      // keys so a locked screen does not retain decrypt-capable material.
-      // Keep PrivateZkPinTransportSession bound to the current session: it
-      // must continue blocking legacy PIN-bearing HTTP while locked.
+      // The lock transition itself must discard the PIN and derived keys.
+      // Callers cannot be trusted to remember a separate cache clear, and
+      // even a repeated lock must not retain credentials from a failed
+      // unlock attempt. A later PIN entry installs a fresh context.
+      _VaultCrypto.clearAllCachedCredentials();
+      VaultCryptoRegistry.clear(reason: 'vault_lock');
+      // Also discard the ZK keys. Keep PrivateZkPinTransportSession bound to
+      // the current session so it still blocks legacy PIN HTTP while locked.
       zk_mvk_store.ZkActiveMvk.clear();
       zk_sk_store.ZkActiveSkVault.clear();
     }
