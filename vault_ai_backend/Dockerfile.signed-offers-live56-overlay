@@ -1,6 +1,7 @@
-# Local-only candidate. Load the exact current live image by immutable ID
-# before building; do not use a source-tree Dockerfile or retag production.
-ARG BASE_IMAGE=sha256:db07d4719ba70581eaa934f78eecd0ce3ddc8d7219d991770abd215240f8e207
+# Local-only candidate. Verify this QA tag resolves to immutable image ID
+# db07d4719ba70581eaa934f78eecd0ce3ddc8d7219d991770abd215240f8e207
+# before building. The tag is never used by production.
+ARG BASE_IMAGE=svaultai-live-base-qa:db07d471
 FROM ${BASE_IMAGE}
 
 # The live base retains all other backend files, installed packages, entrypoint,
