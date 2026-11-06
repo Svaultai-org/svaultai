@@ -4660,11 +4660,20 @@ class VaultAIClient {
   Future<bool> isAvailableV2File({
     required String authToken,
     required String fileId,
+    bool allowDisabledRoute = false,
   }) async {
     if (fileId.isEmpty) return false;
-    final response = await _fileV2Reader(authToken: authToken).get(
-      '/vault/file-v2',
-    );
+    final Map<String, dynamic> response;
+    try {
+      response = await _fileV2Reader(authToken: authToken).get(
+        '/vault/file-v2',
+      );
+    } on FileV2ReadException catch (error) {
+      // A signed legacy download can still open an older inline file when
+      // file-v2 is disabled. Other errors, and every V2-required read, fail.
+      if (allowDisabledRoute && error.statusCode == 404) return false;
+      rethrow;
+    }
     final files = response['files'];
     if (files is! List) throw const FormatException('Invalid V2 file list');
     for (final raw in files) {

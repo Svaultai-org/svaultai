@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/services/legacy_ciphertext_migration_codec.dart';
+import 'package:vault_ai_frontend/services/file_v2_reader.dart';
 import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart';
 import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
 
@@ -23,6 +24,52 @@ Future<String> _legacyEncrypt(List<int> plain, SecretKey key) async {
 }
 
 void main() {
+  test('disabled V2 route is ignored only for an offered older-file read',
+      () async {
+    ZkActiveMvk.set(
+      mvk: SecretKey(List<int>.filled(32, 63)),
+      vaultId: 'synthetic-vault',
+      vaultHandle: 'synthetic-handle',
+    );
+    addTearDown(ZkActiveMvk.clear);
+    setApiClientDeviceId('synthetic-device');
+    var status = 404;
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        expect(request.method, 'GET');
+        expect(request.url.path, '/vault/file-v2');
+        expect(request.headers['authorization'], 'Bearer synthetic-session');
+        expect(request.bodyBytes, isEmpty);
+        return http.Response('{"detail":"not_found"}', status);
+      }),
+    );
+    expect(
+      await client.isAvailableV2File(
+        authToken: 'synthetic-session',
+        fileId: 'synthetic-older-file',
+        allowDisabledRoute: true,
+      ),
+      isFalse,
+    );
+    await expectLater(
+      client.isAvailableV2File(
+        authToken: 'synthetic-session',
+        fileId: 'synthetic-older-file',
+      ),
+      throwsA(isA<FileV2ReadException>()),
+    );
+    status = 500;
+    await expectLater(
+      client.isAvailableV2File(
+        authToken: 'synthetic-session',
+        fileId: 'synthetic-older-file',
+        allowDisabledRoute: true,
+      ),
+      throwsA(isA<FileV2ReadException>()),
+    );
+  });
+
   test('retired V2 list/open/delete uses session and proof without raw PIN',
       () async {
     final mvk = SecretKey(List<int>.filled(32, 63));

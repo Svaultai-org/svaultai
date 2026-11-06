@@ -16080,7 +16080,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     final availableV2 = kEnableFileV2UiRead &&
         zk_mvk_store.ZkActiveMvk.current() != null &&
-        await client.isAvailableV2File(authToken: authToken, fileId: fileId);
+        await client.isAvailableV2File(
+          authToken: authToken,
+          fileId: fileId,
+          allowDisabledRoute:
+              pinFreeLegacyDownloadOffered && !requireReadyV2,
+        );
     if (!availableV2 && pinFreeZkFile && !requireReadyV2) {
       throw StateError('This file needs private migration before opening.');
     }
