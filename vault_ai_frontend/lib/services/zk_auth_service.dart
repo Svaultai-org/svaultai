@@ -81,6 +81,15 @@ const bool kSignedBeneficiaryClientEnabled = bool.fromEnvironment(
   'VAULTAI_ENABLE_SIGNED_BENEFICIARY',
   defaultValue: false,
 );
+
+/// A version signal for the backend's old-client rejection at OPAQUE
+/// finalize. It does not grant any content capability by itself.
+Map<String, String> strictPinFreeClientHeaders({
+  required bool privateOnlyBuild,
+  required bool clientReady,
+}) => privateOnlyBuild && clientReady
+    ? const <String, String>{'X-SVaultAI-Strict-Pin-Free-Client': 'v1'}
+    : const <String, String>{};
 // Build 77 has no complete older-chat/media reader. A later integration must
 // prove those readers before a client may request the irreversible offer.
 const bool kSignedPrivateChatLocalReadersReady = false;

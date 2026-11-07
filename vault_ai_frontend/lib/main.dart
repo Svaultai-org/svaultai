@@ -2118,6 +2118,13 @@ class AppState extends ChangeNotifier {
   }
 
   bool handleApiException(Object error) {
+    if (error is ClientUpgradeRequiredException) {
+      rootScaffoldMessengerKey.currentState?.clearSnackBars();
+      rootScaffoldMessengerKey.currentState?.showSnackBar(
+        const SnackBar(content: Text(ClientUpgradeRequiredException.message)),
+      );
+      return true;
+    }
     if (error is VaultFrozenException) {
       lockMessage = error.message;
       unlocked = false;
@@ -5448,6 +5455,12 @@ Future<Map<String, dynamic>> _zkHttpPost(
     }
     headers['X-SVaultAI-Pin-Free-Beneficiary'] = '1';
   }
+  if (path == '/auth/zk-login-finalize') {
+    headers.addAll(strictPinFreeClientHeaders(
+      privateOnlyBuild: kPrivateOnlyUnlockEnabled,
+      clientReady: kZkPrivateOnlyClientReady,
+    ));
+  }
   final deviceId = apiClientDeviceId();
   if (deviceId != null && deviceId.isNotEmpty) {
     headers['X-Device-Id'] = deviceId;
@@ -5469,6 +5482,7 @@ Future<Map<String, dynamic>> _zkHttpPost(
         body: jsonEncode(requestBody),
       )
       .timeout(const Duration(seconds: 30));
+  throwIfClientUpgradeRequired(response.statusCode, response.body);
   if (response.statusCode == 429) {
     throw AuthRetryException.fromResponse(
       responseBody: response.body,
@@ -5505,6 +5519,7 @@ Future<Map<String, dynamic>> _zkHttpGet(
     headers['X-Device-Id'] = deviceId;
   }
   final response = await http.get(uri, headers: headers);
+  throwIfClientUpgradeRequired(response.statusCode, response.body);
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw Exception(
       'ZK GET $path failed ${response.statusCode}',
@@ -7006,6 +7021,13 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           loading = false;
         });
         return;
+      } on ClientUpgradeRequiredException {
+        if (!mounted) return;
+        setState(() {
+          err = ClientUpgradeRequiredException.message;
+          loading = false;
+        });
+        return;
       } on OpaqueAuthenticationFailed catch (e) {
         // Wrong PIN — @serenity-kit/opaque returned undefined from
         // client.finishLogin, meaning the OPAQUE handshake could not
@@ -8038,6 +8060,13 @@ class _UnlockPageState extends State<UnlockPage> {
         if (!mounted) return;
         setState(() {
           err = kUnlockDeviceSafeError;
+          loading = false;
+        });
+        return;
+      } on ClientUpgradeRequiredException {
+        if (!mounted) return;
+        setState(() {
+          err = ClientUpgradeRequiredException.message;
           loading = false;
         });
         return;

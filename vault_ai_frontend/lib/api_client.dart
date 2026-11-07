@@ -644,6 +644,33 @@ class RateLimitedException implements Exception {
       'RateLimitedException(message: $message, resetInSeconds: $resetInSeconds)';
 }
 
+/// An older app cannot enter the coordinated private-only server mode. Keep
+/// the current session intact so the owner can update this app first.
+class ClientUpgradeRequiredException implements Exception {
+  static const message = 'Update SVaultAI to continue with private access.';
+  const ClientUpgradeRequiredException();
+
+  @override
+  String toString() => message;
+}
+
+bool isClientUpgradeRequiredResponse(int statusCode, String body) {
+  if (statusCode != 426) return false;
+  try {
+    final decoded = jsonDecode(body);
+    final detail = decoded is Map ? decoded['detail'] : null;
+    return detail is Map && detail['code'] == 'client_upgrade_required';
+  } on FormatException {
+    return false;
+  }
+}
+
+void throwIfClientUpgradeRequired(int statusCode, String body) {
+  if (isClientUpgradeRequiredResponse(statusCode, body)) {
+    throw const ClientUpgradeRequiredException();
+  }
+}
+
 class AuthExpiredException implements Exception {
   final String message;
   const AuthExpiredException({
@@ -720,6 +747,7 @@ void _assertCurrentRequest(st.SessionRequestScope? scope) {
 void _checkSessionResponse(
     int statusCode, String body, st.SessionRequestScope? scope) {
   _assertCurrentRequest(scope);
+  throwIfClientUpgradeRequired(statusCode, body);
   if (scope == null) return;
   if (statusCode == 403) {
     try {
