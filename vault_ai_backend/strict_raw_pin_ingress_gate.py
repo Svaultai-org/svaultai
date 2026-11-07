@@ -104,9 +104,16 @@ LEGACY_PIN_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/vault/delete/confirm"),
 })
 
+# This retired endpoint no longer declares a request body, so it is absent
+# from the registered-body-model inventory above. Older clients still send a
+# PIN on its wire contract; strict mode must reject it before any app read.
+RETIRED_PIN_SENDING_ROUTES: frozenset[tuple[str, str]] = frozenset({
+    ("POST", "/auth/signup"),
+})
+
 _ROUTE_PATTERNS = tuple(
     (method, compile_path(path)[0])
-    for method, path in sorted(LEGACY_PIN_ROUTES)
+    for method, path in sorted(LEGACY_PIN_ROUTES | RETIRED_PIN_SENDING_ROUTES)
 )
 
 

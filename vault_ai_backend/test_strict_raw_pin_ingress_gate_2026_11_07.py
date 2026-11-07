@@ -14,7 +14,8 @@ import main
 from routes import auth_zk_routes
 from routes.chunked_upload_routes import router as chunked_upload_router
 from strict_raw_pin_ingress_gate import (
-    FLAG_NAME, LEGACY_PIN_ROUTES, StrictRawPinIngressGate,
+    FLAG_NAME, LEGACY_PIN_ROUTES, RETIRED_PIN_SENDING_ROUTES,
+    StrictRawPinIngressGate,
     is_legacy_pin_route, require_strict_private_client,
     strict_raw_pin_ingress_enabled,
 )
@@ -79,6 +80,18 @@ def test_manifest_matches_all_registered_pin_fields_and_form_parameters():
     actual |= _registered_pin_routes(chunked_upload_router.routes)
     assert len(LEGACY_PIN_ROUTES) == 64
     assert actual == LEGACY_PIN_ROUTES
+
+
+def test_retired_signup_wire_is_fenced_before_body_read(monkeypatch):
+    assert RETIRED_PIN_SENDING_ROUTES == {("POST", "/auth/signup")}
+    monkeypatch.setenv(FLAG_NAME, "true")
+    for path in ("/auth/signup", "/auth/signup/"):
+        reads, starts, body = asyncio.run(_probe(
+            StrictRawPinIngressGate(_inner), "POST", path,
+        ))
+        assert reads == []
+        assert [start["status"] for start in starts] == [426]
+        assert json.loads(body)["detail"]["code"] == "client_upgrade_required"
 
 
 @pytest.mark.parametrize("method,template", sorted(LEGACY_PIN_ROUTES))
@@ -189,6 +202,7 @@ def test_integrated_app_rejects_before_body_and_keeps_browser_upgrade_visible(
     monkeypatch.setenv(FLAG_NAME, "true")
     for method, path, content_type in (
         ("POST", "/auth/login", b"application/json"),
+        ("POST", "/auth/signup", b"application/json"),
         ("POST", "/auth/zk-login-finalize", b"application/json"),
         ("POST", "/upload-file", b"multipart/form-data; boundary=synthetic"),
         ("PATCH", "/manage/file", b"application/json"),

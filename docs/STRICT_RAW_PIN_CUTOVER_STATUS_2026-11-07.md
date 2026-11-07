@@ -2,7 +2,8 @@
 
 This isolated change adds a **default-off** server fence. It has not been
 deployed or enabled. `VAULTAI_STRICT_RAW_PIN_INGRESS_ENABLED=true` rejects all
-64 reviewed legacy PIN-capable method/path pairs before the Python application
+64 registered legacy PIN-capable method/path pairs, plus retired
+`POST /auth/signup`, before the Python application
 reads their body, including `/auth/login`, multipart forms, and the three
 conditional chunked-upload paths. Rejection is global: there is no legacy-only
 account exemption. The registered-route/body-model test must be updated if a
