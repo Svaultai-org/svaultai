@@ -168,15 +168,18 @@ fi
 
 # 5. release.json.
 release_path="$project_root/build/web/release.json"
-manifest_dev_arg=()
 if [ "$allow_dev" -eq 1 ]; then
-    manifest_dev_arg=(--allow-dev-manifest)
+    python3 scripts/verify-release-contract.py \
+        --write-manifest "$release_path" \
+        --commit "$sha_full" \
+        --built-at "$built_at" \
+        --allow-dev-manifest
+else
+    python3 scripts/verify-release-contract.py \
+        --write-manifest "$release_path" \
+        --commit "$sha_full" \
+        --built-at "$built_at"
 fi
-python3 scripts/verify-release-contract.py \
-    --write-manifest "$release_path" \
-    --commit "$sha_full" \
-    --built-at "$built_at" \
-    "${manifest_dev_arg[@]}"
 
 echo "[vault-release] wrote $release_path"
 echo "[vault-release] built bundle: $project_root/build/web"
