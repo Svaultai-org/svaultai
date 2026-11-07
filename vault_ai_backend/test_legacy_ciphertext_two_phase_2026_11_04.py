@@ -90,12 +90,19 @@ class FakeCursor:
             self.result = []
         elif normalized.startswith("SELECT LENGTH(encrypted_file_data)"):
             file_id, vault_id = params
-            self.result = [{"legacy_chars": len(self.db.file["encrypted_file_data"] or "")}] if (
+            self.result = [{
+                "legacy_chars": len(self.db.file["encrypted_file_data"] or ""),
+                "text_bytes": len((self.db.file["extracted_text"] or "").encode()),
+                "path_bytes": len((self.db.file["relative_path"] or "").encode()),
+            }] if (
                 file_id == self.db.file["id"] and vault_id == VAULT
             ) else []
         elif normalized.startswith("SELECT OCTET_LENGTH(manifest_ciphertext)"):
             file_id, vault_id = params
-            self.result = [{"manifest_bytes": len(self.db.file["manifest_ciphertext"])}] if (
+            self.result = [{
+                "manifest_bytes": len(self.db.file["manifest_ciphertext"]),
+                "migration_metadata_version": self.db.file["migration_metadata_version"],
+            }] if (
                 file_id == self.db.file["id"] and vault_id == VAULT
             ) else []
         elif "FROM uploaded_files u JOIN file_v2_records r" in normalized:
@@ -393,6 +400,67 @@ def test_extra_fields_require_version_two_and_same_source_receipt(runtime, monke
     assert db.file["extracted_text"] is None
     assert db.file["relative_path"] is None
     assert db.file["encrypted_file_data"] is None
+
+
+def test_v3_large_extra_requires_exact_readback_and_flag_to_retire(
+    runtime, monkeypatch,
+):
+    db, proof = runtime
+    db.file["extracted_text"] = "x" * (201 * 1024)
+    db.file["relative_path"] = "synthetic/path.txt"
+    db.file["migration_metadata_version"] = 2
+    with pytest.raises(HTTPException) as old_limit:
+        migration.readback_staged_file(db.file["id"], PRINCIPAL)
+    assert old_limit.value.status_code == 413
+    assert db.file["encrypted_file_data"] is not None
+
+    db.file["migration_metadata_version"] = 3
+    readback = migration.readback_staged_file(db.file["id"], PRINCIPAL)
+    assert readback["migration_metadata_version"] == 3
+    assert "extracted_text" not in readback
+    assert "PIN" not in str(readback)
+    request = migration.FileRetireRequest(
+        file_id=db.file["id"], readback_receipt=readback["readback_receipt"],
+        zk_proof_token="synthetic-v3-proof", source_snapshot=readback["source_snapshot"],
+        client_verified_exact_bytes=True, client_verified_extra_fields=True,
+    )
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_RETIRE_ENABLED", "true")
+    monkeypatch.delenv(migration.FILE_EXTRA_V3_FLAG, raising=False)
+    with pytest.raises(HTTPException) as disabled:
+        migration.retire_legacy_file(request, PRINCIPAL)
+    assert disabled.value.detail == "file_extra_v3_retire_disabled"
+    proof.assert_not_called()
+    assert db.file["encrypted_file_data"] is not None
+
+    monkeypatch.setenv(migration.FILE_EXTRA_V3_FLAG, "true")
+    db.file["extracted_text"] += "changed"
+    with pytest.raises(HTTPException) as changed:
+        migration.retire_legacy_file(request, PRINCIPAL)
+    assert changed.value.detail == "legacy_source_changed"
+    proof.assert_not_called()
+    assert db.file["encrypted_file_data"] is not None
+
+    fresh = migration.readback_staged_file(db.file["id"], PRINCIPAL)
+    result = migration.retire_legacy_file(request.model_copy(update={
+        "readback_receipt": fresh["readback_receipt"],
+        "source_snapshot": fresh["source_snapshot"],
+    }), PRINCIPAL)
+    assert result["retired"] is True
+    proof.assert_called_once()
+    assert db.file["encrypted_file_data"] is None
+    assert db.file["extracted_text"] is None
+
+
+def test_v3_rejects_text_over_256k_without_retiring(runtime, monkeypatch):
+    db, proof = runtime
+    monkeypatch.setenv(migration.FILE_EXTRA_V3_FLAG, "true")
+    db.file["extracted_text"] = "x" * (migration.MAX_FILE_EXTRA_V3_BYTES + 1)
+    db.file["migration_metadata_version"] = 3
+    with pytest.raises(HTTPException) as too_large:
+        migration.readback_staged_file(db.file["id"], PRINCIPAL)
+    assert too_large.value.status_code == 413
+    proof.assert_not_called()
+    assert db.file["encrypted_file_data"] is not None
 
 
 def test_file_rename_after_export_cannot_use_new_receipt_for_old_copy(runtime):

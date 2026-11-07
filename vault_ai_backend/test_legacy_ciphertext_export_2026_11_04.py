@@ -351,3 +351,73 @@ def test_oversized_extra_text_is_rejected_before_full_row_read(runtime, monkeypa
     executed = db.connections[-1].cursor_obj.executed
     assert not any(sql.startswith("SELECT encrypted_file_data, file_size,")
                    for sql, _ in executed)
+
+
+def test_v3_extra_export_is_default_off_and_preserves_full_synthetic_text(
+    runtime, monkeypatch,
+):
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED", "true")
+    monkeypatch.delenv(export.FILE_EXTRA_V3_FLAG, raising=False)
+    db, consumed = runtime
+    db.file["extracted_text"] = "private synthetic text " * 10_000
+    assert export.MAX_FILE_EXTRA_BYTES < len(db.file["extracted_text"].encode())
+    assert len(db.file["extracted_text"].encode()) < export.MAX_FILE_EXTRA_V3_BYTES
+    token = _start(db, consumed)["export_token"]
+    request = export.LegacyExportPageRequest(
+        export_token=token, sequence=0, mode="read_file_extra_v3",
+        file_id=db.file["id"],
+    )
+    with pytest.raises(HTTPException) as disabled:
+        export.legacy_export_page(request, PRINCIPAL)
+    assert disabled.value.status_code == 404
+    assert db.connections[-1].cursor_obj.executed[-1][0].startswith(
+        "INSERT INTO vault_zk_login_slots"
+    )
+
+    monkeypatch.setenv(export.FILE_EXTRA_V3_FLAG, "true")
+    result = export.legacy_export_page(request, PRINCIPAL)
+    assert result["legacy_extra_version"] == 3
+    assert result["legacy_extra"]["extracted_text"] == db.file["extracted_text"]
+    assert result["source_snapshot"]
+    assert result["mode"] == "read_file_extra_v3"
+
+
+def test_v3_extra_export_rejects_over_256k_before_full_row_read(
+    runtime, monkeypatch,
+):
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED", "true")
+    monkeypatch.setenv(export.FILE_EXTRA_V3_FLAG, "true")
+    db, consumed = runtime
+    db.file["extracted_text"] = "x" * (export.MAX_FILE_EXTRA_V3_BYTES + 1)
+    token = _start(db, consumed)["export_token"]
+    with pytest.raises(HTTPException) as too_large:
+        export.legacy_export_page(export.LegacyExportPageRequest(
+            export_token=token, sequence=0, mode="read_file_extra_v3",
+            file_id=db.file["id"],
+        ), PRINCIPAL)
+    assert too_large.value.status_code == 413
+    executed = db.connections[-1].cursor_obj.executed
+    assert not any(sql.startswith("SELECT encrypted_file_data, file_size,")
+                   for sql, _ in executed)
+
+
+def test_v3_extra_export_requires_above_64k_and_counts_utf8_bytes(
+    runtime, monkeypatch,
+):
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED", "true")
+    monkeypatch.setenv(export.FILE_EXTRA_V3_FLAG, "true")
+    db, consumed = runtime
+    token = _start(db, consumed)["export_token"]
+    request = export.LegacyExportPageRequest(
+        export_token=token, sequence=0, mode="read_file_extra_v3",
+        file_id=db.file["id"],
+    )
+    db.file["extracted_text"] = "é" * (32 * 1024)
+    with pytest.raises(HTTPException) as small:
+        export.legacy_export_page(request, PRINCIPAL)
+    assert small.value.detail == "legacy_file_extra_v3_size_required"
+    db.file["extracted_text"] = "é" * (128 * 1024 + 1)
+    with pytest.raises(HTTPException) as large:
+        export.legacy_export_page(request, PRINCIPAL)
+    assert large.value.status_code == 413
+    assert json.loads(db.grants[token]["state"])["sequence"] == 0

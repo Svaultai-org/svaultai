@@ -20,6 +20,7 @@ MAX_CHUNK_BYTES = 1024 * 1024
 MAX_CHUNKS = 4096
 MAX_MANIFEST_CIPHERTEXT_BYTES = 64 * 1024
 MAX_EXTRA_MANIFEST_CIPHERTEXT_BYTES = 512 * 1024
+MAX_EXTRA_V3_MANIFEST_CIPHERTEXT_BYTES = 2 * 1024 * 1024
 MAX_ENCRYPTED_SAVED_NAME_BYTES = 4096
 GCM_FRAMING_BYTES = 12 + 16
 FORBIDDEN = ('filename','filename_plaintext','file_content','file_content_plaintext',
@@ -40,6 +41,9 @@ def _v2_rename_enabled():
 
 def _extra_file_stage_enabled():
     return os.getenv('VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED', '').strip().lower() == 'true'
+
+def _extra_file_v3_enabled():
+    return os.getenv('VAULTAI_ZK_LEGACY_FILE_EXTRA_V3_ENABLED', '').strip().lower() == 'true'
 
 def reject_legacy_zk_file_rename(principal: SessionPrincipal) -> None:
     """Prevent plaintext/PIN rename paths from bypassing an enabled V2 path."""
@@ -136,21 +140,23 @@ class Manifest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     file_id: str = Field(min_length=1, max_length=128)
     crypto_version: str = Field(pattern='^client_mvk_v2$')
-    manifest_ciphertext: str = Field(min_length=1, max_length=700_000)
+    manifest_ciphertext: str = Field(min_length=1, max_length=2_800_000)
     total_bytes: int = Field(ge=0, le=MAX_FILE_BYTES)
     chunk_size: int = Field(gt=0, le=MAX_CHUNK_BYTES)
     chunk_count: int = Field(ge=0, le=MAX_CHUNKS)
     migrating_legacy: bool = False
     source_snapshot: str | None = Field(default=None, min_length=43, max_length=43)
-    migration_metadata_version: int = Field(default=1, ge=1, le=2)
+    migration_metadata_version: int = Field(default=1, ge=1, le=3)
 
     @model_validator(mode='after')
     def validate_framing(self):
         expected = (self.total_bytes + self.chunk_size - 1) // self.chunk_size
         if self.chunk_count != expected:
             raise ValueError('file_v2_chunk_count_mismatch')
-        if self.migration_metadata_version == 2 and not self.migrating_legacy:
+        if self.migration_metadata_version in (2, 3) and not self.migrating_legacy:
             raise ValueError('file_v2_legacy_metadata_requires_migration')
+        if self.migration_metadata_version < 3 and len(self.manifest_ciphertext) > 700_000:
+            raise ValueError('file_v2_manifest_too_large')
         return self
 
 class Chunk(BaseModel):
@@ -176,8 +182,10 @@ def _reject(data: dict):
 
 @router.post('/vault/file-v2/manifest')
 def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(verify_trusted_device)):
-    if payload.migration_metadata_version == 2 and not _extra_file_stage_enabled():
+    if payload.migration_metadata_version in (2, 3) and not _extra_file_stage_enabled():
         raise HTTPException(404, detail='file_v2_extra_stage_disabled')
+    if payload.migration_metadata_version == 3 and not _extra_file_v3_enabled():
+        raise HTTPException(404, detail='file_v2_extra_v3_disabled')
     require_content_write(principal)
     _enabled(True); _reject(payload.model_dump())
     if not payload.migrating_legacy and not _new_files_enabled():
@@ -187,9 +195,13 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
     if not payload.migrating_legacy and payload.source_snapshot is not None:
         raise HTTPException(400, detail='unexpected_source_snapshot')
     ct = _decode(payload.manifest_ciphertext)
-    manifest_limit = (MAX_EXTRA_MANIFEST_CIPHERTEXT_BYTES
-                      if payload.migration_metadata_version == 2
-                      else MAX_MANIFEST_CIPHERTEXT_BYTES)
+    manifest_limit = (
+        MAX_EXTRA_V3_MANIFEST_CIPHERTEXT_BYTES
+        if payload.migration_metadata_version == 3 else
+        MAX_EXTRA_MANIFEST_CIPHERTEXT_BYTES
+        if payload.migration_metadata_version == 2 else
+        MAX_MANIFEST_CIPHERTEXT_BYTES
+    )
     if len(ct) > manifest_limit:
         raise HTTPException(413, detail='file_v2_manifest_too_large')
     conn = get_db(); cur = conn.cursor()
@@ -203,7 +215,9 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
         )
         if payload.migrating_legacy:
             cur.execute(
-                'SELECT LENGTH(encrypted_file_data) FROM uploaded_files '
+                'SELECT LENGTH(encrypted_file_data), '
+                'OCTET_LENGTH(extracted_text), OCTET_LENGTH(relative_path) '
+                'FROM uploaded_files '
                 'WHERE id=%s AND vault_id=%s '
                 "AND storage_mode='inline' AND encrypted_file_data IS NOT NULL "
                 'FOR UPDATE',
@@ -216,6 +230,13 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
             if int(length_row[0]) > MAX_SOURCE_CIPHERTEXT_CHARS:
                 conn.rollback()
                 raise HTTPException(413, detail='file_migration_streaming_required')
+            if payload.migration_metadata_version == 3 and (
+                length_row[1] is None or
+                not 64 * 1024 < int(length_row[1]) <= 256 * 1024 or
+                int(length_row[2] or 0) > 4096
+            ):
+                conn.rollback()
+                raise HTTPException(413, detail='file_extra_v3_size_required')
             cur.execute(
                 f'SELECT {", ".join(FILE_SOURCE_FIELDS)} FROM uploaded_files '
                 'WHERE id=%s AND vault_id=%s '
@@ -226,8 +247,16 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
             if source is None:
                 conn.rollback()
                 raise HTTPException(409, detail='legacy_file_source_missing')
+            source_values = dict(zip(FILE_SOURCE_FIELDS, source))
+            if payload.migration_metadata_version == 3 and (
+                source_values.get('extracted_text') is None or
+                not 64 * 1024 < len(source_values['extracted_text'].encode('utf-8')) <= 256 * 1024 or
+                len((source_values.get('relative_path') or '').encode('utf-8')) > 4096
+            ):
+                conn.rollback()
+                raise HTTPException(413, detail='file_extra_v3_size_required')
             if legacy_source_snapshot(
-                'file', dict(zip(FILE_SOURCE_FIELDS, source)),
+                'file', source_values,
                 vault_id=principal['vault_id'], record_id=payload.file_id,
             ) != payload.source_snapshot:
                 conn.rollback()

@@ -88,6 +88,87 @@ def test_new_file_manifest_is_default_off_before_db(monkeypatch):
     assert raised.value.detail == "new_file_v2_disabled"
 
 
+def _v3_manifest(text: str, ciphertext: bytes = b"synthetic-encrypted-manifest"):
+    source = {field: None for field in route.FILE_SOURCE_FIELDS}
+    source.update(encrypted_file_data="synthetic-legacy-ciphertext",
+                  file_size=3, extracted_text=text,
+                  relative_path="synthetic/path.txt")
+    payload = route.Manifest(
+        file_id="synthetic-legacy-v3", crypto_version="client_mvk_v2",
+        manifest_ciphertext=_encoded(ciphertext), total_bytes=3,
+        chunk_size=1024, chunk_count=1, migrating_legacy=True,
+        source_snapshot=route.legacy_source_snapshot(
+            "file", source, vault_id="synthetic-vault",
+            record_id="synthetic-legacy-v3",
+        ),
+        migration_metadata_version=3,
+    )
+    return payload, source
+
+
+def test_v3_manifest_requires_flag_before_database(monkeypatch):
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED", "true")
+    monkeypatch.delenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_V3_ENABLED", raising=False)
+    monkeypatch.setattr(route, "get_db", lambda: pytest.fail("database reached"))
+    payload, _ = _v3_manifest("x" * (201 * 1024))
+    with pytest.raises(HTTPException) as disabled:
+        route.create_manifest(payload, {"vault_id": "synthetic-vault"})
+    assert disabled.value.status_code == 404
+    assert disabled.value.detail == "file_v2_extra_v3_disabled"
+
+
+def test_v3_manifest_stage_preserves_large_extra_source(monkeypatch):
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED", "true")
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_V3_ENABLED", "true")
+    monkeypatch.setattr(route, "_enabled", lambda *_: None)
+    monkeypatch.setattr(route, "require_content_write", lambda *_: None)
+    payload, source = _v3_manifest("x" * (201 * 1024))
+    conn = MagicMock()
+    conn.cursor.return_value.fetchone.side_effect = [
+        (len(source["encrypted_file_data"]),
+         len(source["extracted_text"].encode()),
+         len(source["relative_path"].encode())),
+        tuple(source[field] for field in route.FILE_SOURCE_FIELDS),
+        (payload.file_id,),
+    ]
+    monkeypatch.setattr(route, "get_db", lambda: conn)
+    result = route.create_manifest(payload, {"vault_id": "synthetic-vault"})
+    assert result["file_id"] == payload.file_id
+    inserts = [call for call in conn.cursor.return_value.execute.call_args_list
+               if "INSERT INTO file_v2_records" in call.args[0]]
+    assert len(inserts) == 1
+    assert inserts[0].args[1][-1] == 3
+    assert source["extracted_text"] == "x" * (201 * 1024)
+    conn.commit.assert_called_once()
+
+
+def test_v3_manifest_rejects_oversized_text_and_ciphertext_before_insert(
+    monkeypatch,
+):
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED", "true")
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_V3_ENABLED", "true")
+    monkeypatch.setattr(route, "_enabled", lambda *_: None)
+    monkeypatch.setattr(route, "require_content_write", lambda *_: None)
+    payload, source = _v3_manifest("x" * (256 * 1024 + 1))
+    conn = MagicMock()
+    conn.cursor.return_value.fetchone.return_value = (
+        len(source["encrypted_file_data"]),
+        len(source["extracted_text"].encode()),
+        len(source["relative_path"].encode()),
+    )
+    monkeypatch.setattr(route, "get_db", lambda: conn)
+    with pytest.raises(HTTPException) as too_large:
+        route.create_manifest(payload, {"vault_id": "synthetic-vault"})
+    assert too_large.value.status_code == 413
+    assert not any("INSERT INTO file_v2_records" in c.args[0]
+                   for c in conn.cursor.return_value.execute.call_args_list)
+
+    huge, _ = _v3_manifest("x" * (201 * 1024), b"z" * (2 * 1024 * 1024 + 1))
+    with pytest.raises(HTTPException) as huge_manifest:
+        route.create_manifest(huge, {"vault_id": "synthetic-vault"})
+    assert huge_manifest.value.status_code == 413
+
+
 @pytest.mark.parametrize("field,value", [
     ("total_bytes", route.MAX_FILE_BYTES + 1),
     ("chunk_size", route.MAX_CHUNK_BYTES + 1),

@@ -45,7 +45,20 @@ MAX_ITEM_CIPHERTEXT_BYTES = 128 * 1024
 MAX_FILE_MIGRATION_CIPHERTEXT_BYTES = 64 * 1024 * 1024
 MAX_FILE_MIGRATION_CHUNKS = 4096
 MAX_FILE_EXTRA_BYTES = 64 * 1024
+MAX_FILE_EXTRA_V3_BYTES = 256 * 1024
 MAX_FILE_V2_EXTRA_MANIFEST_BYTES = 512 * 1024
+MAX_FILE_V3_EXTRA_MANIFEST_BYTES = 2 * 1024 * 1024
+FILE_EXTRA_V3_FLAG = "VAULTAI_ZK_LEGACY_FILE_EXTRA_V3_ENABLED"
+
+
+def _file_extra_limits(version: int) -> tuple[int, int]:
+    if version == 3:
+        return MAX_FILE_EXTRA_V3_BYTES, MAX_FILE_V3_EXTRA_MANIFEST_BYTES
+    if version == 2:
+        return MAX_FILE_EXTRA_BYTES, MAX_FILE_V2_EXTRA_MANIFEST_BYTES
+    if version == 1:
+        return MAX_FILE_EXTRA_BYTES, MAX_ITEM_CIPHERTEXT_BYTES
+    raise HTTPException(status_code=409, detail="file_metadata_version_unsupported")
 
 
 def _flag(name: str) -> bool:
@@ -918,10 +931,6 @@ def _load_file_pair(cur, vault_id: str, file_id: str, *, locked: bool) -> dict:
         raise HTTPException(status_code=404, detail="legacy_file_not_found")
     if (legacy.get("legacy_chars") or 0) > MAX_FILE_MIGRATION_CIPHERTEXT_BYTES:
         raise HTTPException(status_code=413, detail="file_migration_streaming_required")
-    if ((legacy.get("text_bytes") or 0) > MAX_FILE_EXTRA_BYTES or
-            (legacy.get("path_bytes") or 0) > 4096):
-        raise HTTPException(status_code=413, detail="file_extra_migration_streaming_required")
-
     cur.execute(
         "SELECT OCTET_LENGTH(manifest_ciphertext) AS manifest_bytes, "
         "migration_metadata_version "
@@ -931,9 +940,11 @@ def _load_file_pair(cur, vault_id: str, file_id: str, *, locked: bool) -> dict:
     manifest_size = cur.fetchone()
     if manifest_size is None:
         raise HTTPException(status_code=409, detail="file_v2_not_staged")
-    manifest_limit = (MAX_FILE_V2_EXTRA_MANIFEST_BYTES
-                      if int(manifest_size.get("migration_metadata_version") or 1) == 2
-                      else MAX_ITEM_CIPHERTEXT_BYTES)
+    metadata_version = int(manifest_size.get("migration_metadata_version") or 1)
+    text_limit, manifest_limit = _file_extra_limits(metadata_version)
+    if ((legacy.get("text_bytes") or 0) > text_limit or
+            (legacy.get("path_bytes") or 0) > 4096):
+        raise HTTPException(status_code=413, detail="file_extra_migration_streaming_required")
     if int(manifest_size["manifest_bytes"]) > manifest_limit:
         raise HTTPException(status_code=413, detail="file_manifest_too_large")
 
@@ -947,6 +958,15 @@ def _load_file_pair(cur, vault_id: str, file_id: str, *, locked: bool) -> dict:
     row = cur.fetchone()
     if row is None:
         raise HTTPException(status_code=409, detail="file_v2_not_staged")
+    # Readback may race a legacy update between preflight and the full read.
+    # Recheck the version and byte ceilings against the actual source row.
+    if int(row.get("migration_metadata_version") or 1) != metadata_version:
+        raise HTTPException(status_code=409, detail="file_metadata_version_changed")
+    if (len((row.get("extracted_text") or "").encode("utf-8")) > text_limit or
+            len((row.get("relative_path") or "").encode("utf-8")) > 4096):
+        raise HTTPException(status_code=413, detail="file_extra_migration_streaming_required")
+    if len(bytes(row["manifest_ciphertext"])) > manifest_limit:
+        raise HTTPException(status_code=413, detail="file_manifest_too_large")
     if row["crypto_version"] != "client_mvk_v2":
         raise HTTPException(status_code=409, detail="file_v2_crypto_version_mismatch")
     if int(row["total_bytes"]) != int(row["file_size"]):
@@ -960,7 +980,7 @@ def _file_digest_and_v2_hash(
     if (row.get("extracted_text") is not None or
             row.get("relative_path") is not None) and int(
                 row.get("migration_metadata_version") or 1
-            ) != 2:
+            ) not in (2, 3):
         raise HTTPException(status_code=409, detail="file_extra_legacy_data_requires_migration")
     legacy_ciphertext = row.get("encrypted_file_data")
     if legacy_ciphertext is None:
@@ -1147,16 +1167,19 @@ def retire_legacy_file(
                               locked=True)
         has_extra = (row.get("extracted_text") is not None or
                      row.get("relative_path") is not None)
-        if has_extra and not _flag("VAULTAI_ZK_LEGACY_FILE_EXTRA_RETIRE_ENABLED"):
-            raise HTTPException(status_code=409, detail="file_extra_retire_disabled")
-        if has_extra and not payload.client_verified_extra_fields:
-            raise HTTPException(status_code=400, detail="client_extra_readback_required")
         if row.get("encrypted_file_data") is None:
             if row.get("verification_state") == "client_verified":
                 conn.commit()
                 return {"file_id": payload.file_id, "retired": True,
                         "already_retired": True}
             raise HTTPException(status_code=409, detail="file_retire_state_conflict")
+        if (int(row.get("migration_metadata_version") or 1) == 3 and
+                not _flag(FILE_EXTRA_V3_FLAG)):
+            raise HTTPException(status_code=409, detail="file_extra_v3_retire_disabled")
+        if has_extra and not _flag("VAULTAI_ZK_LEGACY_FILE_EXTRA_RETIRE_ENABLED"):
+            raise HTTPException(status_code=409, detail="file_extra_retire_disabled")
+        if has_extra and not payload.client_verified_extra_fields:
+            raise HTTPException(status_code=400, detail="client_extra_readback_required")
         digest, _ = _file_digest_and_v2_hash(
             cur, payload.file_id, row, locked=True,
         )

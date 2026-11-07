@@ -54,6 +54,8 @@ LIST_MAX_RECORDS = 50
 # Extra legacy fields can contain document text. Export them in a separate,
 # proof-bound page so they are never repeated with every ciphertext chunk.
 MAX_FILE_EXTRA_BYTES = 64 * 1024
+MAX_FILE_EXTRA_V3_BYTES = 256 * 1024
+FILE_EXTRA_V3_FLAG = "VAULTAI_ZK_LEGACY_FILE_EXTRA_V3_ENABLED"
 
 
 def _enabled() -> bool:
@@ -71,6 +73,12 @@ def _require_file_extra_stage_enabled() -> None:
     if os.getenv(
         "VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED", "false",
     ).strip().lower() != "true":
+        raise HTTPException(status_code=404, detail="not_found")
+
+
+def _require_file_extra_v3_enabled() -> None:
+    _require_file_extra_stage_enabled()
+    if os.getenv(FILE_EXTRA_V3_FLAG, "false").strip().lower() != "true":
         raise HTTPException(status_code=404, detail="not_found")
 
 
@@ -141,7 +149,10 @@ class LegacyExportPageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     export_token: str = Field(..., min_length=1, max_length=128)
     sequence: int = Field(..., ge=0)
-    mode: Literal["list_items", "list_files", "read_item", "read_file", "read_file_extra"]
+    mode: Literal[
+        "list_items", "list_files", "read_item", "read_file",
+        "read_file_extra", "read_file_extra_v3",
+    ]
     limit: int = Field(default=20, ge=1, le=LIST_MAX_RECORDS)
     after_item_id: int = Field(default=0, ge=0)
     after_file_id: str = Field(default="", max_length=128)
@@ -408,6 +419,9 @@ def _read_chunk(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
 def _read_file_extra(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
     if payload.file_id is None:
         raise HTTPException(status_code=400, detail="file_id_required")
+    max_text_bytes = (MAX_FILE_EXTRA_V3_BYTES
+                      if payload.mode == "read_file_extra_v3"
+                      else MAX_FILE_EXTRA_BYTES)
     cur.execute(
         "SELECT LENGTH(encrypted_file_data) AS legacy_chars, "
         "OCTET_LENGTH(relative_path) AS path_bytes, "
@@ -422,8 +436,11 @@ def _read_file_extra(cur, vault_id: str, payload: LegacyExportPageRequest) -> di
         raise HTTPException(status_code=404, detail="legacy_record_not_found")
     if int(lengths["legacy_chars"]) > MAX_SOURCE_CIPHERTEXT_CHARS:
         raise HTTPException(status_code=413, detail="legacy_streaming_required")
+    if (payload.mode == "read_file_extra_v3" and
+            int(lengths["text_bytes"] or 0) <= MAX_FILE_EXTRA_BYTES):
+        raise HTTPException(status_code=413, detail="legacy_file_extra_v3_size_required")
     if (int(lengths["path_bytes"] or 0) > 4096 or
-            int(lengths["text_bytes"] or 0) > MAX_FILE_EXTRA_BYTES):
+            int(lengths["text_bytes"] or 0) > max_text_bytes):
         raise HTTPException(status_code=413, detail="legacy_file_extra_streaming_required")
     cur.execute(
         f"SELECT {', '.join(FILE_SOURCE_FIELDS)} FROM uploaded_files "
@@ -439,9 +456,12 @@ def _read_file_extra(cur, vault_id: str, payload: LegacyExportPageRequest) -> di
     text = row["extracted_text"]
     path_bytes = len(path.encode("utf-8")) if path is not None else 0
     text_bytes = len(text.encode("utf-8")) if text is not None else 0
-    if path_bytes > 4096 or text_bytes > MAX_FILE_EXTRA_BYTES:
+    if (payload.mode == "read_file_extra_v3" and
+            text_bytes <= MAX_FILE_EXTRA_BYTES):
+        raise HTTPException(status_code=413, detail="legacy_file_extra_v3_size_required")
+    if path_bytes > 4096 or text_bytes > max_text_bytes:
         raise HTTPException(status_code=413, detail="legacy_file_extra_streaming_required")
-    return {
+    data = {
         "file_id": payload.file_id,
         "source_snapshot": legacy_source_snapshot(
             "file", row, vault_id=vault_id, record_id=payload.file_id,
@@ -451,6 +471,9 @@ def _read_file_extra(cur, vault_id: str, payload: LegacyExportPageRequest) -> di
             "extracted_text": text,
         },
     }
+    if payload.mode == "read_file_extra_v3":
+        data["legacy_extra_version"] = 3
+    return data
 
 
 @router.post("/vault/legacy-ciphertext/export/page")
@@ -462,6 +485,8 @@ def legacy_export_page(
     _require_enabled()
     if payload.mode == "read_file_extra":
         _require_file_extra_stage_enabled()
+    elif payload.mode == "read_file_extra_v3":
+        _require_file_extra_v3_enabled()
     if not _grant_belongs_to_session(payload.export_token, principal):
         raise HTTPException(status_code=401, detail="invalid_export_grant")
 
@@ -499,7 +524,7 @@ def legacy_export_page(
             data = _list_items(cur, principal["vault_id"], payload)
         elif payload.mode == "list_files":
             data = _list_files(cur, principal["vault_id"], payload)
-        elif payload.mode == "read_file_extra":
+        elif payload.mode in ("read_file_extra", "read_file_extra_v3"):
             data = _read_file_extra(cur, principal["vault_id"], payload)
         else:
             data = _read_chunk(cur, principal["vault_id"], payload)

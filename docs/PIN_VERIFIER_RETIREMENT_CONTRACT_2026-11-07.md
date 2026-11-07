@@ -78,10 +78,48 @@ migration cap, affecting one vault; none exceed the backend's 64 MiB source
 limit. Fifteen rows have extra text or path fields, and one extracted-text
 field exceeds the current 64 KiB extra-field limit. There are zero pending
 uploads, zero chunked file rows, and zero uploaded legacy chunk rows. The
-current client/backend limits block **three or four distinct file records**:
-the three large records and the oversized extra-text record could overlap.
-The distinct affected-record count must be checked before planning work.
+oversized text field's `OCTET_LENGTH` rounds up to 201 KiB. The current
+client/backend limits block **four distinct file records**: the three large
+records and the oversized extra-text record do not overlap.
 These counts contain no IDs, filenames, ciphertext, or contents and may change.
+
+## Bounded V3 migration for the oversized extracted text
+
+Migration 0061 permits `migration_metadata_version=3` in the opaque file V2
+table. The new `VAULTAI_ZK_LEGACY_FILE_EXTRA_V3_ENABLED` flag is off by
+default and also requires the existing extra-stage flag. A recent OPAQUE
+proof creates the same short-lived, session-bound export grant as V2. With
+that grant, the owner can request `read_file_extra_v3` on the existing page
+endpoint. Only this mode admits `extracted_text` above 64 KiB and at most
+256 KiB UTF-8; `relative_path` remains capped at 4 KiB UTF-8. The response
+includes `legacy_extra_version: 3` and the same full-source snapshot. The
+older `read_file_extra` remains capped at 64 KiB. Neither request contains a
+PIN. The existing page and grant byte budgets still apply.
+
+The owner rewraps the **complete** extra text and path locally into an MVK
+encrypted manifest with schema `vaultai.file.migrated.v3`, then stages it
+through the existing file V2 manifest route using
+`migration_metadata_version=3`. Only a legacy source with text strictly
+above 64 KiB and at most 256 KiB can use V3. The encrypted manifest is
+bounded to 2 MiB; the server checks the source snapshot and both size bounds
+before inserting a stage. V2 remains capped at 512 KiB manifest ciphertext.
+
+The existing readback route returns the staged ciphertext, version 3, and a
+short-lived receipt bound to the current full legacy source and V2 bytes.
+The client must decrypt and compare exact file bytes, text, path, and metadata
+before sending `client_verified_exact_bytes=true` and
+`client_verified_extra_fields=true`. The server checks the receipt and a
+fresh one-use OPAQUE proof under the file lock before it removes the legacy
+copy. V3 retirement additionally requires its flag and the existing
+extra-retirement flag. Failed checks before proof consumption preserve the
+legacy row and the owner proof. A later database failure preserves the row,
+but the proof may need to be refreshed. The server cannot inspect the
+encrypted manifest to verify the client's plaintext assertion.
+
+This addresses the one count-only 201 KiB text field once a matching client
+has passed exact readback. It does not address the three distinct legacy file
+ciphertexts above the client's 8 MiB automatic migration cap. All production
+flags stay off until full client parity and those larger files are resolved.
 
 The 0060 migration was upgraded, downgraded, and upgraded again on an
 isolated local PostgreSQL/pgvector database. Its synthetic test confirmed
