@@ -120,7 +120,8 @@ def file_metadata_inventory(
                 )
         cur.execute(
             """
-            SELECT u.id, u.file_size, u.storage_mode, u.upload_status,
+            SELECT u.id, u.file_size, u.storage_mode, u.chunk_size,
+                   u.chunk_count, u.upload_status,
                    u.needs_naming, u.autosaved_secret,
                    u.file_name_ciphertext,
                    COALESCE(r.saved_name_override_ciphertext,
@@ -148,6 +149,14 @@ def file_metadata_inventory(
             "file_id": row["id"],
             "file_size": int(row["file_size"]),
             "storage_mode": row["storage_mode"],
+            "chunk_size": (
+                int(row["chunk_size"])
+                if row.get("chunk_size") is not None else None
+            ),
+            "chunk_count": (
+                int(row["chunk_count"])
+                if row.get("chunk_count") is not None else None
+            ),
             "upload_status": row["upload_status"],
             "needs_naming": bool(row.get("needs_naming")),
             "autosaved_secret": bool(row.get("autosaved_secret")),

@@ -133,6 +133,25 @@ def test_file_inventory_includes_retired_marker_without_plaintext(monkeypatch):
         assert forbidden not in response.text
 
 
+def test_file_inventory_exposes_chunk_shape_for_local_readback(monkeypatch):
+    client, db = _client(monkeypatch)
+    db.files.append({
+        **db.files[0], "id": "file-c", "file_size": 7,
+        "storage_mode": "chunks", "chunk_size": 4, "chunk_count": 2,
+        "has_inline_ciphertext": False,
+    })
+    response = client.get("/vault/files/metadata?limit=3")
+    assert response.status_code == 200, response.text
+    records = response.json()["records"]
+    assert records[0]["chunk_size"] is None
+    assert records[0]["chunk_count"] is None
+    assert records[2]["file_id"] == "file-c"
+    assert (records[2]["chunk_size"], records[2]["chunk_count"]) == (4, 2)
+    assert any("u.chunk_size" in query and "u.chunk_count" in query
+               for query in db.queries)
+    assert "encrypted_file_data" not in response.text
+
+
 def test_offered_file_list_rechecks_after_another_device_changes_files(monkeypatch):
     client, db = _client(monkeypatch)
     monkeypatch.setattr(
