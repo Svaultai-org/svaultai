@@ -722,16 +722,22 @@ CORS_ALLOWED_HEADERS = [
     # test_cors_preflight_login_2026_07_09.py for the regression
     # test family this belongs to.
     "X-Client-Request-Id",
+    "X-SVaultAI-Strict-Pin-Free-Client",
 ]
 
                                                                           
 CORS_ALLOWED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 
 from signed_private_chat_prebody_gate import SignedPrivateChatPreBodyGate
+from strict_raw_pin_ingress_gate import StrictRawPinIngressGate
 
 # Inert for ordinary sessions. Keep CORS outside this gate so a rejected
 # browser request receives the usual response headers without body parsing.
 app.add_middleware(SignedPrivateChatPreBodyGate)
+
+# Default-off strict cutover. CORS remains outside this gate so browsers see
+# the upgrade response; the outer logging/size middleware reads headers only.
+app.add_middleware(StrictRawPinIngressGate)
 
 app.add_middleware(
     CORSMiddleware,

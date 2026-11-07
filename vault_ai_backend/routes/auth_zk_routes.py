@@ -1238,6 +1238,10 @@ def _zk_login_finalize_sync(
     payload: ZkLoginFinalizeRequest,
     request: Request,
 ) -> ZkLoginFinalizeResponse:
+    # A stale OPAQUE/mobile client must not supersede a working private
+    # session and only then discover that old PIN routes are unavailable.
+    from strict_raw_pin_ingress_gate import require_strict_private_client
+    require_strict_private_client(request)
     with _zk_login_phase("limiter"):
         enforce_login_finalize_rate_limit(request)
     with _zk_login_phase("validation"):
