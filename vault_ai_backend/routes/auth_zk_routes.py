@@ -197,6 +197,7 @@ from auth_local import (
     PIN_FREE_FILE_LIST_OFFER,
     PIN_FREE_FILE_DOWNLOAD_OFFER,
     PIN_FREE_FILE_CREATE_OFFER,
+    PIN_FREE_PRIVATE_CHAT_OFFER,
     issue_session_token,
     sign_opaque_read_offer_token,
     _vault_meta_snapshot,
@@ -908,6 +909,7 @@ class ZkLoginFinalizeResponse(BaseModel):
     pin_free_v2_file_upload: bool = False
     pin_free_read_offers_signed: bool = False
     pin_free_file_create_signed: bool = False
+    pin_free_private_chat_signed: bool = False
     # Additive hints: old clients ignore these and keep their existing
     # registration + metadata fetch. False/null always requires fallback.
     device_trust_complete: bool = False
@@ -952,20 +954,47 @@ def _signed_file_create_negotiation(request: Request, *, signed_reads: bool) -> 
     return True
 
 
+def _signed_private_chat_negotiation(request: Request, *, signed_reads: bool) -> bool:
+    """Issue a chat offer only for an explicitly capable client and server."""
+    header = request.headers.get("x-svaultai-pin-free-private-chat", "")
+    if header not in ("", "1"):
+        raise HTTPException(status_code=400, detail="invalid_private_chat_capability")
+    if header != "1":
+        return False
+    if not signed_reads or not request_has_file_v2_reader(request):
+        raise HTTPException(status_code=409, detail="signed_read_offers_required")
+    if os.getenv("VAULTAI_SIGNED_PRIVATE_CHAT_ENABLED", "false").strip().lower() != "true":
+        raise HTTPException(status_code=409, detail="signed_private_chat_unavailable")
+    # These local readers are not in build 77. Keeping every dependency off
+    # until its implementation is integrated prevents a partial chat cutover.
+    for feature in ("VAULTAI_ZK_GENERAL_CHAT_ENABLED",
+                    "VAULTAI_ZK_PRIVATE_MEDIA_ENABLED",
+                    "VAULTAI_ZK_PRIVATE_LEGACY_MEDIA_ENABLED",
+                    "VAULTAI_ZK_LEGACY_EXPORT_ENABLED"):
+        if os.getenv(feature, "false").strip().lower() != "true":
+            raise HTTPException(status_code=409,
+                                detail="signed_private_chat_dependencies_unavailable")
+    return True
+
+
 def _signed_offer_token(
     token: str, *, signed_reads: bool, item_read: bool,
     file_list: bool, file_download: bool, file_create: bool,
+    private_chat: bool = False,
 ) -> str:
     if not signed_reads:
-        if file_create:
+        if file_create or private_chat:
             raise ValueError("file creation requires negotiated session offers")
         return token
     if file_download and not file_list:
         raise ValueError("file download cannot be offered without file list")
+    if private_chat and not (item_read and file_list and file_download):
+        raise ValueError("private chat requires complete read offers")
     bits = ((PIN_FREE_ITEM_READ_OFFER if item_read else 0) |
             (PIN_FREE_FILE_LIST_OFFER if file_list else 0) |
             (PIN_FREE_FILE_DOWNLOAD_OFFER if file_download else 0) |
-            (PIN_FREE_FILE_CREATE_OFFER if file_create else 0))
+            (PIN_FREE_FILE_CREATE_OFFER if file_create else 0) |
+            (PIN_FREE_PRIVATE_CHAT_OFFER if private_chat else 0))
     return sign_opaque_read_offer_token(token, bits)
 
 
@@ -1127,6 +1156,9 @@ def _zk_login_finalize_sync(
         signed_file_create_requested = _signed_file_create_negotiation(
             request, signed_reads=signed_read_offers_requested,
         )
+        signed_private_chat_requested = _signed_private_chat_negotiation(
+            request, signed_reads=signed_read_offers_requested,
+        )
         # A re-verification slot must never be exchangeable for a fresh login
         # session through the older finalize endpoint.
         if payload.slot_id.startswith(
@@ -1286,6 +1318,8 @@ def _zk_login_finalize_sync(
             # A negotiated client must never fall back to the old PIN upload
             # if a transient trust/route check prevents its V2 write.
             file_create=signed_file_create_requested,
+            private_chat=(signed_private_chat_requested and offer_base and
+                          file_list_offer and file_download_offer),
         )
 
         return ZkLoginFinalizeResponse(
@@ -1303,6 +1337,10 @@ def _zk_login_finalize_sync(
             pin_free_v2_file_upload=file_create_capable,
             pin_free_read_offers_signed=signed_read_offers_requested,
             pin_free_file_create_signed=signed_file_create_requested,
+            pin_free_private_chat_signed=(
+                signed_private_chat_requested and offer_base and
+                file_list_offer and file_download_offer
+            ),
             device_trust_complete=device_trust_complete,
             vault_meta=metadata,
         )

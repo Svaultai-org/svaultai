@@ -171,13 +171,25 @@ void assertPrivateOnlyPinFreeBody(Object? body) {
 int _signedOfferBits(String token) {
   try {
     final wire = base64Url.decode(base64Url.normalize(token));
-    if (wire.isEmpty || wire[0] != 3) return 0;
-    if (wire.length != 50 || (wire[1] & ~15) != 0) return 15;
-    return wire[1];
+    if (wire.length == 48 || wire.isEmpty) return 0;
+    if (wire[0] == 3) {
+      if (wire.length != 50 || (wire[1] & ~15) != 0) return 15;
+      return wire[1];
+    }
+    if (wire[0] == 4) {
+      if (wire.length != 51) return 527;
+      final offers = (wire[1] << 8) | wire[2];
+      if ((offers & ~527) != 0 || (offers & 519) != 519) return 527;
+      return offers;
+    }
+    return 0;
   } on FormatException {
     return 0;
   }
 }
+
+bool signedPrivateChatOfferedForToken(String token) =>
+    (_signedOfferBits(token) & 512) != 0;
 
 /// An authenticated OPAQUE offer replaces a specific older read route for the
 /// life of that bearer. Keep this check at the HTTP boundary as well as at
@@ -205,8 +217,12 @@ void assertOfferedReadPinFreeRequest(
       (signedOffers & 4) != 0 || fileSession.downloadOfferedForToken(token),
     '/list-secure-items' || '/get-secure-item' =>
       (signedOffers & 1) != 0 || itemSession.wasOfferedForToken(token),
+    '/chat' || '/vault-analysis/deep-answer' =>
+      (signedOffers & 512) != 0,
+    _ when RegExp(r'^/vault-analysis/deep-answer/[^/]+/(poll|debug)$')
+        .hasMatch(path) => (signedOffers & 512) != 0,
     _ when RegExp(r'^/files/[^/]+/related$').hasMatch(path) =>
-      (signedOffers & 6) != 0 || fileSession.listOfferedForToken(token) ||
+      (signedOffers & 518) != 0 || fileSession.listOfferedForToken(token) ||
           fileSession.downloadOfferedForToken(token),
     '/upload-file' || '/upload-file/init' => (signedOffers & 8) != 0,
     _ => false,
@@ -1915,6 +1931,9 @@ class VaultAIClient {
     String? kdfSaltUsed,
     int? kdfIterationsUsed,
   }) async* {
+    if (signedPrivateChatOfferedForToken(authToken)) {
+      throw StateError('This session uses private chat.');
+    }
     final uri = Uri.parse('$baseUrl/chat');
 
     final requestScope =
@@ -1958,6 +1977,7 @@ class VaultAIClient {
     ));
 
     assertPrivateOnlyPinFreeBody(request.body);
+    assertOfferedReadPinFreeRequest(uri, headers, body: request.body);
     _assertCurrentRequest(requestScope);
     final response = await (_httpClient?.send(request) ?? request.send());
     _assertCurrentRequest(requestScope);
@@ -2084,7 +2104,8 @@ class VaultAIClient {
     String query = '',
     String? resumeJobId,
   }) async {
-    if (private_content_guard.blocksZkLegacyContentRoute(
+    if (signedPrivateChatOfferedForToken(authToken) ||
+        private_content_guard.blocksZkLegacyContentRoute(
         vaultHandle: vaultHandle)) {
       throw const private_content_guard.PrivateContentSearchUnavailable(
         private_content_guard.deepScanPrivateMessage,
@@ -2122,7 +2143,8 @@ class VaultAIClient {
     required String jobId,
     String? vaultHandle,
   }) async {
-    if (private_content_guard.blocksZkLegacyContentRoute(
+    if (signedPrivateChatOfferedForToken(authToken) ||
+        private_content_guard.blocksZkLegacyContentRoute(
         vaultHandle: vaultHandle)) {
       throw const private_content_guard.PrivateContentSearchUnavailable(
         private_content_guard.deepScanPrivateMessage,
@@ -6220,7 +6242,8 @@ class VaultAIClient {
     required String authToken,
     String? vaultHandle,
   }) async {
-    if (private_content_guard.blocksZkLegacyContentRoute(
+    if (signedPrivateChatOfferedForToken(authToken) ||
+        private_content_guard.blocksZkLegacyContentRoute(
         vaultHandle: vaultHandle)) {
       throw const private_content_guard.PrivateContentSearchUnavailable(
         private_content_guard.relatedFilesPrivateMessage,

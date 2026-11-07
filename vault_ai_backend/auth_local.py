@@ -116,11 +116,15 @@ _TOKEN_ID_BYTES = 16
 _HMAC_BYTES = 32                  
 _SIGNED_OFFER_VERSION = b"\x03"
 _SIGNED_OFFER_DOMAIN = b"svaultai/session/opaque-read-offers-v1\x00"
+_SIGNED_WIDE_OFFER_VERSION = b"\x04"
+_SIGNED_WIDE_OFFER_DOMAIN = b"svaultai/session/opaque-wide-offers-v1\x00"
 PIN_FREE_ITEM_READ_OFFER = 1
 PIN_FREE_FILE_LIST_OFFER = 2
 PIN_FREE_FILE_DOWNLOAD_OFFER = 4
 PIN_FREE_FILE_CREATE_OFFER = 8
+PIN_FREE_PRIVATE_CHAT_OFFER = 512
 _SIGNED_OFFER_MASK = 15
+_SIGNED_WIDE_OFFER_MASK = _SIGNED_OFFER_MASK | PIN_FREE_PRIVATE_CHAT_OFFER
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -182,6 +186,21 @@ def _parse_token_claims(token: str) -> Optional[tuple[bytes, int]]:
             _get_secret(), _SIGNED_OFFER_DOMAIN + payload, "sha256",
         ).digest()
         offer_bits = raw[1]
+    elif (len(raw) == 3 + _TOKEN_ID_BYTES + _HMAC_BYTES and
+          raw[:1] == _SIGNED_WIDE_OFFER_VERSION):
+        offer_bits = int.from_bytes(raw[1:3], "big")
+        if (offer_bits & ~_SIGNED_WIDE_OFFER_MASK or
+                not (offer_bits & PIN_FREE_PRIVATE_CHAT_OFFER) or
+                (offer_bits & (PIN_FREE_ITEM_READ_OFFER |
+                               PIN_FREE_FILE_LIST_OFFER |
+                               PIN_FREE_FILE_DOWNLOAD_OFFER)) != 7):
+            return None
+        payload = raw[:3 + _TOKEN_ID_BYTES]
+        token_id_bytes = raw[3:3 + _TOKEN_ID_BYTES]
+        provided_sig = raw[3 + _TOKEN_ID_BYTES:]
+        expected_sig = hmac.new(
+            _get_secret(), _SIGNED_WIDE_OFFER_DOMAIN + payload, "sha256",
+        ).digest()
     else:
         return None
     if not hmac.compare_digest(provided_sig, expected_sig):
@@ -201,14 +220,25 @@ def sign_opaque_read_offer_token(token: str, offer_bits: int) -> str:
     the OPAQUE finalize handler calls this after the proof succeeds; the
     version-3 MAC then proves that handler issued the returned bearer.
     """
-    if type(offer_bits) is not int or offer_bits & ~_SIGNED_OFFER_MASK:
+    if (type(offer_bits) is not int or offer_bits < 0 or
+            offer_bits & ~_SIGNED_WIDE_OFFER_MASK):
         raise ValueError("invalid signed offers")
+    private_chat = bool(offer_bits & PIN_FREE_PRIVATE_CHAT_OFFER)
+    if (private_chat and
+            offer_bits & (PIN_FREE_ITEM_READ_OFFER |
+                          PIN_FREE_FILE_LIST_OFFER |
+                          PIN_FREE_FILE_DOWNLOAD_OFFER) != 7):
+        raise ValueError("private chat requires complete read offers")
     claims = _parse_token_claims(token)
     if claims is None or len(_b64url_decode(token)) != 48:
         raise ValueError("fresh login bearer required")
-    payload = _SIGNED_OFFER_VERSION + bytes([offer_bits]) + claims[0]
-    sig = hmac.new(_get_secret(), _SIGNED_OFFER_DOMAIN + payload,
-                   "sha256").digest()
+    payload = (
+        _SIGNED_WIDE_OFFER_VERSION + offer_bits.to_bytes(2, "big") + claims[0]
+        if private_chat else
+        _SIGNED_OFFER_VERSION + bytes([offer_bits]) + claims[0]
+    )
+    domain = _SIGNED_WIDE_OFFER_DOMAIN if private_chat else _SIGNED_OFFER_DOMAIN
+    sig = hmac.new(_get_secret(), domain + payload, "sha256").digest()
     return _b64url_encode(payload + sig)
 
 
@@ -736,9 +766,18 @@ def _load_principal(
 def require_signed_offer_route(principal: SessionPrincipal, *, path: str) -> None:
     """Keep offered routes PIN-free for the lifetime of the signed bearer."""
     offers = principal.get("pin_free_read_offers", 0)
-    if type(offers) is not int or offers & ~_SIGNED_OFFER_MASK:
+    if (type(offers) is not int or offers < 0 or
+            offers & ~_SIGNED_WIDE_OFFER_MASK):
         raise _auth_401("invalid_session")
     path = path.rstrip("/")
+    if offers & PIN_FREE_PRIVATE_CHAT_OFFER and (
+            path == "/chat" or path == "/vault-analysis/deep-answer" or
+            (path.startswith("/vault-analysis/deep-answer/") and
+             path.rsplit("/", 1)[-1] in ("poll", "debug")) or
+            (path.startswith("/files/") and path.endswith("/related") and
+             path.count("/") == 3)):
+        raise HTTPException(status_code=409,
+                            detail="pin_free_private_chat_required")
     if (path in ("/upload-file", "/upload-file/init") and
             offers & PIN_FREE_FILE_CREATE_OFFER):
         raise HTTPException(status_code=409, detail="pin_free_file_create_required")

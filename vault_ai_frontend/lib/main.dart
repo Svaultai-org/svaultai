@@ -5296,6 +5296,14 @@ Future<Map<String, dynamic>> _zkHttpPost(
     }
     headers['X-SVaultAI-Pin-Free-File-Create'] = '1';
   }
+  if (path == '/auth/zk-login-finalize' && kSignedPrivateChatClientEnabled) {
+    if (!kSignedPrivateChatLocalReadersReady ||
+        !kSignedReadOffersClientEnabled || !kEnableZkPrivateChat ||
+        !kEnableFileV2UiRead) {
+      throw OpaqueUnavailable('Signed private chat needs complete local readers.');
+    }
+    headers['X-SVaultAI-Pin-Free-Private-Chat'] = '1';
+  }
   final deviceId = apiClientDeviceId();
   if (deviceId != null && deviceId.isNotEmpty) {
     headers['X-Device-Id'] = deviceId;
@@ -18867,7 +18875,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     final zkChatMvk = zk_mvk_store.ZkActiveMvk.current();
     final zkRoute = zk_chat_flow.resolveZkChatEntryRoute(
-      privateChatEnabled: kEnableZkPrivateChat,
+      privateChatEnabled:
+          kEnableZkPrivateChat || signedPrivateChatOfferedForToken(authToken),
       hasZkHandle: app.vaultHandle?.isNotEmpty ?? false,
       hasMvk: zkChatMvk != null,
       mvkMatchesVault: activeVaultId != null &&

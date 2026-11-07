@@ -684,6 +684,7 @@ CORS_ALLOWED_HEADERS = [
     "X-SVaultAI-File-V2-Reader",
     "X-SVaultAI-Pin-Free-Read-Offers",
     "X-SVaultAI-Pin-Free-File-Create",
+    "X-SVaultAI-Pin-Free-Private-Chat",
     "X-Chat-Request-Id",
     # 2026-07-22 (4) Safari-specific CORS regression follow-up.
     # After the (3) fix landed, the Safari production frontend still
@@ -717,6 +718,12 @@ CORS_ALLOWED_HEADERS = [
 
                                                                           
 CORS_ALLOWED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+
+from signed_private_chat_prebody_gate import SignedPrivateChatPreBodyGate
+
+# Inert for ordinary sessions. Keep CORS outside this gate so a rejected
+# browser request receives the usual response headers without body parsing.
+app.add_middleware(SignedPrivateChatPreBodyGate)
 
 app.add_middleware(
     CORSMiddleware,

@@ -65,11 +65,19 @@ const bool kSignedFileCreateClientEnabled = bool.fromEnvironment(
   'VAULTAI_ENABLE_SIGNED_FILE_CREATE',
   defaultValue: false,
 );
+const bool kSignedPrivateChatClientEnabled = bool.fromEnvironment(
+  'VAULTAI_ENABLE_SIGNED_PRIVATE_CHAT',
+  defaultValue: false,
+);
+// Build 77 has no complete older-chat/media reader. A later integration must
+// prove those readers before a client may request the irreversible offer.
+const bool kSignedPrivateChatLocalReadersReady = false;
 
 /// Public shape check; only the API can verify the signed bearer MAC.
 bool signedOfferTokenMatches(
   Map<String, dynamic> response, {
   bool requireFileCreateOffer = false,
+  bool requirePrivateChatOffer = false,
 }) {
   if (response['pin_free_read_offers_signed'] != true) return false;
   if (requireFileCreateOffer &&
@@ -79,6 +87,14 @@ bool signedOfferTokenMatches(
       response['pin_free_file_create_signed'] == true) {
     return false;
   }
+  if (requirePrivateChatOffer &&
+      response['pin_free_private_chat_signed'] != true) {
+    return false;
+  }
+  if (!requirePrivateChatOffer &&
+      response['pin_free_private_chat_signed'] == true) {
+    return false;
+  }
   final token = response['session_token'];
   if (token is! String || token.isEmpty) return false;
   try {
@@ -86,8 +102,14 @@ bool signedOfferTokenMatches(
     final expected = (response['pin_free_legacy_item_read'] == true ? 1 : 0) |
         (response['pin_free_legacy_file_list'] == true ? 2 : 0) |
         (response['pin_free_legacy_file_download'] == true ? 4 : 0) |
-        (requireFileCreateOffer ? 8 : 0);
+        (requireFileCreateOffer ? 8 : 0) |
+        (requirePrivateChatOffer ? 512 : 0);
     if ((expected & 4) != 0 && (expected & 2) == 0) return false;
+    if (requirePrivateChatOffer) {
+      if ((expected & 7) != 7) return false;
+      return wire.length == 51 && wire[0] == 4 &&
+          ((wire[1] << 8) | wire[2]) == expected;
+    }
     return wire.length == 50 && wire[0] == 3 && wire[1] == expected;
   } on FormatException {
     return false;
@@ -944,10 +966,12 @@ class ZkAuthService {
         'ke3': finish.finishLoginRequest,
       },
     );
-    if ((kSignedReadOffersClientEnabled || kSignedFileCreateClientEnabled) &&
+    if ((kSignedReadOffersClientEnabled || kSignedFileCreateClientEnabled ||
+            kSignedPrivateChatClientEnabled) &&
         !signedOfferTokenMatches(
           finalizeResponse,
           requireFileCreateOffer: kSignedFileCreateClientEnabled,
+          requirePrivateChatOffer: kSignedPrivateChatClientEnabled,
         )) {
       throw OpaqueUnavailable('Authenticated session offer unavailable');
     }
