@@ -179,11 +179,12 @@ void main() {
       final store = _V2Store(slot);
       final api = _ReceiveApi({'wallet_engine': 'no_account'}, onRead: () {
         if (!store.verified) return {'wallet_engine': 'no_account'};
-        // The current SOL/TRON receive envelope omits V2 metadata.
         return {
           'wallet_engine': 'receive_ready',
           'publicAddress': store.staged!['public_address'],
           'walletLabel': store.staged!['wallet_label'],
+          'walletRecordId': store.recordId,
+          'backupStatus': 'wallet_v2_encrypted',
         };
       });
       final panel = chain == 'solana'
@@ -275,6 +276,41 @@ void main() {
         'public_address': 'synthetic-private-address',
         'wallet_label': 'Synthetic wallet',
       };
+      final panel = chain == 'solana'
+          ? CryptoWalletEngineSolanaReceivePanel(
+              authToken: 'synthetic-token',
+              client: api,
+              encryptForVault: (_) async => throw StateError('Legacy key used'),
+              isVaultKeyAvailable: () => true,
+              walletV2: store.client(),
+            )
+          : CryptoWalletEngineTronReceivePanel(
+              authToken: 'synthetic-token',
+              client: api,
+              encryptForVault: (_) async => throw StateError('Legacy key used'),
+              isVaultKeyAvailable: () => true,
+              walletV2: store.client(),
+            );
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: panel)));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Wallet account verification failed'),
+          findsOneWidget);
+      expect(find.byKey(Key(addressKey)), findsNothing);
+    });
+
+    testWidgets('$chain rejects a legacy response beside a verified V2 slot',
+        (tester) async {
+      final store = _V2Store(slot);
+      store.verified = true;
+      store.staged = {
+        'public_address': 'synthetic-private-address',
+        'wallet_label': 'Synthetic wallet',
+      };
+      final api = _ReceiveApi({
+        'wallet_engine': 'receive_ready',
+        'publicAddress': 'synthetic-private-address',
+        'backupStatus': 'encrypted_backup_saved',
+      });
       final panel = chain == 'solana'
           ? CryptoWalletEngineSolanaReceivePanel(
               authToken: 'synthetic-token',
@@ -395,7 +431,9 @@ void main() {
       expect(send.onPressed, isNull);
       expect(find.byKey(const Key(
           'crypto_wallet_engine_asset_detail_address_text')), findsNothing);
-      expect(find.text(kAssetDetailPrivateBackupUnverified), findsOneWidget);
+      expect(find.byKey(const Key(
+          'crypto_wallet_engine_asset_detail_address_unverified')),
+          findsOneWidget);
       expect(find.byType(CryptoWalletEngineSolanaSendPanel), findsNothing);
       expect(find.byType(CryptoWalletEngineTronSendPanel), findsNothing);
       expect(api.legacyCreates, 0);

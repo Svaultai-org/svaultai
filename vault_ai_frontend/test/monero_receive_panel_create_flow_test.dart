@@ -499,6 +499,71 @@ void main() {
       expect(legacy.createCalls, isEmpty);
     });
 
+    testWidgets('same-address legacy response cannot impersonate a V2 backup',
+        (tester) async {
+      final generated = await RealMoneroWalletAdapter().generatePrivate(
+        restoreHeight: 3230000,
+        seedForTests: Uint8List.fromList(List<int>.filled(32, 19)),
+      );
+      const recordId = 'synthetic-monero-identity-record';
+      final identity = WalletV2Identity(
+        recordId: recordId,
+        chain: 'monero',
+        network: 'monero_mainnet',
+        asset: 'XMR',
+        publicAddress: generated.publicAddress,
+        label: 'Synthetic wallet',
+      );
+      final codec = WalletV2EnvelopeCodec(SecretKey(List<int>.filled(32, 9)));
+      final ciphertext = await codec.wrap(identity, generated.secret);
+      final legacy = _MoneroSpyClient()
+        ..nextReceiveResponse = {
+          'wallet_engine': 'receive_ready',
+          'publicAddress': generated.publicAddress,
+          'walletLabel': 'Synthetic wallet',
+          'backupStatus': 'encrypted_backup_saved',
+        };
+      final walletV2 = WalletV2ActiveClient(
+        codec: codec,
+        accessIsCurrent: () => true,
+        get: (path) async => path == '/vault/wallet-v2'
+            ? {'wallets': [
+                {
+                  'wallet_record_id': recordId,
+                  'chain': 'monero',
+                  'network': 'monero_mainnet',
+                  'asset': 'XMR',
+                  'public_address': generated.publicAddress,
+                  'wallet_label': 'Synthetic wallet',
+                  'migration_state': 'v2_verified',
+                },
+              ]}
+            : {
+                'wallet_record_id': recordId,
+                'chain': 'monero',
+                'network': 'monero_mainnet',
+                'asset': 'XMR',
+                'public_address': generated.publicAddress,
+                'wallet_label': 'Synthetic wallet',
+                'migration_state': 'v2_verified',
+                'envelope_version': 'v2',
+                'payload_ciphertext': ciphertext,
+              },
+        post: (_, __) async => throw StateError('No writes expected'),
+      );
+      await _pumpPanel(
+        tester,
+        client: legacy,
+        adapter: RealMoneroWalletAdapter(),
+        walletV2: walletV2,
+      );
+      expect(find.textContaining('Conflicting Monero wallet sources'),
+          findsOneWidget);
+      expect(find.byKey(const Key(kMoneroReceivePanelQrKey)), findsNothing);
+      expect(find.byKey(const Key(kMoneroReceivePanelAddressTextKey)),
+          findsNothing);
+    });
+
     testWidgets('unreadable V2 backup never renders a receive QR',
         (tester) async {
       final generated = await RealMoneroWalletAdapter().generatePrivate(

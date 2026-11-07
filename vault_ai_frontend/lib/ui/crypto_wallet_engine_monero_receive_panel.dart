@@ -157,8 +157,13 @@ class _CryptoWalletEngineMoneroReceivePanelState
         if (status == 'receive_ready') {
           final shownAddress = body['publicAddress']?.toString();
           if (identity == null) {
+            if (body['backupStatus'] == 'wallet_v2_encrypted') {
+              throw const FormatException('Wallet account verification failed');
+            }
             resolved = {...body, 'requiresWalletMigration': true};
-          } else if (shownAddress != identity.publicAddress) {
+          } else if (shownAddress != identity.publicAddress ||
+              body['backupStatus'] != 'wallet_v2_encrypted' ||
+              body['walletRecordId'] != identity.recordId) {
             throw const FormatException('Conflicting Monero wallet sources');
           } else {
             resolved = {

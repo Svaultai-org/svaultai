@@ -123,7 +123,8 @@ class _CryptoWalletEngineSolanaReceivePanelState
           if (identity != null) {
             final recordId = body['walletRecordId'];
             if (identity.publicAddress != body['publicAddress'] ||
-                (recordId != null && recordId != identity.recordId)) {
+                body['backupStatus'] != 'wallet_v2_encrypted' ||
+                recordId != identity.recordId) {
               throw const FormatException('Wallet account verification failed');
             }
             await walletV2.readSigningSecret(identity);

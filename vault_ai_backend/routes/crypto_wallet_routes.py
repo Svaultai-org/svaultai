@@ -1064,6 +1064,16 @@ def _summarize_for_listing(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _wallet_receive_source(record: dict[str, Any]) -> dict[str, Any]:
+    """Bind a receive address to its encrypted backup for V2 clients."""
+    if record.get("backupStatus") != "wallet_v2_encrypted":
+        return {}
+    return {
+        "backupStatus": "wallet_v2_encrypted",
+        "walletRecordId": record.get("walletRecordId"),
+    }
+
+
 @router.get("/crypto/wallet/asset-catalog")
 def get_asset_catalog(principal=Depends(require_crypto_entitlement)):
     from verified_assets import build_asset_catalog
@@ -1717,6 +1727,7 @@ def get_wallet_receive(
         token_unit = ethereum_sepolia_token_unit(norm)
         return {
             "wallet_engine":   "receive_ready",
+            **_wallet_receive_source(record),
             "asset":           norm,
             "underlyingAsset": "ETH",
             "network":         "Ethereum Sepolia",
@@ -1732,6 +1743,7 @@ def get_wallet_receive(
 
     return {
         "wallet_engine": "receive_ready",
+        **_wallet_receive_source(record),
         "asset":         norm,
         "network":       record.get("network"),
         "walletLabel":   record.get("walletLabel"),
@@ -2486,6 +2498,7 @@ def _mainnet_receive(
             }
         return {
             "wallet_engine": "receive_ready",
+            **_wallet_receive_source(record),
             "asset":         norm,
             "network":       "Ethereum Mainnet",
             "walletLabel":   record.get("walletLabel"),
@@ -2536,6 +2549,7 @@ def _mainnet_receive(
         token_unit = ethereum_mainnet_token_unit(norm)
         return {
             "wallet_engine":   "receive_ready",
+            **_wallet_receive_source(record),
             "asset":           norm,
             "network":         "Ethereum Mainnet",
             "underlyingAsset": "ETH",
@@ -5475,6 +5489,7 @@ def _solana_receive(
         }
     return {
         "wallet_engine": "receive_ready",
+        **_wallet_receive_source(record),
         "asset":         norm,
         "network":       _SOLANA_NETWORK_LABEL,
         "networkLabel":  "Solana",
@@ -6742,6 +6757,7 @@ def _tron_receive(
         }
     return {
         "wallet_engine": "receive_ready",
+        **_wallet_receive_source(record),
         "asset":         norm,
         "network":       _TRON_NETWORK_LABEL,
         "networkLabel":  "TRON",
@@ -8014,6 +8030,7 @@ def _xmr_receive(
         }
     return {
         "wallet_engine": "receive_ready",
+        **_wallet_receive_source(record),
         "asset":         norm,
         "network":       _MONERO_NETWORK_LABEL,
         "networkLabel":  "Monero",
