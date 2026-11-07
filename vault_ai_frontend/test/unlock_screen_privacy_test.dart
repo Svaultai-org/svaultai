@@ -117,6 +117,21 @@ void main() {
       expect(find.text('Enter your 6–64 digit PIN.'), findsOneWidget);
     });
 
+    testWidgets('empty unlock asks for a PIN without implying saved digits',
+        (tester) async {
+      final state = _stateWithRememberedVault(_sentinelVaultName);
+      await _pumpUnlockShell(tester, state);
+
+      final field = find.byKey(const Key('auth_unlock_pin_field'));
+      expect(tester.widget<TextField>(field).controller!.text, isEmpty);
+      await tester.tap(find.byKey(const Key('auth_unlock_button')));
+      await tester.pump();
+
+      expect(find.text('Enter your PIN.'), findsOneWidget);
+      expect(tester.widget<TextField>(field).controller!.text, isEmpty);
+      expect(state.sessionToken, isNull);
+    });
+
     testWidgets('mobile viewport renders without showing vault_name',
         (tester) async {
       final state = _stateWithRememberedVault(_sentinelVaultName);

@@ -7093,6 +7093,10 @@ class _UnlockPageState extends State<UnlockPage> {
     }
     final pin = pinCtrl.text.trim();
     if (kIsWeb) pinCtrl.clear();
+    if (pin.isEmpty) {
+      setState(() => err = 'Enter your PIN.');
+      return;
+    }
     final digitsOnly = RegExp(r'^\d+$');
     if (!digitsOnly.hasMatch(pin)) {
       setState(() => err = 'PIN can only contain digits.');
