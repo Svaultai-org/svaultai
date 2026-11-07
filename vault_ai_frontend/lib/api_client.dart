@@ -16,6 +16,7 @@ import 'services/session_termination.dart' as st;
 import 'services/zk_pin_free_item_read_session.dart';
 import 'services/zk_pin_free_file_session.dart';
 import 'services/zk_proof_token_guard.dart';
+import 'services/zk_auth_service.dart' show kSignedBeneficiaryClientEnabled;
 import 'services/saved_item_mutation_feedback.dart';
 export 'services/saved_item_mutation_feedback.dart'
     show SavedItemUpdateRequiredException, savedItemUpdateRequiredMessage;
@@ -65,6 +66,14 @@ void requireLegacyBeneficiaryPinActionAllowed({String? vaultHandle}) {
       (vaultHandle?.isNotEmpty == true ||
           zk_mvk_store.ZkActiveMvk.current() != null)) {
     throw StateError('Private inheritance setup is not available yet.');
+  }
+}
+
+void _rejectBeneficiaryPin(String authToken, String? pin) {
+  if (pin != null &&
+      (kSignedBeneficiaryClientEnabled ||
+          (_signedOfferBits(authToken) & 64) != 0)) {
+    throw StateError('Private inheritance action needs a one-time proof.');
   }
 }
 
@@ -258,13 +267,13 @@ int _signedOfferBits(String token) {
     final wire = base64Url.decode(base64Url.normalize(token));
     if (wire.length == 48 || wire.isEmpty) return 0;
     if (wire[0] == 3) {
-      if (wire.length != 50 || (wire[1] & ~31) != 0) return 31;
+      if (wire.length != 50 || (wire[1] & ~95) != 0) return 95;
       return wire[1];
     }
     if (wire[0] == 4) {
-      if (wire.length != 51) return 543;
+      if (wire.length != 51) return 607;
       final offers = (wire[1] << 8) | wire[2];
-      if ((offers & ~543) != 0 || (offers & 519) != 519) return 543;
+      if ((offers & ~607) != 0 || (offers & 519) != 519) return 607;
       return offers;
     }
     return 0;
@@ -317,6 +326,8 @@ void assertOfferedReadPinFreeRequest(
     '/upload-file/finalize-token' || '/upload-file/abort-token' =>
       (signedOffers & 8) != 0,
     '/security-center/analyze-passwords' => (signedOffers & 16) != 0,
+    '/beneficiary/create' || '/beneficiary/link' ||
+    '/beneficiary/claim-transfer' => (signedOffers & 64) != 0,
     _ => false,
   };
   if (!offered) return;
@@ -2329,6 +2340,7 @@ class VaultAIClient {
     required String label,
     required String authToken,
   }) async {
+    _rejectBeneficiaryPin(authToken, pin);
     requireLegacyBeneficiaryPinActionAllowed();
     final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/create'),
@@ -2433,6 +2445,7 @@ class VaultAIClient {
     required String pairingCode,
     required String authToken,
   }) async {
+    _rejectBeneficiaryPin(authToken, pin);
     requireLegacyBeneficiaryPinActionAllowed();
     final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/link'),
@@ -2468,6 +2481,7 @@ class VaultAIClient {
     // for auth, NOT logged if unset. Bounded to 64 chars.
     String? clientRequestId,
   }) async {
+    _rejectBeneficiaryPin(authToken, pin);
     final headers = _defaultHeaders(authToken: authToken, json: true);
     if (clientRequestId != null && clientRequestId.isNotEmpty) {
       final cri = clientRequestId.length > 64
@@ -2530,6 +2544,7 @@ class VaultAIClient {
     String? zkProofToken,
     required String authToken,
   }) async {
+    _rejectBeneficiaryPin(authToken, pin);
     final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/list-inheritances'),
       headers: _defaultHeaders(authToken: authToken, json: true),
@@ -2558,6 +2573,7 @@ class VaultAIClient {
     String? inheritedVaultName,
     required String authToken,
   }) async {
+    _rejectBeneficiaryPin(authToken, pin);
     requireLegacyBeneficiaryPinActionAllowed();
     final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/claim-transfer'),
@@ -2615,6 +2631,7 @@ class VaultAIClient {
     String? zkProofToken,
     required String authToken,
   }) async {
+    _rejectBeneficiaryPin(authToken, pin);
     final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/request-transfer'),
       headers: _defaultHeaders(authToken: authToken, json: true),
@@ -2643,6 +2660,7 @@ class VaultAIClient {
     String? zkProofToken,
     required String authToken,
   }) async {
+    _rejectBeneficiaryPin(authToken, pin);
     final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/cancel-transfer'),
       headers: _defaultHeaders(authToken: authToken, json: true),
@@ -2671,6 +2689,7 @@ class VaultAIClient {
     String? zkProofToken,
     required String authToken,
   }) async {
+    _rejectBeneficiaryPin(authToken, pin);
     final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/delete'),
       headers: _defaultHeaders(authToken: authToken, json: true),

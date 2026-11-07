@@ -13,6 +13,7 @@ from typing import Awaitable, Callable
 from starlette.responses import JSONResponse
 
 from auth_local import (
+    PIN_FREE_BENEFICIARY_OFFER,
     PIN_FREE_FILE_CREATE_OFFER,
     PIN_FREE_FILE_DOWNLOAD_OFFER,
     PIN_FREE_FILE_LIST_OFFER,
@@ -54,6 +55,10 @@ def _signed_offer_bits(headers: list[tuple[bytes, bytes]]) -> int:
 
 def _replaced_pin_route(path: str, offers: int) -> str | None:
     path = path.rstrip("/")
+    if (offers & PIN_FREE_BENEFICIARY_OFFER and
+            path in ("/beneficiary/create", "/beneficiary/link",
+                     "/beneficiary/claim-transfer")):
+        return "pin_free_beneficiary_required"
     if (offers & PIN_FREE_PASSWORD_ANALYSIS_OFFER and
             path == "/security-center/analyze-passwords"):
         return "pin_free_password_analysis_required"
@@ -77,6 +82,8 @@ def _replaced_pin_route(path: str, offers: int) -> str | None:
 def _candidate_pin_path(path: str) -> bool:
     path = path.rstrip("/")
     return (_replaced_private_chat_path(path) or
+            path in ("/beneficiary/create", "/beneficiary/link",
+                     "/beneficiary/claim-transfer") or
             path == "/security-center/analyze-passwords" or
             path in ("/list-files", "/download-file", "/download-file/manifest",
                      "/upload-file", "/upload-file/init",

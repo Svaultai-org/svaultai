@@ -1041,6 +1041,18 @@ Future<String> _zkActionProof(
   return proof.token;
 }
 
+bool _privateBeneficiarySession(AppState app, String token) =>
+    app.vaultHandle?.isNotEmpty == true &&
+    (kPrivateOnlyUnlockEnabled || hasSignedBeneficiaryOffer(token));
+
+void _requireAvailableBeneficiaryOffer(AppState app, String token) {
+  if (kSignedBeneficiaryClientEnabled &&
+      app.vaultHandle?.isNotEmpty == true &&
+      !hasSignedBeneficiaryOffer(token)) {
+    throw StateError('Private inheritance access is unavailable for this vault.');
+  }
+}
+
 /// Derive an older file key for one owner-approved read. Keep it out of the
 /// vault-wide PIN and key caches; only the current file action holds it.
 Future<SecretKey> _ephemeralLegacyContentKey({
@@ -1083,9 +1095,13 @@ Future<({String? pin, String? zkProofToken})?> _beneficiaryCredential(
   String token,
 ) async {
   final handle = app.vaultHandle;
+  _requireAvailableBeneficiaryOffer(app, token);
+  if (hasSignedBeneficiaryOffer(token) && !kEnableZkBeneficiaryProof) {
+    throw StateError('Private inheritance proof is unavailable in this build.');
+  }
   if (kEnableZkBeneficiaryProof && handle != null && handle.isNotEmpty) {
     final proofToken = await resolveZkActionProof(
-      promptForPrivateSession: kPrivateOnlyUnlockEnabled,
+      promptForPrivateSession: _privateBeneficiarySession(app, token),
       promptPin: () => _promptForActionPin(
         context, 'Verify inheritance access',
       ),
@@ -5386,6 +5402,14 @@ Future<Map<String, dynamic>> _zkHttpPost(
           'Signed password analysis needs the local reader.');
     }
     headers['X-SVaultAI-Pin-Free-Password-Analysis'] = '1';
+  }
+  if (path == '/auth/zk-login-finalize' && kSignedBeneficiaryClientEnabled) {
+    if (!kSignedReadOffersClientEnabled || !kEnableFileV2UiRead ||
+        !kEnableZkBeneficiaryProof || !kEnableZkBeneficiaryV2Pairing) {
+      throw OpaqueUnavailable(
+          'Signed beneficiary access needs the private pairing flow.');
+    }
+    headers['X-SVaultAI-Pin-Free-Beneficiary'] = '1';
   }
   final deviceId = apiClientDeviceId();
   if (deviceId != null && deviceId.isNotEmpty) {
@@ -10491,9 +10515,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                   final client =
                                       VaultAIClient(baseUrl: backendBaseUrl);
                                   final labelText = labelCtrl.text.trim();
-                                  final isZk = app.vaultHandle?.isNotEmpty == true;
                                   late final Map<String, dynamic> result;
-                                  if (isZk && kPrivateOnlyUnlockEnabled) {
+                                  _requireAvailableBeneficiaryOffer(app, token);
+                                  if (_privateBeneficiarySession(app, token)) {
                                     if (!kEnableZkBeneficiaryV2Pairing) {
                                       throw StateError('Beneficiary pairing is not available in this build.');
                                     }
@@ -10540,7 +10564,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                   // an unlabelled row (the beneficiary
                                   // list would be unreadable). Show
                                   // the error and let the user retry.
-                                  if (!(isZk && kPrivateOnlyUnlockEnabled) &&
+                                  if (!_privateBeneficiarySession(app, token) &&
                                       zk_mvk_store.ZkActiveMvk.current() != null) {
                                     final linkId =
                                         (result['link_id'] as num?)?.toInt();
@@ -10741,8 +10765,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                   final client =
                                       VaultAIClient(baseUrl: backendBaseUrl);
                                   late final Map<String, dynamic> result;
-                                  if (app.vaultHandle?.isNotEmpty == true &&
-                                      kPrivateOnlyUnlockEnabled) {
+                                  _requireAvailableBeneficiaryOffer(app, token);
+                                  if (_privateBeneficiarySession(app, token)) {
                                     if (!kEnableZkBeneficiaryV2Pairing) {
                                       throw StateError('Beneficiary pairing is not available in this build.');
                                     }
@@ -10918,6 +10942,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _claimInheritance(int linkId, String label) async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken ?? '';
+    if (_privateBeneficiarySession(app, token) ||
+        (kSignedBeneficiaryClientEnabled &&
+            app.vaultHandle?.isNotEmpty == true)) {
+      _showSnack('This older inheritance claim is unavailable with private access.');
+      return;
+    }
     final inheritedNameCtrl = TextEditingController(text: '$label (inherited)');
     String? err;
     bool claiming = false;
@@ -11144,6 +11176,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     try {
       String? pin;
       String? proofToken;
+      _requireAvailableBeneficiaryOffer(app, token);
+      if (hasSignedBeneficiaryOffer(token) && !kEnableZkBeneficiaryProof) {
+        throw StateError('Private inheritance proof is unavailable in this build.');
+      }
       if (kEnableZkBeneficiaryProof) {
         if (app.vaultHandle == null || app.vaultHandle!.isEmpty) {
           throw StateError('Sign in again to verify beneficiary access.');
@@ -13320,6 +13356,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                             i['zk_pairing_v2'] != true &&
                             !credentialsSaved &&
                             pairingState == 'paired_no_credentials';
+                        final app = context.read<AppState>();
+                        final legacyClaimBlocked =
+                            _privateBeneficiarySession(
+                                app, app.sessionToken ?? '') ||
+                            (kSignedBeneficiaryClientEnabled &&
+                                app.vaultHandle?.isNotEmpty == true);
 
                         return Container(
                           margin: const EdgeInsets.only(bottom: 8),
@@ -13470,7 +13512,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                   if (readyToClaim &&
                                       i['zk_pairing_v2'] != true &&
                                       !credentialsSaved &&
-                                      pairingState == 'paired_no_credentials')
+                                      pairingState == 'paired_no_credentials' &&
+                                      !legacyClaimBlocked)
                                     FilledButton.icon(
                                       onPressed: () =>
                                           _claimInheritance(id, label),
@@ -13478,6 +13521,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                           size: 18),
                                       label: const Text('Claim'),
                                     ),
+                                  if (readyToClaim &&
+                                      i['zk_pairing_v2'] != true &&
+                                      !credentialsSaved &&
+                                      pairingState == 'paired_no_credentials' &&
+                                      legacyClaimBlocked)
+                                    const Text('Older inheritance claim unavailable with private access.'),
                                 ],
                               ),
                               if (isZkV2)

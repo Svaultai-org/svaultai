@@ -82,6 +82,7 @@ def _mount_preflight_app(regex: str) -> TestClient:
             "X-SVaultAI-File-V2-Reader",
             "X-SVaultAI-Pin-Free-Read-Offers",
             "X-SVaultAI-Pin-Free-File-Create",
+            "X-SVaultAI-Pin-Free-Beneficiary",
             # 2026-07-22 (4) Safari preflight adds Cache-Control and
             # Pragma to Access-Control-Request-Headers for GETs. Same
             # lock-step invariant: this stub must mirror the real

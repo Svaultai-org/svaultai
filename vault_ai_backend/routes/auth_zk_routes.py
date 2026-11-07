@@ -198,6 +198,7 @@ from auth_local import (
     PIN_FREE_FILE_DOWNLOAD_OFFER,
     PIN_FREE_FILE_CREATE_OFFER,
     PIN_FREE_PASSWORD_ANALYSIS_OFFER,
+    PIN_FREE_BENEFICIARY_OFFER,
     PIN_FREE_PRIVATE_CHAT_OFFER,
     issue_session_token,
     sign_opaque_read_offer_token,
@@ -206,6 +207,7 @@ from auth_local import (
     verify_session_token,
 )
 from device_gate import verify_trusted_device
+from inheritance_protocol import ZK_BENEFICIARY_V2_MARKER
 from opaque_server_module import (
     OpaqueError,
     OpaqueProtocolError,
@@ -912,6 +914,8 @@ class ZkLoginFinalizeResponse(BaseModel):
     pin_free_read_offers_signed: bool = False
     pin_free_file_create_signed: bool = False
     pin_free_password_analysis_signed: bool = False
+    pin_free_beneficiary_signed: bool = False
+    pin_free_beneficiary_v2: bool = False
     pin_free_private_chat_signed: bool = False
     # Additive hints: old clients ignore these and keep their existing
     # registration + metadata fetch. False/null always requires fallback.
@@ -999,14 +1003,48 @@ def _signed_private_chat_negotiation(request: Request, *, signed_reads: bool) ->
     return True
 
 
+def _signed_beneficiary_negotiation(request: Request, *, signed_reads: bool) -> bool:
+    """Request proof-only V2 pairing only from a capable signed-read client."""
+    header = request.headers.get("x-svaultai-pin-free-beneficiary", "")
+    if header not in ("", "1"):
+        raise HTTPException(status_code=400, detail="invalid_beneficiary_capability")
+    if header != "1":
+        return False
+    if not signed_reads or not request_has_file_v2_reader(request):
+        raise HTTPException(status_code=409, detail="signed_read_offers_required")
+    if os.getenv("VAULTAI_SIGNED_BENEFICIARY_OFFER_ENABLED", "false").strip().lower() != "true":
+        raise HTTPException(status_code=409, detail="signed_beneficiary_unavailable")
+    if os.getenv("VAULTAI_ZK_BENEFICIARY_V2_PAIRING_ENABLED", "false").strip().lower() != "true":
+        raise HTTPException(status_code=409, detail="beneficiary_v2_pairing_unavailable")
+    return True
+
+
+def _beneficiary_v2_offer_ready(conn, vault_id: str) -> bool:
+    """Avoid fencing a vault that has an older incoming or outgoing link."""
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT NOT EXISTS (
+          SELECT 1 FROM beneficiary_links
+           WHERE (passer_vault_id = %s OR beneficiary_vault_id = %s)
+             AND wrapped_vault_key IS DISTINCT FROM %s
+        )
+        """,
+        (vault_id, vault_id, ZK_BENEFICIARY_V2_MARKER),
+    )
+    row = cur.fetchone()
+    return bool(row and row[0] is True)
+
+
 def _signed_offer_token(
     token: str, *, signed_reads: bool, item_read: bool,
     file_list: bool, file_download: bool, file_create: bool,
     private_chat: bool = False,
     password_analysis: bool = False,
+    beneficiary: bool = False,
 ) -> str:
     if not signed_reads:
-        if file_create or private_chat or password_analysis:
+        if file_create or private_chat or password_analysis or beneficiary:
             raise ValueError("capability requires negotiated session offers")
         return token
     if file_download and not file_list:
@@ -1018,6 +1056,7 @@ def _signed_offer_token(
             (PIN_FREE_FILE_DOWNLOAD_OFFER if file_download else 0) |
             (PIN_FREE_FILE_CREATE_OFFER if file_create else 0) |
             (PIN_FREE_PASSWORD_ANALYSIS_OFFER if password_analysis else 0) |
+            (PIN_FREE_BENEFICIARY_OFFER if beneficiary else 0) |
             (PIN_FREE_PRIVATE_CHAT_OFFER if private_chat else 0))
     return sign_opaque_read_offer_token(token, bits)
 
@@ -1186,6 +1225,9 @@ def _zk_login_finalize_sync(
         signed_private_chat_requested = _signed_private_chat_negotiation(
             request, signed_reads=signed_read_offers_requested,
         )
+        signed_beneficiary_requested = _signed_beneficiary_negotiation(
+            request, signed_reads=signed_read_offers_requested,
+        )
         # A re-verification slot must never be exchangeable for a fresh login
         # session through the older finalize endpoint.
         if payload.slot_id.startswith(
@@ -1244,7 +1286,8 @@ def _zk_login_finalize_sync(
                   WHERE vault_id = %s
                   RETURNING vault_id, wrapped_mvk, wrapped_sk_vault,
                             display_name_ciphertext, vault_handle,
-                            pin_salt, kdf_iterations, pin_verifier
+                            pin_salt, kdf_iterations, pin_verifier,
+                            pk_vault_public
                 """,
                 (row["vault_id"],),
             )
@@ -1339,6 +1382,25 @@ def _zk_login_finalize_sync(
             and vault_row["wrapped_sk_vault"] is not None
             and pin_free_v2_file_upload_server_enabled()
         )
+        beneficiary_capable = (
+            signed_beneficiary_requested
+            and device_trust_complete
+            and vault_row["vault_handle"] is not None
+            and vault_row["wrapped_mvk"] is not None
+            and vault_row["wrapped_sk_vault"] is not None
+            and vault_row["pk_vault_public"] is not None
+            and len(bytes(vault_row["pk_vault_public"])) == 32
+        )
+        if beneficiary_capable:
+            try:
+                with _zk_login_phase("metadata"):
+                    beneficiary_capable = _beneficiary_v2_offer_ready(
+                        conn, str(vault_row["vault_id"]),
+                    )
+            except Exception:
+                conn.rollback()
+                beneficiary_capable = False
+                logger.exception("[ZK-LOGIN-FINALIZE] beneficiary offer check failed")
         response_session_token = _signed_offer_token(
             token["token"], signed_reads=signed_read_offers_requested,
             item_read=offer_base, file_list=file_list_offer,
@@ -1347,6 +1409,7 @@ def _zk_login_finalize_sync(
             # if a transient trust/route check prevents its V2 write.
             file_create=signed_file_create_requested,
             password_analysis=signed_password_analysis_requested,
+            beneficiary=beneficiary_capable,
             private_chat=(signed_private_chat_requested and offer_base and
                           file_list_offer and file_download_offer),
         )
@@ -1367,6 +1430,8 @@ def _zk_login_finalize_sync(
             pin_free_read_offers_signed=signed_read_offers_requested,
             pin_free_file_create_signed=signed_file_create_requested,
             pin_free_password_analysis_signed=signed_password_analysis_requested,
+            pin_free_beneficiary_signed=signed_beneficiary_requested,
+            pin_free_beneficiary_v2=beneficiary_capable,
             pin_free_private_chat_signed=(
                 signed_private_chat_requested and offer_base and
                 file_list_offer and file_download_offer

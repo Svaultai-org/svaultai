@@ -73,9 +73,37 @@ const bool kSignedPasswordAnalysisClientEnabled = bool.fromEnvironment(
   'VAULTAI_ENABLE_SIGNED_PASSWORD_ANALYSIS',
   defaultValue: false,
 );
+const bool kSignedBeneficiaryClientEnabled = bool.fromEnvironment(
+  'VAULTAI_ENABLE_SIGNED_BENEFICIARY',
+  defaultValue: false,
+);
 // Build 77 has no complete older-chat/media reader. A later integration must
 // prove those readers before a client may request the irreversible offer.
 const bool kSignedPrivateChatLocalReadersReady = false;
+
+/// The server checks the signed MAC. Client-side shape checks gate local
+/// routes and treat malformed signed bearers conservatively.
+bool hasSignedBeneficiaryOffer(String token) {
+  try {
+    final wire = base64Url.decode(base64Url.normalize(token));
+    if (wire.isEmpty) {
+      return false;
+    }
+    if (wire[0] == 3) {
+      if (wire.length != 50 || (wire[1] & ~95) != 0) return true;
+      return (wire[1] & 64) != 0;
+    }
+    if (wire[0] == 4) {
+      if (wire.length != 51) return true;
+      final offers = (wire[1] << 8) | wire[2];
+      if ((offers & ~607) != 0 || (offers & 519) != 519) return true;
+      return (offers & 64) != 0;
+    }
+    return false;
+  } on FormatException {
+    return false;
+  }
+}
 
 /// Public shape check; only the API can verify the signed bearer MAC.
 bool signedOfferTokenMatches(
@@ -83,6 +111,7 @@ bool signedOfferTokenMatches(
   bool requireFileCreateOffer = false,
   bool requirePrivateChatOffer = false,
   bool requirePasswordAnalysisOffer = false,
+  bool requireBeneficiaryOffer = false,
 }) {
   if (response['pin_free_read_offers_signed'] != true) return false;
   if (requireFileCreateOffer &&
@@ -108,6 +137,16 @@ bool signedOfferTokenMatches(
       response['pin_free_password_analysis_signed'] == true) {
     return false;
   }
+  if (requireBeneficiaryOffer &&
+      (response['pin_free_beneficiary_signed'] != true ||
+          response['pin_free_beneficiary_v2'] is! bool)) {
+    return false;
+  }
+  if (!requireBeneficiaryOffer &&
+      (response['pin_free_beneficiary_signed'] == true ||
+          response['pin_free_beneficiary_v2'] == true)) {
+    return false;
+  }
   final token = response['session_token'];
   if (token is! String || token.isEmpty) return false;
   try {
@@ -117,6 +156,10 @@ bool signedOfferTokenMatches(
         (response['pin_free_legacy_file_download'] == true ? 4 : 0) |
         (requireFileCreateOffer ? 8 : 0) |
         (requirePasswordAnalysisOffer ? 16 : 0) |
+        (requireBeneficiaryOffer &&
+                response['pin_free_beneficiary_v2'] == true
+            ? 64
+            : 0) |
         (requirePrivateChatOffer ? 512 : 0);
     if ((expected & 4) != 0 && (expected & 2) == 0) return false;
     if (requirePrivateChatOffer) {
@@ -982,12 +1025,14 @@ class ZkAuthService {
     );
     if ((kSignedReadOffersClientEnabled || kSignedFileCreateClientEnabled ||
             kSignedPrivateChatClientEnabled ||
-            kSignedPasswordAnalysisClientEnabled) &&
+            kSignedPasswordAnalysisClientEnabled ||
+            kSignedBeneficiaryClientEnabled) &&
         !signedOfferTokenMatches(
           finalizeResponse,
           requireFileCreateOffer: kSignedFileCreateClientEnabled,
           requirePrivateChatOffer: kSignedPrivateChatClientEnabled,
           requirePasswordAnalysisOffer: kSignedPasswordAnalysisClientEnabled,
+          requireBeneficiaryOffer: kSignedBeneficiaryClientEnabled,
         )) {
       throw OpaqueUnavailable('Authenticated session offer unavailable');
     }

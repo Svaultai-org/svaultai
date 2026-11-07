@@ -14,7 +14,7 @@ import pathlib
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
-from auth_local import verify_session_token
+from auth_local import PIN_FREE_BENEFICIARY_OFFER, verify_session_token
 from duplicate_detection import (
     find_existing_file_by_hash,
     find_name_conflict,
@@ -692,6 +692,7 @@ CORS_ALLOWED_HEADERS = [
     "X-SVaultAI-Pin-Free-File-Create",
     "X-SVaultAI-Pin-Free-Private-Chat",
     "X-SVaultAI-Pin-Free-Password-Analysis",
+    "X-SVaultAI-Pin-Free-Beneficiary",
     "X-Chat-Request-Id",
     # 2026-07-22 (4) Safari-specific CORS regression follow-up.
     # After the (3) fix landed, the Safari production frontend still
@@ -1207,6 +1208,15 @@ def _verify_beneficiary_action(
 ) -> None:
     """Recheck ZK actions with one-time OPAQUE, retaining legacy PIN auth."""
     vault_id = principal["vault_id"]
+    if principal.get("pin_free_read_offers", 0) & PIN_FREE_BENEFICIARY_OFFER:
+        if pin is not None:
+            raise HTTPException(status_code=409,
+                                detail="pin_free_beneficiary_required")
+        if not proof_token:
+            raise HTTPException(status_code=400, detail="zk_proof_token_required")
+        from routes.auth_zk_routes import consume_recent_zk_proof
+        consume_recent_zk_proof(proof_token, principal)
+        return
     if _beneficiary_opaque_reauth_enabled():
         from vault_core import is_vault_zk_adopted
         if is_vault_zk_adopted(vault_id):
