@@ -337,6 +337,11 @@ class LegacyCiphertextMigrationCodec {
   Future<Map<String, dynamic>> decodeLegacyItem(String encoded) =>
       _legacyItemFields(encoded);
 
+  /// Decode an older wallet's inner PIN-key envelope only in this bounded
+  /// owner action. The caller must not retain the returned signing secret.
+  Future<String> decodeLegacyString(String encoded) async =>
+      utf8.decode(await _legacyBytes(encoded));
+
   /// Preserve the legacy wire format so older clients can still read an edit.
   /// The plaintext and legacy key remain on this device.
   Future<String> encodeLegacyItem(Map<String, dynamic> record) async {

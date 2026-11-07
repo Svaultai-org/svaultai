@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -183,6 +185,7 @@ Future<void> _pumpDashboard(
   required _ChainApi api,
   WalletV2ActiveClient? walletV2,
   bool walletV2SendEnabled = true,
+  Future<int> Function()? upgradeLegacyWallets,
 }) async {
   tester.view.physicalSize = const Size(1200, 2400);
   tester.view.devicePixelRatio = 1;
@@ -200,6 +203,7 @@ Future<void> _pumpDashboard(
           apiClient: api,
           walletV2: walletV2,
           walletV2SendEnabled: walletV2SendEnabled,
+          upgradeLegacyWallets: upgradeLegacyWallets,
           decryptForVault: (_) async => throw StateError('Legacy secret used'),
           isVaultKeyAvailable: () => true,
           encryptForVault: (_) async => throw StateError('Legacy key used'),
@@ -215,6 +219,33 @@ Future<void> _pumpDashboard(
 }
 
 void main() {
+  testWidgets('private wallet upgrade starts once and reports completion',
+      (tester) async {
+    final api = _ChainApi('SOL', 'synthetic-SOL-address');
+    final pending = Completer<int>();
+    var calls = 0;
+    await _pumpDashboard(
+      tester,
+      api: api,
+      walletV2: _walletV2('SOL', api.address),
+      upgradeLegacyWallets: () {
+        calls++;
+        return pending.future;
+      },
+    );
+    final button =
+        find.byKey(const Key('crypto_wallet_engine_upgrade_wallets_btn'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pump();
+    expect(calls, 1);
+    expect(tester.widget<OutlinedButton>(button).onPressed, isNull);
+    pending.complete(1);
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+    expect(find.text('1 older wallet upgraded.'), findsOneWidget);
+  });
+
   for (final asset in ['SOL', 'USDT_TRC20']) {
     final solana = asset == 'SOL';
     final network = solana ? 'solana_mainnet' : 'tron_mainnet';

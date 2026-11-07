@@ -51,6 +51,7 @@ import 'services/zk_pin_gate_migration_handoff.dart';
 import 'services/file_v2_writer.dart';
 import 'services/wallet_v2_active_client.dart';
 import 'services/wallet_v2_migration.dart';
+import 'services/wallet_v2_owner_upgrade.dart';
 import 'services/native_secure_store.dart';
 import 'services/session_persistence_lock.dart'
     if (dart.library.html) 'services/session_persistence_lock_web.dart' as session_store;
@@ -1183,6 +1184,10 @@ const bool kEnableWalletV2UiCreate = bool.fromEnvironment(
 ) && kEnableWalletV2UiRead;
 const bool kEnableWalletV2UiSend = bool.fromEnvironment(
   'VAULTAI_ENABLE_WALLET_V2_UI_SEND',
+  defaultValue: false,
+) && kEnableWalletV2UiRead;
+const bool kEnableWalletV2UiMigration = bool.fromEnvironment(
+  'VAULTAI_ENABLE_WALLET_V2_UI_MIGRATION',
   defaultValue: false,
 ) && kEnableWalletV2UiRead;
 
@@ -5622,6 +5627,7 @@ void _scheduleMetadataMigration({required AppState app}) {
 Future<({
   legacy_export.LegacyCiphertextExportClient export,
   legacy_codec.LegacyCiphertextMigrationCodec codec,
+  Future<String> Function() proof,
   bool Function() stillCurrent,
   void Function() close,
 })> createLocalLegacyPasswordSourceForActiveVault(
@@ -5689,6 +5695,7 @@ Future<({
       codec: legacy_codec.LegacyCiphertextMigrationCodec(
         legacyKey: legacyKey, mvk: mvk,
       ),
+      proof: action.proof,
       stillCurrent: current,
       close: () {
         export.clearGrant();
@@ -22605,6 +22612,28 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           },
           walletV2: walletV2,
           walletV2SendEnabled: kEnableWalletV2UiSend,
+          upgradeLegacyWallets: kEnableWalletV2UiMigration && walletV2 != null
+              ? () async {
+                  final source =
+                      await createLocalLegacyPasswordSourceForActiveVault(
+                    app,
+                    promptPin: () => _promptForActionPin(
+                      engineCtx, 'Upgrade existing wallets'),
+                  );
+                  try {
+                    final result = await WalletV2OwnerUpgrade(
+                      export: source.export,
+                      legacyCodec: source.codec,
+                      wallet: walletV2,
+                      proofProvider: source.proof,
+                      accessIsCurrent: source.stillCurrent,
+                    ).run();
+                    return result.migrated;
+                  } finally {
+                    source.close();
+                  }
+                }
+              : null,
           // 2026-07-13 fix: was calling the legacy
           // /crypto/wallet/{asset}/receive endpoint which queries
           // service='ETH'. The mainnet ETH wallet is persisted with

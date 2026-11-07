@@ -289,6 +289,7 @@ class CryptoWalletEnginePage extends StatefulWidget {
   /// Optional, default-off private wallet receive client.
   final WalletV2ActiveClient? walletV2;
   final bool walletV2SendEnabled;
+  final Future<int> Function()? upgradeLegacyWallets;
 
   // 2026-07-13 network-scoped: production bug was that the ETH Send
   // path called a legacy /crypto/wallet/{asset}/receive endpoint which
@@ -315,6 +316,7 @@ class CryptoWalletEnginePage extends StatefulWidget {
     this.verifyPin,
     this.walletV2,
     this.walletV2SendEnabled = false,
+    this.upgradeLegacyWallets,
     this.loadFromAddress,
     this.moneroWalletAdapter = const NullMoneroWalletAdapter(),
     this.moneroScannerAdapter = const NullMoneroScannerAdapter(),
@@ -326,6 +328,34 @@ class CryptoWalletEnginePage extends StatefulWidget {
 
 class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
   CryptoWalletFeatures? _features;
+  bool _upgradingWallets = false;
+  String? _walletUpgradeStatus;
+
+  Future<void> _runWalletUpgrade() async {
+    final action = widget.upgradeLegacyWallets;
+    if (_upgradingWallets || action == null ||
+        widget.walletV2?.accessIsCurrent() != true) return;
+    setState(() {
+      _upgradingWallets = true;
+      _walletUpgradeStatus = null;
+    });
+    try {
+      final count = await action();
+      if (!mounted) return;
+      setState(() {
+        _walletUpgradeStatus = count == 0
+            ? 'No older wallets needed upgrading.'
+            : '$count older wallet${count == 1 ? '' : 's'} upgraded.';
+      });
+      await _loadFeatures();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _walletUpgradeStatus =
+          'Wallet upgrade was not completed. Existing data remains saved.');
+    } finally {
+      if (mounted) setState(() => _upgradingWallets = false);
+    }
+  }
 
   final AssetLiveStore _liveStore = AssetLiveStore.instance;
   final CryptoWalletMainnetSendApprovalSession _mainnetSendApprovalSession =
@@ -522,6 +552,10 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
       verifyPin: widget.verifyPin,
       walletV2: widget.walletV2,
       walletV2SendEnabled: widget.walletV2SendEnabled,
+      onUpgradeLegacyWallets: widget.upgradeLegacyWallets == null
+          ? null : _runWalletUpgrade,
+      upgradingWallets: _upgradingWallets,
+      walletUpgradeStatus: _walletUpgradeStatus,
       loadFromAddress: widget.loadFromAddress,
       effectiveNetwork: _effectiveNetwork,
       isMainnetActive: _isMainnetActive,
@@ -554,6 +588,9 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   final Future<bool> Function(String pin)? verifyPin;
   final WalletV2ActiveClient? walletV2;
   final bool walletV2SendEnabled;
+  final VoidCallback? onUpgradeLegacyWallets;
+  final bool upgradingWallets;
+  final String? walletUpgradeStatus;
   // 2026-07-13: network-scoped signature — see notes on the public
   // widget's field of the same name.
   final Future<String?> Function(String network)? loadFromAddress;
@@ -583,6 +620,9 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     this.verifyPin,
     this.walletV2,
     this.walletV2SendEnabled = false,
+    this.onUpgradeLegacyWallets,
+    this.upgradingWallets = false,
+    this.walletUpgradeStatus,
     this.loadFromAddress,
     required this.effectiveNetwork,
     required this.isMainnetActive,
@@ -1495,6 +1535,17 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
       spacing: 10,
       runSpacing: 10,
       children: [
+        if (walletV2 != null && onUpgradeLegacyWallets != null)
+          OutlinedButton.icon(
+            key: const Key('crypto_wallet_engine_upgrade_wallets_btn'),
+            onPressed: upgradingWallets ? null : onUpgradeLegacyWallets,
+            icon: const Icon(Icons.sync_rounded, size: 16),
+            label: Text(upgradingWallets
+                ? 'Upgrading wallets…' : 'Upgrade existing wallets'),
+          ),
+        if (walletUpgradeStatus != null)
+          Text(walletUpgradeStatus!,
+              key: const Key('crypto_wallet_engine_upgrade_status')),
         ElevatedButton.icon(
           key: const Key('crypto_wallet_engine_primary_receive_btn'),
           onPressed: () {
