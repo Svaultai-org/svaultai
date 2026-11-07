@@ -34,6 +34,11 @@ _OLD_FILE_MUTATIONS = {
     ("POST", "/manage/file/delete"),
     ("DELETE", "/delete-file"),
 }
+_OLD_ITEM_READS = {
+    "/list-secure-items", "/get-secure-item", "/list-login-names",
+    "/get-login", "/login-count", "/manage/list-login-names",
+    "/manage/list-secure-items", "/manage/logins-full",
+}
 
 
 def _replaced_private_chat_path(path: str) -> bool:
@@ -64,8 +69,7 @@ def _signed_offer_bits(headers: list[tuple[bytes, bytes]]) -> int:
 
 def _replaced_pin_route(path: str, offers: int, method: str = "POST") -> str | None:
     path = path.rstrip("/")
-    if (offers & PIN_FREE_ITEM_READ_OFFER and
-            path in ("/list-secure-items", "/get-secure-item")):
+    if offers & PIN_FREE_ITEM_READ_OFFER and path in _OLD_ITEM_READS:
         return "pin_free_read_required"
     if (offers & PIN_FREE_FILE_MUTATION_OFFER and
             (method, path) in _OLD_FILE_MUTATIONS):
@@ -102,7 +106,7 @@ def _candidate_pin_path(path: str, method: str = "POST") -> bool:
     if method != "POST":
         return False
     return (_replaced_private_chat_path(path) or
-            path in ("/list-secure-items", "/get-secure-item") or
+            path in _OLD_ITEM_READS or
             path in ("/beneficiary/create", "/beneficiary/link",
                      "/beneficiary/request-transfer",
                      "/beneficiary/claim-transfer") or

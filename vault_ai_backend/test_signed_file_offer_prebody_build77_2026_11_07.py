@@ -53,7 +53,11 @@ def _header(token: str) -> list[tuple[bytes, bytes]]:
     return [(b"authorization", f"Bearer {token}".encode("ascii"))]
 
 
-@pytest.mark.parametrize("path", ["/list-secure-items", "/get-secure-item"])
+@pytest.mark.parametrize("path", [
+    "/list-secure-items", "/get-secure-item", "/list-login-names",
+    "/get-login", "/login-count", "/manage/list-login-names",
+    "/manage/list-secure-items", "/manage/logins-full",
+])
 def test_signed_item_read_offer_rejects_pin_body_before_receive(path):
     old = auth_local._format_token(bytes(range(16)))
     offered = auth_local.sign_opaque_read_offer_token(old, 1)
@@ -68,13 +72,18 @@ def test_signed_item_read_offer_rejects_pin_body_before_receive(path):
     assert asyncio.run(_probe(path, _header(old) + _header(offered))) == (
         0, 409, {"detail": "pin_free_read_required"},
     )
-    # Only the two replaced POST contracts are fenced.
+    # The signed item-read offer must not fence separate write contracts.
     assert asyncio.run(_probe(path, _header(offered), "OPTIONS")) == (
         1, 200, b"ok",
     )
-    assert asyncio.run(_probe("/list-login-names", _header(offered))) == (
+    assert asyncio.run(_probe("/update-secure-item", _header(offered))) == (
         1, 200, b"ok",
     )
+    with pytest.raises(HTTPException) as blocked:
+        auth_local.require_signed_offer_route(
+            {"pin_free_read_offers": 1}, path=path,
+        )
+    assert blocked.value.detail == "pin_free_read_required"
 
 
 @pytest.mark.parametrize("bits,path,reason", [

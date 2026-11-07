@@ -806,7 +806,10 @@ def require_signed_offer_route(principal: SessionPrincipal, *, path: str) -> Non
             offers & PIN_FREE_FILE_CREATE_OFFER):
         raise HTTPException(status_code=409, detail="pin_free_file_create_required")
     blocked_read = (
-        (path in ("/list-secure-items", "/get-secure-item") and
+        (path in ("/list-secure-items", "/get-secure-item",
+                  "/list-login-names", "/get-login", "/login-count",
+                  "/manage/list-login-names", "/manage/list-secure-items",
+                  "/manage/logins-full") and
          bool(offers & PIN_FREE_ITEM_READ_OFFER))
         or (path == "/list-files" and
             bool(offers & PIN_FREE_FILE_LIST_OFFER))
