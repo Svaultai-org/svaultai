@@ -283,12 +283,12 @@ class _CryptoWalletEngineReceivePanelState
         if (!mounted) return;
         setState(() => _creating = false);
         await _load();
-      } catch (e) {
+      } catch (_) {
         wallet = null;
         if (!mounted) return;
         setState(() {
           _creating = false;
-          _error = 'Create wallet failed: $e';
+          _error = 'Wallet creation failed. Please try again.';
         });
       }
       return;
