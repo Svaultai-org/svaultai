@@ -10661,7 +10661,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
-  Future<void> _upgradePendingBeneficiary(int oldLinkId, String label) async {
+  Future<void> _upgradePendingBeneficiary(
+      int oldLinkId, String? existingLabel) async {
     if (!kEnableZkPendingBeneficiaryUpgrade ||
         _upgradingPendingBeneficiaryIds.contains(oldLinkId)) return;
     final app = context.read<AppState>();
@@ -10674,23 +10675,58 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _showSnack('Unlock your private vault to upgrade this invitation.');
       return;
     }
-    final approved = await showDialog<bool>(
-      context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: VaultColors.surfaceElevated,
-        title: const Text('Upgrade invitation'),
-        content: Text('Replace the unused invitation for $label with a '
-            'private pairing code. The existing invitation stays saved '
-            'until the new one is checked.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogCtx, false),
-              child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(dialogCtx, true),
-              child: const Text('Upgrade')),
-        ],
-      ),
-    );
-    if (approved != true || !mounted) return;
+    final labelCtrl = TextEditingController(text: existingLabel ?? '');
+    final formKey = GlobalKey<FormState>();
+    String? chosenLabel;
+    try {
+      chosenLabel = await showDialog<String>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          backgroundColor: VaultColors.surfaceElevated,
+          title: const Text('Upgrade invitation'),
+          content: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Choose a name for the replacement invitation. '
+                    'The existing invitation stays saved until the new one '
+                    'is checked.'),
+                const SizedBox(height: 12),
+                TextFormField(
+                  key: const Key('pending_beneficiary_upgrade_label'),
+                  controller: labelCtrl,
+                  maxLength: 60,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  autofillHints: const <String>[],
+                  decoration: const InputDecoration(labelText: 'Name'),
+                  validator: (value) => value == null || value.trim().isEmpty
+                      ? 'Enter a name for this invitation.'
+                      : null,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogCtx),
+                child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () {
+                if (formKey.currentState?.validate() == true) {
+                  Navigator.pop(dialogCtx, labelCtrl.text.trim());
+                }
+              },
+              child: const Text('Upgrade'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      labelCtrl.dispose();
+    }
+    if (chosenLabel == null || !mounted) return;
     bool current() => mounted && app.unlocked &&
         app.sessionToken == token && app.vaultId == vaultId &&
         identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
@@ -10709,7 +10745,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           return _zkActionProof(app, token, entered);
         },
         accessIsCurrent: current,
-      ).replaceUnpaired(oldLinkId: oldLinkId, ownerVisibleLabel: label);
+      ).replaceUnpaired(oldLinkId: oldLinkId,
+          ownerVisibleLabel: chosenLabel);
       if (!current()) return;
       setState(() {
         beneficiaries = beneficiaries
@@ -13386,11 +13423,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                 ],
                               ),
                               if (kEnableZkPendingBeneficiaryUpgrade &&
-                                  !isZkV2 && !isLinked && !credentialsSaved &&
-                                  status == 'pairing_pending' &&
-                                  b['label'] is String &&
-                                  (b['label'] as String).trim().isNotEmpty &&
-                                  label.length <= 60) ...[
+                                  pendingBeneficiaryInvitationCanUpgrade(b)) ...[
                                 const SizedBox(height: 8),
                                 OutlinedButton.icon(
                                   key: Key('upgrade_pending_beneficiary_$id'),
@@ -13398,7 +13431,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                           .contains(id)
                                       ? null
                                       : () => _upgradePendingBeneficiary(
-                                          id, label),
+                                          id,
+                                          b['label'] is String
+                                              ? (b['label'] as String).trim()
+                                              : null),
                                   icon: const Icon(Icons.security_rounded,
                                       size: 16),
                                   label: Text(_upgradingPendingBeneficiaryIds

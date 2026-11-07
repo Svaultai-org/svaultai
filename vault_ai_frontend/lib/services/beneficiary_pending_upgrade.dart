@@ -10,6 +10,19 @@ typedef PendingUpgradePost = Future<Map<String, dynamic>> Function(
     String path, Map<String, dynamic> body);
 typedef PendingUpgradeGet = Future<Map<String, dynamic>> Function(String path);
 
+/// A missing or unreadable old label is not a reason to strand an unused
+/// invitation: the owner can supply a replacement label locally. Link state
+/// and package history still determine whether an upgrade can be offered.
+bool pendingBeneficiaryInvitationCanUpgrade(Map<String, dynamic> row) {
+  final id = row['id'];
+  return id is int &&
+      id > 0 &&
+      row['zk_pairing_v2'] != true &&
+      row['status'] == 'pairing_pending' &&
+      row['is_linked'] != true &&
+      row['credentials_saved'] != true;
+}
+
 class PendingBeneficiaryUpgradeResult {
   final int newLinkId;
   final String pairingCode;

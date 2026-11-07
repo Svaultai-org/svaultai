@@ -17,9 +17,11 @@ Enable only in a coordinated test build with `VAULTAI_ENABLE_SIGNED_BENEFICIARY`
 Owner actions:
 
 1. Sign in with an OPAQUE-enabled vault and open Inheritance.
-2. Choose **Upgrade invitation** on an unpaired older link whose label is
-   readable. The site asks for two local PIN verifications: one to stage the
-   private invitation, one to retire the exact older row after readback.
+2. Choose **Upgrade invitation** on an unpaired older link. Confirm its
+   readable label or supply a replacement name locally if the old label is
+   unavailable. The site encrypts that name before staging it and asks for
+   two local PIN verifications: one to stage the private invitation, one to
+   retire the exact older row after readback.
 3. The site checks the new encrypted label, pairing-code hash, pending state,
    owner-bound source snapshot, and session-bound readback receipt. It shows
    the new code only after the old row is retired atomically.

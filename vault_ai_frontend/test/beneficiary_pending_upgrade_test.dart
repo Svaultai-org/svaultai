@@ -15,6 +15,7 @@ class _Server {
   bool failSecondProof = false;
   bool current = true;
   int proofCalls = 0;
+  String expectedLabel = 'Family';
   final paths = <String>[];
 
   Future<String> proof() async {
@@ -29,6 +30,7 @@ class _Server {
     final wire = jsonEncode(body);
     expect(wire, isNot(contains('raw-pin')));
     expect(wire, isNot(contains('private-key')));
+    expect(wire, isNot(contains(expectedLabel)));
     if (path.endsWith('/stage')) {
       expect(oldPresent, isTrue);
       expect(body['old_link_id'], 7);
@@ -87,7 +89,7 @@ class _Server {
         get: get,
         proofProvider: proof,
         encryptLabel: (label) async {
-          expect(label, 'Family');
+          expect(label, expectedLabel);
           return _ciphertext;
         },
         accessIsCurrent: () => current,
@@ -95,6 +97,64 @@ class _Server {
 }
 
 void main() {
+  test('unused old invitation is offered even without a readable label', () {
+    final pending = <String, dynamic>{
+      'id': 7,
+      'status': 'pairing_pending',
+      'is_linked': false,
+      'credentials_saved': false,
+      'zk_pairing_v2': false,
+      'label': null,
+    };
+    expect(pendingBeneficiaryInvitationCanUpgrade(pending), isTrue);
+    expect(
+        pendingBeneficiaryInvitationCanUpgrade({
+          ...pending,
+          'label': 'Encrypted label unavailable',
+        }),
+        isTrue);
+    expect(
+        pendingBeneficiaryInvitationCanUpgrade({
+          ...pending,
+          'is_linked': true,
+        }),
+        isFalse);
+    expect(
+        pendingBeneficiaryInvitationCanUpgrade({
+          ...pending,
+          'credentials_saved': true,
+        }),
+        isFalse);
+    expect(
+        pendingBeneficiaryInvitationCanUpgrade({
+          ...pending,
+          'zk_pairing_v2': true,
+        }),
+        isFalse);
+    expect(
+        pendingBeneficiaryInvitationCanUpgrade({
+          ...pending,
+          'status': 'transfer_pending',
+        }),
+        isFalse);
+    expect(
+        pendingBeneficiaryInvitationCanUpgrade({
+          ...pending,
+          'id': 0,
+        }),
+        isFalse);
+  });
+
+  test('owner-supplied replacement name is encrypted before stage', () async {
+    final server = _Server()..expectedLabel = 'Family contact';
+    final result = await server.client().replaceUnpaired(
+          oldLinkId: 7,
+          ownerVisibleLabel: 'Family contact',
+        );
+    expect(result.pairingCode, _code);
+    expect(server.oldPresent, isFalse);
+  });
+
   test('owner sees code only after exact readback and old row retirement',
       () async {
     final server = _Server();
