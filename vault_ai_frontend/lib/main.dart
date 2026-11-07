@@ -916,6 +916,13 @@ const bool kEnableZkFileV2Rename = bool.fromEnvironment(
   defaultValue: false,
 ) && kEnableFileV2UiRead;
 
+// The existing ciphertext metadata route can rename an older OPAQUE file
+// without retrieving its PIN. Keep separate from ready-V2 rename rollout.
+const bool kEnableZkLegacyFileRename = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_LEGACY_FILE_RENAME',
+  defaultValue: false,
+);
+
 // This path reads only MVK ciphertext and keeps private search on the client.
 // It stays off until file V2 viewing and all chat entry points are verified.
 const bool kEnableZkPrivateChat = bool.fromEnvironment(
@@ -15867,7 +15874,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       (file) => file.id == fileId && file.v2Available,
     );
     if ((!kEnableZkFileV2Rename && isV2) ||
-        (kEnableZkFileV2Rename &&
+        (kEnableZkFileV2Rename && !kEnableZkLegacyFileRename &&
             zk_mvk_store.ZkActiveMvk.current() != null && !isV2)) {
       return null;
     }
@@ -15877,21 +15884,29 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final vaultName = app.vaultName;
     final cryptoContext = VaultCryptoRegistry.current;
     final mvk = zk_mvk_store.ZkActiveMvk.current();
-    final privateV2 = kPrivateOnlyUnlockEnabled &&
-        kEnableZkFileV2Rename && isV2 && mvk != null;
+    final privateFile = kPrivateOnlyUnlockEnabled && mvk != null &&
+        (isV2 ? kEnableZkFileV2Rename : kEnableZkLegacyFileRename);
+    final handle = app.vaultHandle;
+    final sessionEpoch = app._sessionEpoch;
+    final foregroundEpoch = app._sessionProbeEpoch;
     final generation = st.SessionTermination.instance.generation;
     final deviceId = apiClientDeviceId();
     bool current() => mounted && app.authed && app.unlocked &&
+        app._sessionForeground && !app.sessionVerificationBlocked &&
         token != null && vaultId != null && vaultName != null &&
         app.sessionToken == token && app.vaultId == vaultId &&
-        app.vaultName == vaultName && apiClientDeviceId() == deviceId &&
+        app.vaultName == vaultName && app.vaultHandle == handle &&
+        app._sessionEpoch == sessionEpoch &&
+        app._sessionProbeEpoch == foregroundEpoch &&
+        apiClientDeviceId() == deviceId &&
         mvk != null &&
         zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
-        (privateV2
+        (privateFile
             ? cryptoContext == null &&
                 VaultCryptoRegistry.current == null &&
                 PrivateZkPinTransportSession.active &&
-                zk_mvk_store.ZkActiveMvk.currentVaultHandle() == app.vaultHandle
+                handle != null && handle.isNotEmpty &&
+                zk_mvk_store.ZkActiveMvk.currentVaultHandle() == handle
             : cryptoContext != null &&
                 cryptoContext.vaultId == vaultId &&
                 cryptoContext.vaultName == vaultName &&
@@ -15967,7 +15982,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           final isV2 = vaultFiles.any(
             (file) => file.id == controller.fileId && file.v2Available,
           );
-          if (kEnableZkFileV2Rename &&
+          if (kEnableZkFileV2Rename && !kEnableZkLegacyFileRename &&
               zk_mvk_store.ZkActiveMvk.current() != null && !isV2) {
             throw StateError('Private file changed. Refresh and try again.');
           }
@@ -16000,7 +16015,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               responseIsCurrent: controller.accessIsCurrent,
             );
           } else {
-            final pin = await _VaultCrypto.currentPinOrThrow();
+            final pin = kEnableZkLegacyFileRename
+                ? null : await _VaultCrypto.currentPinOrThrow();
             await client.nameVaultFile(
               vaultName: vaultName, fileId: controller.fileId,
               savedName: normalizedName, pin: pin, authToken: token,
@@ -16025,7 +16041,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _showSnack('Renaming this file is not available yet.');
       return;
     }
-    if (kEnableZkFileV2Rename &&
+    if (kEnableZkFileV2Rename && !kEnableZkLegacyFileRename &&
         zk_mvk_store.ZkActiveMvk.current() != null && !file.v2Available) {
       _showSnack('This file needs a private file upgrade before renaming.');
       return;
@@ -16109,6 +16125,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           retired && !kEnableZkFileV2Rename
               ? 'Renaming this file is not available yet.'
               : (kEnableZkFileV2Rename || kPrivateOnlyUnlockEnabled) &&
+                      !kEnableZkLegacyFileRename &&
                       zk_mvk_store.ZkActiveMvk.current() != null && !retired
                   ? 'This file needs a private file upgrade before renaming.'
                   : 'Unlock your vault before renaming a file.');
@@ -16136,6 +16153,44 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     return true;
   }
 
+  bool Function()? _captureSavedFileDeleteAccess(String fileId) {
+    if (!mounted || fileId.isEmpty) return null;
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultId = app.vaultId;
+    final vaultName = app.vaultName;
+    final handle = app.vaultHandle;
+    final cryptoContext = VaultCryptoRegistry.current;
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    final privateFile = kPrivateOnlyUnlockEnabled &&
+        kEnableZkLegacyFileDeleteProof && handle?.isNotEmpty == true;
+    final sessionEpoch = app._sessionEpoch;
+    final foregroundEpoch = app._sessionProbeEpoch;
+    final generation = st.SessionTermination.instance.generation;
+    final deviceId = apiClientDeviceId();
+    bool current() => mounted && app.authed && app.unlocked &&
+        app._sessionForeground && !app.sessionVerificationBlocked &&
+        token != null && vaultId != null && vaultName != null &&
+        app.sessionToken == token && app.vaultId == vaultId &&
+        app.vaultName == vaultName && app.vaultHandle == handle &&
+        app._sessionEpoch == sessionEpoch &&
+        app._sessionProbeEpoch == foregroundEpoch &&
+        apiClientDeviceId() == deviceId &&
+        (privateFile
+            ? cryptoContext == null && VaultCryptoRegistry.current == null &&
+                mvk != null && PrivateZkPinTransportSession.active &&
+                zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
+                zk_mvk_store.ZkActiveMvk.currentVaultHandle() == handle
+            : cryptoContext != null &&
+                cryptoContext.vaultId == vaultId &&
+                cryptoContext.vaultName == vaultName &&
+                identical(VaultCryptoRegistry.current, cryptoContext)) &&
+        identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
+        st.SessionTermination.instance.generation == generation &&
+        !st.SessionTermination.instance.isTerminated;
+    return current() ? current : null;
+  }
+
   void _startFileDeleteConfirmation(_VaultStoredFile file) {
     if (!mounted || file.id.isEmpty || _pendingLocalDelete != null ||
         _fileDeletesInFlight.contains(file.id) ||
@@ -16146,25 +16201,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _showSnack('Save or remove queued attachments before deleting a file.');
       return;
     }
-    final app = context.read<AppState>();
-    final token = app.sessionToken;
-    final vaultId = app.vaultId;
-    final vaultName = app.vaultName;
-    final cryptoContext = VaultCryptoRegistry.current;
-    final mvk = zk_mvk_store.ZkActiveMvk.current();
-    final generation = st.SessionTermination.instance.generation;
-    final deviceId = apiClientDeviceId();
-    bool current() => mounted && app.authed && app.unlocked &&
-        token != null && vaultId != null && vaultName != null &&
-        app.sessionToken == token && app.vaultId == vaultId &&
-        app.vaultName == vaultName && apiClientDeviceId() == deviceId &&
-        cryptoContext != null &&
-        cryptoContext.vaultId == vaultId && cryptoContext.vaultName == vaultName &&
-        identical(VaultCryptoRegistry.current, cryptoContext) &&
-        identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
-        st.SessionTermination.instance.generation == generation &&
-        !st.SessionTermination.instance.isTerminated;
-    if (!current()) {
+    final current = _captureSavedFileDeleteAccess(file.id);
+    if (current == null) {
       _showSnack('Unlock your vault before deleting a file.');
       return;
     }
@@ -19515,10 +19553,17 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             );
             return true;
           }
+          final current = _captureSavedFileDeleteAccess(match.entry.id);
+          if (current == null) {
+            _appendLocalVaultReply(text,
+                'Unlock your vault before deleting a file. Nothing was changed.');
+            return true;
+          }
           _pendingLocalDelete = _VaultLocalDeleteTarget(
             kind: VaultLocalContentKind.file,
             id: match.entry.id,
             label: match.entry.displayName,
+            accessIsCurrent: current,
           );
           _appendLocalVaultReply(
             text,
@@ -19590,7 +19635,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           if (mounted) setState(() => _memoryRefreshGeneration++);
           break;
         case VaultLocalContentKind.file:
-          if (target.accessIsCurrent?.call() == false) return true;
+          final actionAccess = _captureSavedFileDeleteAccess(target.id);
+          if (actionAccess == null) return true;
+          bool currentFileAccess() =>
+              actionAccess() && target.accessIsCurrent?.call() != false;
+          if (!currentFileAccess()) return true;
           final expectedV2 = vaultFiles.any(
             (file) => file.id == target.id && file.v2Available,
           );
@@ -19600,43 +19649,49 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 authToken: token,
                 fileId: target.id,
               );
+          if (!currentFileAccess()) return true;
           if (expectedV2 && !availableV2) {
             throw StateError('Private file changed. Refresh and try again.');
           }
           String? pin;
           String? proofToken;
-          if (availableV2 || kEnableZkLegacyFileDeleteProof) {
+          final proofRequired = availableV2 ||
+              (kEnableZkLegacyFileDeleteProof &&
+                  app.vaultHandle?.isNotEmpty == true);
+          if (proofRequired) {
             if (!mounted) return true;
             final handle = app.vaultHandle;
-            if (handle == null || handle.isEmpty) {
+            if (handle == null || handle.isEmpty ||
+                zk_mvk_store.ZkActiveMvk.current() == null) {
               throw StateError('Vault verification is unavailable');
             }
             final entered = await _promptForActionPin(
               context, 'Confirm file deletion',
             );
-            if (entered == null || !mounted) return true;
+            if (entered == null || !currentFileAccess()) return true;
             proofToken = await _zkActionProof(app, token, entered);
           } else {
             pin = await _VaultCrypto.currentPinOrThrow();
           }
-          if (target.accessIsCurrent?.call() == false ||
-              app.sessionToken != token) return true;
+          if (!currentFileAccess()) return true;
           if (availableV2) {
-            if (await client.isNewReadyV2File(
+            final isNewReady = await client.isNewReadyV2File(
               authToken: token, fileId: target.id,
-            )) {
+            );
+            if (!currentFileAccess()) return true;
+            if (isNewReady) {
               await client.deleteNewV2File(
                 authToken: token,
                 fileId: target.id,
                 zkProofToken: proofToken!,
-                responseIsCurrent: target.accessIsCurrent,
+                responseIsCurrent: currentFileAccess,
               );
             } else {
               await client.deleteRetiredV2File(
                 authToken: token,
                 fileId: target.id,
                 zkProofToken: proofToken!,
-                responseIsCurrent: target.accessIsCurrent,
+                responseIsCurrent: currentFileAccess,
               );
             }
           } else {
@@ -19646,10 +19701,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               pin: pin,
               zkProofToken: proofToken,
               authToken: token,
-              responseIsCurrent: target.accessIsCurrent,
+              responseIsCurrent: currentFileAccess,
             );
           }
-          if (target.accessIsCurrent?.call() == false) return true;
+          if (!currentFileAccess()) return true;
           if (target.accessIsCurrent != null) {
             // Remove only the confirmed stable ID. A full asynchronous reload
             // could apply old-vault inventory after a new-device/session switch.
@@ -21648,7 +21703,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 key: ValueKey('files_file_rename_${file.id}'),
                 tooltip: 'Rename',
                 onPressed: (file.v2Available && !kEnableZkFileV2Rename) ||
-                        (kEnableZkFileV2Rename &&
+                        (kEnableZkFileV2Rename && !kEnableZkLegacyFileRename &&
                             zk_mvk_store.ZkActiveMvk.current() != null &&
                             !file.v2Available) ||
                         sending || _pendingLocalDelete != null ||

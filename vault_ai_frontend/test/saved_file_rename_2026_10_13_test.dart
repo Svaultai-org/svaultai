@@ -349,6 +349,34 @@ void main() {
     }
   });
 
+  test('older file ciphertext rename does not need a cached PIN', () async {
+    final f = _Fixture();
+    await f.unlock();
+    try {
+      VaultCryptoRegistry.clear(reason: 'synthetic-private-rename');
+      await f.run(() async {
+        final client = VaultAIClient(baseUrl: 'http://localhost:8000');
+        final result = await client.nameVaultFile(
+          vaultName: f.app.vaultName!,
+          fileId: 'file-a',
+          savedName: 'Private title',
+          authToken: f.app.sessionToken!,
+          requireCiphertext: true,
+        );
+        expect(result['file_id'], 'file-a');
+        expect(await f.savedName(0), 'Private title');
+        final request = f.requests.single;
+        expect(request.url.path, '/vault/ciphertext/uploaded-files');
+        expect((jsonDecode(request.body) as Map).keys.toSet(),
+            {'file_id', 'saved_name_ciphertext'});
+        expect(request.body, isNot(contains('Private title')));
+        expect(request.body, isNot(contains('pin')));
+      });
+    } finally {
+      f.dispose();
+    }
+  });
+
   testWidgets(
       'duplicate original filename lookup stays local and leaves both files intact',
       (tester) async {

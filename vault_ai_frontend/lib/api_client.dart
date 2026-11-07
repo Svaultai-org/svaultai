@@ -4375,7 +4375,7 @@ class VaultAIClient {
     required String vaultName,
     required String fileId,
     required String savedName,
-    required String pin,
+    String? pin,
     required String authToken,
     bool requireCiphertext = false,
     bool Function()? responseIsCurrent,
@@ -4445,6 +4445,9 @@ class VaultAIClient {
     // Saved-file Rename must never fall back to a readable legacy write.
     if (requireCiphertext) {
       throw StateError('Unlock your encrypted vault before renaming a file.');
+    }
+    if (pin == null || pin.isEmpty) {
+      throw StateError('Vault PIN required for the older rename route.');
     }
     final uri = Uri.parse('$baseUrl/name-file');
 
