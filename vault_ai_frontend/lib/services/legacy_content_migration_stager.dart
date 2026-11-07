@@ -101,7 +101,10 @@ class LegacyContentMigrationStager {
   static const int maxOwnerInitiatedFileCiphertextChars = 64 * 1024 * 1024;
   // Only independent V2 status/chunk requests run together. Export grant
   // pages, proof operations, and whole-file verification remain sequential.
+  // Keep writes and status preflight at two; readback GETs may use four after
+  // the manifest and source have been checked. Every chunk is still fetched.
   static const int maxConcurrentV2Requests = 2;
+  static const int maxConcurrentV2ReadbackRequests = 4;
 
   final bool enabled;
   final bool recoveryEnabled;
@@ -259,19 +262,24 @@ class LegacyContentMigrationStager {
 
   Future<List<T>> _boundedV2Requests<T>(
     int count,
-    Future<T> Function(int index) task,
-  ) async {
+    Future<T> Function(int index) task, {
+    int maxConcurrent = maxConcurrentV2Requests,
+  }) async {
+    if (maxConcurrent < 1 ||
+        maxConcurrent > maxConcurrentV2ReadbackRequests) {
+      throw ArgumentError('Invalid V2 readback concurrency');
+    }
     final results = <T>[];
-    for (var start = 0; start < count; start += maxConcurrentV2Requests) {
-      final end = start + maxConcurrentV2Requests < count
-          ? start + maxConcurrentV2Requests
+    for (var start = 0; start < count; start += maxConcurrent) {
+      final end = start + maxConcurrent < count
+          ? start + maxConcurrent
           : count;
       results.addAll(await Future.wait<T>(
         <Future<T>>[
           for (var index = start; index < end; index++) task(index),
         ],
-        // A failed V2 write must not start a recovery reset while the paired
-        // idempotent request is still in flight.
+        // A failed write must not start recovery while a paired request is
+        // still in flight; a failed readback must not start the next batch.
         eagerError: false,
       ));
     }
@@ -692,6 +700,7 @@ class LegacyContentMigrationStager {
         }
         return chunk['ciphertext'] as String;
       },
+      maxConcurrent: maxConcurrentV2ReadbackRequests,
     );
     if (!await codec.verifyStagedFile(
       fileId: id,

@@ -1377,6 +1377,102 @@ void main() {
     }
   });
 
+  test('four delayed readback GETs reconstruct in order and stop on failure',
+      () async {
+    final bytes = List<int>.generate(4 * 256 * 1024 + 17, (i) => i & 255);
+    final legacy = await _legacyEncrypt(bytes);
+    final calls = <String>[];
+    Map<String, dynamic>? manifest;
+    final chunks = <int, String>{};
+    final completions = <int>[];
+    final requested = <int>[];
+    var inFlight = 0;
+    var maxInFlight = 0;
+    var failChunk = false;
+    final stager = LegacyContentMigrationStager(
+      enabled: true,
+      export: _export(
+        itemRows: const [],
+        fileRows: <Map<String, dynamic>>[{
+          'file_id': 'synthetic-file',
+          'file_size': bytes.length,
+          'file_name': 'synthetic.bin',
+          'ciphertext_chars': legacy.length,
+        }],
+        itemCiphertexts: const {},
+        fileCiphertexts: {'synthetic-file': legacy},
+        calls: calls,
+      ),
+      codec: LegacyCiphertextMigrationCodec(
+        legacyKey: _legacyKey, mvk: _mvk,
+      ),
+      request: (method, path, [body]) async {
+        calls.add('$method $path');
+        if (path.endsWith('/file-staged/synthetic-file')) {
+          if (manifest == null || chunks.length != manifest!['chunk_count']) {
+            return const MigrationReply(409,
+                {'detail': 'file_v2_not_staged'});
+          }
+          return MigrationReply(200, {
+            'file_id': 'synthetic-file',
+            'source_snapshot': _snapshotA,
+            'total_bytes': bytes.length,
+            'chunk_count': manifest!['chunk_count'],
+            'manifest_ciphertext': manifest!['manifest_ciphertext'],
+          });
+        }
+        if (path.endsWith('/manifest') && method == 'GET') {
+          return const MigrationReply(404,
+              {'detail': 'file_v2_not_found'});
+        }
+        if (path == '/vault/file-v2/manifest' && method == 'POST') {
+          manifest = body;
+          return const MigrationReply(200,
+              {'file_id': 'synthetic-file'});
+        }
+        if (path == '/vault/file-v2/chunk' && method == 'PUT') {
+          chunks[body!['chunk_index'] as int] = body['ciphertext'] as String;
+          return const MigrationReply(200,
+              {'file_id': 'synthetic-file'});
+        }
+        if (path.contains('/chunk/') && method == 'GET') {
+          final index = int.parse(path.split('/').last);
+          requested.add(index);
+          inFlight++;
+          if (inFlight > maxInFlight) maxInFlight = inFlight;
+          await Future<void>.delayed(Duration(
+            milliseconds: index % 4 == 0 ? 35 : index % 4 * 5,
+          ));
+          inFlight--;
+          completions.add(index);
+          if (failChunk && index == 1) {
+            throw StateError('Synthetic readback interruption');
+          }
+          return MigrationReply(200, {
+            'file_id': 'synthetic-file',
+            'chunk_index': index,
+            'ciphertext': chunks[index],
+          });
+        }
+        fail('Unexpected file request $method $path');
+      },
+    );
+    final first = await stager.stageAndVerify();
+    expect(first.filesVerified, 1);
+    expect(manifest!['chunk_count'], 5);
+    expect(maxInFlight, 4);
+    expect(completions.take(4), isNot(<int>[0, 1, 2, 3]));
+    expect(requested, <int>[0, 1, 2, 3, 4]);
+
+    requested.clear();
+    completions.clear();
+    failChunk = true;
+    await expectLater(stager.stageAndVerify(), throwsStateError);
+    expect(inFlight, 0, reason: 'the whole failed batch must settle');
+    expect(requested, <int>[0, 1, 2, 3],
+        reason: 'a failed readback must not start the next batch');
+  });
+
   test('stages legacy text and path in an opaque V2 manifest', () async {
     final legacy = await _legacyEncrypt(const <int>[1, 2, 3]);
     const fileId = 'synthetic-extra-file';
