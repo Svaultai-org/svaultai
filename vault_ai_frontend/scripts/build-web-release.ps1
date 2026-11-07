@@ -172,34 +172,14 @@ This guard prevents shipping a production release with APP_RELEASE=dev
     }
 
     # ---- release.json ----
-    $releaseJson = @{
-        commit      = $shaFull
-        commitShort = $shaShort
-        builtAt     = $builtAt
-        apiContract = 'svaultai-core-v2-2026-08-16'
-        features    = @{
-            credentialV2Read  = $true
-            credentialV2Write = $false
-            credentialV2Migration = $false
-            memoryV2Read      = $true
-            memoryV2Write     = $true
-            memoryV2Migration = $false
-            fileV2Read        = $true
-            fileV2Write       = $true
-            fileV2Migration   = $false
-            walletBackupV2Read = $false
-            walletBackupV2Write = $false
-            walletBackupV2Migration = $false
-            walletV2Read = $false
-            walletV2Write = $false
-            walletV2Migration = $false
-            privateVaultLocalRouting = $false
-        }
-    } | ConvertTo-Json -Compress
     $releasePath = Join-Path $flutterProjectRoot 'build/web/release.json'
-    [System.IO.File]::WriteAllText(
-        $releasePath, $releaseJson, [System.Text.UTF8Encoding]::new($false)
-    )
+    $manifestDevArg = @()
+    if ($allowDev) { $manifestDevArg = @('--allow-dev-manifest') }
+    python scripts/verify-release-contract.py --write-manifest $releasePath --commit $shaFull --built-at $builtAt @manifestDevArg
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error '[vault-release] could not write release manifest from production contract.'
+        exit 7
+    }
     Write-Host "[vault-release] wrote $releasePath" -ForegroundColor Green
     Write-Host "[vault-release] built bundle: $(Join-Path $flutterProjectRoot 'build/web')"
 }

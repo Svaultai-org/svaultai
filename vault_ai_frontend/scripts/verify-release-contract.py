@@ -69,6 +69,47 @@ def _public_features(contract: dict[str, bool]) -> dict[str, bool]:
     return {PUBLIC_NAMES[name]: value for name, value in contract.items()}
 
 
+DEV_RELEASE = "dev0000000000000000000000000000000000000dev"
+
+
+def _manifest(
+    contract: dict[str, bool], commit: str, built_at: str,
+    *, allow_dev: bool = False,
+) -> dict:
+    if not isinstance(commit, str) or not (
+        re.fullmatch(r"[a-f0-9]{40}", commit)
+        or (allow_dev and commit == DEV_RELEASE)
+    ):
+        _fail("manifest_commit_invalid")
+    if not isinstance(built_at, str) or not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", built_at
+    ):
+        _fail("manifest_built_at_invalid")
+    return {
+        "commit": commit,
+        "commitShort": commit[:7],
+        "builtAt": built_at,
+        "apiContract": API_CONTRACT,
+        "features": _public_features(contract),
+    }
+
+
+def _check_manifest(path: Path, contract: dict[str, bool]) -> None:
+    try:
+        actual = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        _fail("release_manifest_invalid")
+    if not isinstance(actual, dict):
+        _fail("release_manifest_invalid")
+    expected = _manifest(
+        contract,
+        actual.get("commit", ""),
+        actual.get("builtAt", ""),
+    )
+    if actual != expected:
+        _fail("release_manifest_mismatch")
+
+
 def _live_contract(url: str) -> dict:
     request = Request(url, headers={"Accept": "application/json"})
     with urlopen(request, timeout=20) as response:
@@ -84,6 +125,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend-url")
     parser.add_argument("--print-public-features", action="store_true")
+    manifest_action = parser.add_mutually_exclusive_group()
+    manifest_action.add_argument("--write-manifest", type=Path)
+    manifest_action.add_argument("--check-manifest", type=Path)
+    parser.add_argument("--commit")
+    parser.add_argument("--built-at")
+    parser.add_argument("--allow-dev-manifest", action="store_true")
     args = parser.parse_args()
 
     contract = _load_contract()
@@ -119,6 +166,20 @@ def main() -> int:
             _fail("live_api_contract_mismatch")
         if live.get("features") != expected_public:
             _fail("live_feature_matrix_mismatch")
+
+    if args.write_manifest:
+        if not args.commit or not args.built_at:
+            _fail("manifest_metadata_missing")
+        manifest = _manifest(
+            contract, args.commit, args.built_at,
+            allow_dev=args.allow_dev_manifest,
+        )
+        args.write_manifest.write_text(
+            json.dumps(manifest, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+    if args.check_manifest:
+        _check_manifest(args.check_manifest, contract)
 
     if args.print_public_features:
         print(json.dumps(expected_public, separators=(",", ":")))

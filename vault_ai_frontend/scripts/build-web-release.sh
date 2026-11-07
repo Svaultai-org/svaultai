@@ -168,8 +168,15 @@ fi
 
 # 5. release.json.
 release_path="$project_root/build/web/release.json"
-printf '{"commit":"%s","commitShort":"%s","builtAt":"%s","apiContract":"svaultai-core-v2-2026-08-16","features":{"credentialV2Read":true,"credentialV2Write":false,"credentialV2Migration":false,"memoryV2Read":true,"memoryV2Write":true,"memoryV2Migration":false,"fileV2Read":true,"fileV2Write":true,"fileV2Migration":false,"walletBackupV2Read":false,"walletBackupV2Write":false,"walletBackupV2Migration":false,"walletV2Read":false,"walletV2Write":false,"walletV2Migration":false,"privateVaultLocalRouting":false}}\n' \
-    "$sha_full" "$sha_short" "$built_at" > "$release_path"
+manifest_dev_arg=()
+if [ "$allow_dev" -eq 1 ]; then
+    manifest_dev_arg=(--allow-dev-manifest)
+fi
+python3 scripts/verify-release-contract.py \
+    --write-manifest "$release_path" \
+    --commit "$sha_full" \
+    --built-at "$built_at" \
+    "${manifest_dev_arg[@]}"
 
 echo "[vault-release] wrote $release_path"
 echo "[vault-release] built bundle: $project_root/build/web"
