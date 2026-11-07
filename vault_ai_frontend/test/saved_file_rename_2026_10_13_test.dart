@@ -489,6 +489,8 @@ void main() {
       kEnableZkLegacyFileDeleteProof && kEnableFileV2UiRead &&
       kEnableKeylessSavedItemRead));
 
+  // These older fixtures deliberately install the cached-PIN crypto context.
+  // Private-only builds use the separate no-cache cases above.
   testWidgets(
       'duplicate original filename lookup stays local and leaves both files intact',
       (tester) async {
@@ -523,7 +525,7 @@ void main() {
       f.dispose();
       await tester.binding.setSurfaceSize(null);
     }
-  });
+  }, skip: kPrivateOnlyUnlockEnabled);
 
   testWidgets(
       'real Files Rename/cancel/validation commits only stable-ID encrypted metadata',
@@ -603,7 +605,7 @@ void main() {
       f.dispose();
       await tester.binding.setSurfaceSize(null);
     }
-  });
+  }, skip: kPrivateOnlyUnlockEnabled);
 
   for (final delayedPath in ['/list-files', '/folders']) {
     testWidgets(
@@ -699,7 +701,7 @@ void main() {
         f.dispose();
         await tester.binding.setSurfaceSize(null);
       }
-    });
+    }, skip: kPrivateOnlyUnlockEnabled);
   }
 
   testWidgets(
@@ -754,7 +756,7 @@ void main() {
       f.dispose();
       await tester.binding.setSurfaceSize(null);
     }
-  });
+  }, skip: kPrivateOnlyUnlockEnabled);
 
   testWidgets(
       'failed writes preserve the entered name and do not report success',
