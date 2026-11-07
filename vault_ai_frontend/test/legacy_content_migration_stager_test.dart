@@ -6,6 +6,7 @@ import 'package:vault_ai_frontend/services/file_v2_reader.dart';
 import 'package:vault_ai_frontend/services/legacy_ciphertext_export_client.dart';
 import 'package:vault_ai_frontend/services/legacy_ciphertext_migration_codec.dart';
 import 'package:vault_ai_frontend/services/legacy_content_migration_stager.dart';
+import 'package:vault_ai_frontend/services/legacy_stage_pin_lease.dart';
 import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart';
 
 final SecretKey _legacyKey = SecretKey(List<int>.filled(32, 31));
@@ -193,6 +194,99 @@ void main() {
     expect(result.itemsVerified, 0);
     expect(result.filesVerified, 0);
     expect(called, isFalse);
+  });
+
+  test('verified progress remains available when a later record aborts',
+      () async {
+    final legacy = await _legacyEncrypt(utf8.encode('{"value":"synthetic"}'));
+    final codec = LegacyCiphertextMigrationCodec(
+      legacyKey: _legacyKey, mvk: _mvk,
+    );
+    final staged = await codec.stageItem(
+      itemId: 9, itemType: 'note', service: 'Synthetic title',
+      legacyCiphertext: legacy,
+    );
+    final progress = <(int, int)>[];
+    final calls = <String>[];
+    final stager = LegacyContentMigrationStager(
+      enabled: true,
+      export: _export(
+        itemRows: <Map<String, dynamic>>[
+          {'item_id': 9, 'ciphertext_chars': legacy.length,
+           'item_type': 'note', 'service': 'Synthetic title'},
+          {'item_id': 0, 'ciphertext_chars': legacy.length,
+           'item_type': 'note', 'service': 'Synthetic title'},
+        ],
+        fileRows: const [],
+        itemCiphertexts: {9: legacy},
+        fileCiphertexts: const {},
+        calls: calls,
+      ),
+      codec: codec,
+      request: (method, path, [body]) async {
+        expect(method, 'GET');
+        expect(path, '/vault/legacy-ciphertext/migrate/item-staged/9');
+        return MigrationReply(200, {
+          'item_id': 9, ...staged.toStageBody(),
+          'source_snapshot': _snapshotA,
+        });
+      },
+      onProgress: (items, files) => progress.add((items, files)),
+    );
+    await expectLater(stager.stageAndVerify(), throwsFormatException);
+    expect(progress, <(int, int)>[(1, 0)]);
+    expect(calls.any((call) => call.contains('retire')), isFalse);
+  });
+
+  test('an expired proof lease can renew inside the same staging pass',
+      () async {
+    var now = DateTime.utc(2026, 11, 7);
+    var prompts = 0;
+    final renewal = RenewableLegacyStagePinLease(
+      promptPin: () async => prompts++ == 0 ? '111111' : '222222',
+      lifetime: const Duration(minutes: 1),
+      now: () => now,
+    );
+    final legacy = await _legacyEncrypt(utf8.encode('{"value":"synthetic"}'));
+    final codec = LegacyCiphertextMigrationCodec(
+      legacyKey: _legacyKey, mvk: _mvk,
+    );
+    final staged = await codec.stageItem(
+      itemId: 9, itemType: 'note', service: 'Synthetic title',
+      legacyCiphertext: legacy,
+    );
+    final calls = <String>[];
+    late LegacyCiphertextExportClient export;
+    export = _export(
+      itemRows: <Map<String, dynamic>>[{
+        'item_id': 9, 'ciphertext_chars': legacy.length,
+        'item_type': 'note', 'service': 'Synthetic title',
+      }],
+      fileRows: const [],
+      itemCiphertexts: {9: legacy},
+      fileCiphertexts: const {},
+      calls: calls,
+      proofProvider: () async => (await renewal.requireOrPrompt())!,
+    );
+    final result = await LegacyContentMigrationStager(
+      enabled: true,
+      export: export,
+      codec: codec,
+      request: (method, path, [body]) async {
+        expect(method, 'GET');
+        expect(path, '/vault/legacy-ciphertext/migrate/item-staged/9');
+        now = now.add(const Duration(minutes: 2));
+        export.clearGrant();
+        return MigrationReply(200, {
+          'item_id': 9, ...staged.toStageBody(),
+          'source_snapshot': _snapshotA,
+        });
+      },
+    ).stageAndVerify();
+    expect(result.itemsVerified, 1);
+    expect(prompts, 2);
+    expect(calls.where((call) => call.endsWith('/start')), hasLength(2));
+    renewal.clear();
   });
 
   test('remaining unstaged files are tried before previously staged sidecars',

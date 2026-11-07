@@ -5663,6 +5663,7 @@ Future<({
 })> createLocalLegacyPasswordSourceForActiveVault(
   AppState app, {
   required Future<String?> Function() promptPin,
+  void Function()? requireProofLeaseActive,
 }) async {
   final token = app.sessionToken;
   final vaultId = app.vaultId;
@@ -5693,9 +5694,11 @@ Future<({
   }
   final action = ephemeral_file.EphemeralLegacyFileAction(
     promptPin: promptPin,
-    verifyPin: (pin) {
+    verifyPin: (pin) async {
       requireCurrent();
-      return _zkActionProof(app, token, pin);
+      final proof = await _zkActionProof(app, token, pin);
+      requireProofLeaseActive?.call();
+      return proof;
     },
     deriveKey: (pin) => _ephemeralLegacyContentKey(
       app: app, token: token, vaultId: vaultId, pin: pin,
@@ -5921,6 +5924,7 @@ Future<({
   AppState app, {
   required Future<String?> Function() promptPin,
   required bool finishUpgrade,
+  legacy_stage.LegacyStageProgress? onProgress,
 }) async {
   if (!kEnablePrivateLegacyStageOnDemand) {
     throw StateError('Private content preparation is unavailable');
@@ -5929,25 +5933,12 @@ Future<({
       (!kPrivateOnlyUnlockEnabled || !kEnablePrivateLegacyRetireOnDemand)) {
     throw StateError('Private content completion is unavailable');
   }
-  LegacyStagePinLease? pinLease;
-  Future<String?> boundedOwnerPrompt() async {
-    final active = pinLease;
-    if (active != null) {
-      try {
-        return active.requirePin();
-      } on StateError {
-        active.clear();
-        pinLease = null;
-        throw StateError('Owner upgrade session expired. Resume later.');
-      }
-    }
-    final pin = await promptPin();
-    if (pin != null) pinLease = LegacyStagePinLease(pin);
-    return pin;
-  }
+  final pinLease = RenewableLegacyStagePinLease(promptPin: promptPin);
   try {
     final source = await createLocalLegacyPasswordSourceForActiveVault(
-      app, promptPin: boundedOwnerPrompt,
+      app,
+      promptPin: pinLease.requireOrPrompt,
+      requireProofLeaseActive: pinLease.requireActive,
     );
     final token = app.sessionToken;
     if (token == null || !source.stillCurrent()) {
@@ -5975,6 +5966,7 @@ Future<({
         export: source.export,
         codec: source.codec,
         request: transport.request,
+        onProgress: onProgress,
       ).stageAndVerify();
       if (!source.stillCurrent()) throw StateError('Vault session changed');
       final retirement = finishUpgrade
@@ -5993,15 +5985,17 @@ Future<({
       source.close();
     }
   } finally {
-    pinLease?.clear();
+    pinLease.clear();
   }
 }
 
 Future<legacy_stage.LegacyStageResult> preparePrivateLegacyContentOnDemand(
   AppState app, {
   required Future<String?> Function() promptPin,
+  legacy_stage.LegacyStageProgress? onProgress,
 }) async => (await _runPrivateLegacyContentOnDemand(
   app, promptPin: promptPin, finishUpgrade: false,
+  onProgress: onProgress,
 )).stage;
 
 Future<({
@@ -6010,9 +6004,11 @@ Future<({
 })> finishPrivateLegacyContentOnDemand(
   AppState app, {
   required Future<String?> Function() promptPin,
+  legacy_stage.LegacyStageProgress? onProgress,
 }) async {
   final result = await _runPrivateLegacyContentOnDemand(
     app, promptPin: promptPin, finishUpgrade: true,
+    onProgress: onProgress,
   );
   final retirement = result.retirement;
   if (retirement == null) throw StateError('Private upgrade did not complete');
@@ -14480,19 +14476,33 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return;
     }
     setState(() => _privateLegacyStageBusy = true);
+    var ownerStarted = false;
+    var itemsVerified = 0;
+    var filesVerified = 0;
+    void recordProgress(int items, int files) {
+      itemsVerified = items;
+      filesVerified = files;
+    }
     try {
-      Future<String?> ownerPrompt() => _promptForActionPin(
-        context, 'Verify older vault content',
-      );
+      Future<String?> ownerPrompt() async {
+        if (!mounted) throw StateError('Owner upgrade screen closed');
+        final pin = await _promptForActionPin(
+          context, ownerStarted
+              ? 'Continue preparing older vault content'
+              : 'Verify older vault content',
+        );
+        if (pin != null) ownerStarted = true;
+        return pin;
+      }
       final completion = kPrivateOnlyUnlockEnabled &&
               kEnablePrivateLegacyRetireOnDemand
           ? await finishPrivateLegacyContentOnDemand(
-              app, promptPin: ownerPrompt,
+              app, promptPin: ownerPrompt, onProgress: recordProgress,
             )
           : null;
       final result = completion?.stage ??
           await preparePrivateLegacyContentOnDemand(
-            app, promptPin: ownerPrompt,
+            app, promptPin: ownerPrompt, onProgress: recordProgress,
           );
       if (!mounted) return;
       final deferred = result.itemsDeferredForSize +
@@ -14527,28 +14537,40 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         ),
       );
     } on ephemeral_file.LegacyFileActionCancelled {
-      // The owner dismissed the PIN dialog. No data was changed.
+      // The first prompt can be dismissed without starting. A later renewal
+      // can be dismissed after copies were verified; report that progress.
+      if (ownerStarted) {
+        await _showOlderContentPreparationPaused(itemsVerified, filesVerified);
+      }
     } catch (error) {
       if (!mounted || app.handleApiException(error)) return;
-      // Staging may stop after a partial copy. A short snackbar can disappear
-      // before the owner sees it and look like a successful no-op. Keep a
-      // content-free outcome visible until the owner dismisses it.
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Older content preparation paused'),
-          content: const Text('The preparation did not finish. Your original '
-              'content remains available, and any encrypted copies already '
-              'made are preserved. You can try again later.'),
-          actions: [TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Done'),
-          )],
-        ),
-      );
+      await _showOlderContentPreparationPaused(itemsVerified, filesVerified);
     } finally {
       if (mounted) setState(() => _privateLegacyStageBusy = false);
     }
+  }
+
+  Future<void> _showOlderContentPreparationPaused(
+      int itemsVerified, int filesVerified) async {
+    if (!mounted) return;
+    final progress = itemsVerified + filesVerified == 0
+        ? ''
+        : 'Verified encrypted copies of $itemsVerified saved items and '
+            '$filesVerified files in this attempt. ';
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Older content preparation paused'),
+        content: Text('$progress'
+            'The preparation did not finish. Your original content remains '
+            'available, and any encrypted copies already made are preserved. '
+            'You can continue later.'),
+        actions: [TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Done'),
+        )],
+      ),
+    );
   }
 
   @override

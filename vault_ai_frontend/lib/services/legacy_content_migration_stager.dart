@@ -39,6 +39,12 @@ typedef MigrationRequest =
       Map<String, dynamic>? body,
     ]);
 
+/// Reports counts only, without record IDs, contents, keys, or proof tokens.
+typedef LegacyStageProgress = void Function(
+  int itemsVerified,
+  int filesVerified,
+);
+
 /// Closed-set phase markers for temporary, content-free migration diagnosis.
 enum LegacyStagePhase {
   itemsComplete,
@@ -108,6 +114,7 @@ class LegacyContentMigrationStager {
   final LegacyCiphertextMigrationCodec codec;
   final MigrationRequest request;
   final void Function(LegacyStagePhase)? onPhase;
+  final LegacyStageProgress? onProgress;
 
   const LegacyContentMigrationStager({
     this.enabled = false,
@@ -121,6 +128,7 @@ class LegacyContentMigrationStager {
     required this.codec,
     required this.request,
     this.onPhase,
+    this.onProgress,
   });
 
   Future<LegacyStageResult> stageAndVerify() async {
@@ -146,7 +154,10 @@ class LegacyContentMigrationStager {
           itemsDeferredForSize++;
           continue;
         }
-        if (await _stageItem(item, verifiedReadbacks.add)) itemsVerified++;
+        if (await _stageItem(item, verifiedReadbacks.add)) {
+          itemsVerified++;
+          onProgress?.call(itemsVerified, filesVerified);
+        }
       }
       onPhase?.call(LegacyStagePhase.itemsComplete);
       final files = await export.listFiles();
@@ -184,6 +195,7 @@ class LegacyContentMigrationStager {
         try {
           await _stageFile(file, verifiedReadbacks.add);
           filesVerified++;
+          onProgress?.call(itemsVerified, filesVerified);
         } on _UnreadableLegacyFileSource {
           // A historical file can be malformed or encrypted under a key that
           // no longer opens it. Keep the old row intact and try later files.

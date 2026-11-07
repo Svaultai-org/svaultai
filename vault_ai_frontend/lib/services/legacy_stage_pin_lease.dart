@@ -43,6 +43,69 @@ class LegacyStagePinLease {
   }
 }
 
+/// Re-prompts the owner when another export grant needs a proof after the
+/// current short PIN lease has expired. It never extends an existing lease:
+/// every renewal requires a fresh owner entry and starts a new timer.
+class RenewableLegacyStagePinLease {
+  RenewableLegacyStagePinLease({
+    required this.promptPin,
+    DateTime Function()? now,
+    this.lifetime = LegacyStagePinLease.maxLifetime,
+  }) : _now = now;
+
+  final Future<String?> Function() promptPin;
+  final DateTime Function()? _now;
+  final Duration lifetime;
+  LegacyStagePinLease? _active;
+  Future<String?>? _pendingPrompt;
+  bool _closed = false;
+
+  Future<String?> requireOrPrompt() async {
+    if (_closed) throw StateError('Owner upgrade is closed');
+    final active = _active;
+    if (active != null) {
+      try {
+        return active.requirePin();
+      } on StateError {
+        active.clear();
+        _active = null;
+      }
+    }
+    final pending = _pendingPrompt;
+    if (pending != null) return await pending;
+    final nextPrompt = _promptAndLease();
+    _pendingPrompt = nextPrompt;
+    try {
+      return await nextPrompt;
+    } finally {
+      if (identical(_pendingPrompt, nextPrompt)) _pendingPrompt = null;
+    }
+  }
+
+  Future<String?> _promptAndLease() async {
+    final pin = await promptPin();
+    if (_closed) throw StateError('Owner upgrade is closed');
+    if (pin != null) {
+      _active = LegacyStagePinLease(pin, lifetime: lifetime, now: _now);
+    }
+    return pin;
+  }
+
+  void requireActive() {
+    if (_closed) throw StateError('Owner upgrade is closed');
+    final active = _active;
+    if (active == null) throw StateError('Owner verification is unavailable');
+    active.requireActive();
+  }
+
+  void clear() {
+    _closed = true;
+    _active?.clear();
+    _active = null;
+    _pendingPrompt = null;
+  }
+}
+
 /// An active vault session can finish work authorized by an unexpired server
 /// export grant after the local PIN lease has cleared. A new OPAQUE proof still
 /// requires the PIN within its original five-minute lease. The server remains

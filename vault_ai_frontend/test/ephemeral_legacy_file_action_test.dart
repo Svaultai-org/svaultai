@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -9,6 +10,7 @@ import 'package:vault_ai_frontend/services/legacy_chunked_local_download.dart';
 import 'package:vault_ai_frontend/services/legacy_ciphertext_export_client.dart';
 import 'package:vault_ai_frontend/services/legacy_ciphertext_migration_codec.dart';
 import 'package:vault_ai_frontend/services/legacy_file_read_session.dart';
+import 'package:vault_ai_frontend/services/legacy_stage_pin_lease.dart';
 
 const _pin = '246810'; // Synthetic. Never use a real vault credential here.
 final _proof = 'p1.1700000000000.${'A' * 32}.${'B' * 43}';
@@ -187,5 +189,80 @@ void main() {
     await expectLater(lost.open(), throwsStateError);
     expect(lost.isOpen, isFalse);
     await expectLater(lost.proof(), throwsStateError);
+  });
+
+  test('owner can cancel an expired-lease renewal without a second proof',
+      () async {
+    var now = DateTime.utc(2026, 11, 7);
+    var prompts = 0;
+    var proofs = 0;
+    final renewal = RenewableLegacyStagePinLease(
+      promptPin: () async => prompts++ == 0 ? _pin : null,
+      lifetime: const Duration(minutes: 1),
+      now: () => now,
+    );
+    final action = EphemeralLegacyFileAction(
+      promptPin: renewal.requireOrPrompt,
+      verifyPin: (pin) async {
+        proofs++;
+        renewal.requireActive();
+        return _proof;
+      },
+      deriveKey: (_) async => SecretKey(List<int>.filled(32, 7)),
+      accessIsCurrent: () => true,
+    );
+    try {
+      await action.open();
+      expect(await action.proof(), _proof);
+      now = now.add(const Duration(minutes: 1));
+      await expectLater(action.proof(),
+          throwsA(isA<LegacyFileActionCancelled>()));
+      expect(prompts, 2);
+      expect(proofs, 1);
+    } finally {
+      action.close();
+      renewal.clear();
+    }
+  });
+
+  test('session change during owner renewal cannot produce a new proof',
+      () async {
+    var now = DateTime.utc(2026, 11, 7);
+    var current = true;
+    var prompts = 0;
+    var proofs = 0;
+    final renewalEntry = Completer<String?>();
+    final renewal = RenewableLegacyStagePinLease(
+      promptPin: () {
+        prompts++;
+        return prompts == 1 ? Future<String?>.value(_pin)
+            : renewalEntry.future;
+      },
+      lifetime: const Duration(minutes: 1),
+      now: () => now,
+    );
+    final action = EphemeralLegacyFileAction(
+      promptPin: renewal.requireOrPrompt,
+      verifyPin: (pin) async {
+        proofs++;
+        renewal.requireActive();
+        return _proof;
+      },
+      deriveKey: (_) async => SecretKey(List<int>.filled(32, 7)),
+      accessIsCurrent: () => current,
+    );
+    try {
+      await action.open();
+      expect(await action.proof(), _proof);
+      now = now.add(const Duration(minutes: 1));
+      final pending = action.proof();
+      current = false;
+      renewalEntry.complete(_pin);
+      await expectLater(pending, throwsStateError);
+      expect(proofs, 1);
+    } finally {
+      action.close();
+      renewal.clear();
+    }
   });
 }
