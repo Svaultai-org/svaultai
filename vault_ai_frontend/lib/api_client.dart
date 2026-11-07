@@ -1918,7 +1918,9 @@ class VaultAIClient {
     required String authToken,
     required String message,
     List<zk_private_chat.ZkGeneralChatTurn> history = const [],
+    void Function()? accessGuard,
   }) async {
+    accessGuard?.call();
     final uri = Uri.parse('$baseUrl/chat/zk/general');
     final body = zk_private_chat.buildZkGeneralChatBody(
       message: message,
@@ -1929,6 +1931,7 @@ class VaultAIClient {
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
     );
+    accessGuard?.call();
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -1939,6 +1942,7 @@ class VaultAIClient {
       ));
     }
     final decoded = jsonDecode(response.body);
+    accessGuard?.call();
     if (decoded is! Map<String, dynamic> ||
         decoded['mode'] != 'general' ||
         decoded['reply'] is! String ||

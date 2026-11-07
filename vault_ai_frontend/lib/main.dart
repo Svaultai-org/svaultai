@@ -55,6 +55,7 @@ import 'services/vault_handle.dart' as vh;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/private_content_pin_guard.dart' as private_content_guard;
 import 'services/zk_private_chat.dart' as zk_private_chat;
+import 'services/zk_general_chat_bridge.dart' as zk_general_bridge;
 import 'services/zk_private_chat_flow.dart' as zk_chat_flow;
 import 'services/zk_private_chat_index.dart' as zk_chat_index;
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
@@ -915,6 +916,12 @@ const bool kEnableZkFileV2Rename = bool.fromEnvironment(
 // It stays off until file V2 viewing and all chat entry points are verified.
 const bool kEnableZkPrivateChat = bool.fromEnvironment(
   'VAULTAI_ENABLE_ZK_PRIVATE_CHAT',
+  defaultValue: false,
+);
+// Transitional opt-in for PIN-free OPAQUE chat. General questions use the
+// retrieval-free AI route; every other question stays on the local vault path.
+const bool kEnableZkGeneralChatBridge = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_GENERAL_CHAT_BRIDGE',
   defaultValue: false,
 );
 const bool kZkChatFileCardsEnabled = bool.fromEnvironment(
@@ -9593,6 +9600,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   String? _zkPrivateChatToken;
   String? _zkPrivateChatVaultId;
   SecretKey? _zkPrivateChatMvk;
+  zk_general_bridge.ZkGeneralChatBridge? _zkGeneralChatBridge;
+  String? _zkGeneralChatBridgeToken;
+  String? _zkGeneralChatBridgeVaultId;
+  SecretKey? _zkGeneralChatBridgeMvk;
+  int? _zkGeneralChatBridgeEpoch;
+  int? _zkGeneralChatBridgeForegroundEpoch;
+  int? _zkGeneralChatBridgeTerminationGeneration;
   bool _filePickerInFlight = false;
   final ScrollController _scrollController = ScrollController();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
@@ -13820,6 +13834,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _zkPrivateChatFlow?.clear();
     _zkPrivateChatFlow = null;
     _zkPrivateChatMvk = null;
+    _zkGeneralChatBridge?.clear();
+    _zkGeneralChatBridge = null;
+    _zkGeneralChatBridgeMvk = null;
     if (identical(_boundLegacyFileReadSession?.owner, this)) {
       _clearLegacyFileReadSession();
     }
@@ -18936,12 +18953,99 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
+  Future<void> _sendZkGeneralBridgeChat({
+    required AppState app,
+    required String token,
+    required String vaultId,
+    required SecretKey mvk,
+    required String text,
+  }) async {
+    final vaultHandle = app.vaultHandle;
+    final vaultName = app.vaultName;
+    final sessionEpoch = app._sessionEpoch;
+    final foregroundEpoch = app._sessionProbeEpoch;
+    final terminationGeneration = st.SessionTermination.instance.generation;
+    bool currentAccess() =>
+        mounted && app.authed && app.unlocked && app._sessionForeground &&
+        !app.sessionVerificationBlocked &&
+        app._sessionEpoch == sessionEpoch &&
+        app._sessionProbeEpoch == foregroundEpoch &&
+        app.sessionToken == token && app.vaultId == vaultId &&
+        app.vaultHandle == vaultHandle && app.vaultName == vaultName &&
+        st.SessionTermination.instance.generation == terminationGeneration &&
+        !st.SessionTermination.instance.isTerminated &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
+        identical(zk_mvk_store.ZkActiveMvk.current(), mvk);
+    if (!currentAccess()) return;
+    final client = VaultAIClient(baseUrl: backendBaseUrl);
+    if (_zkGeneralChatBridge == null ||
+        _zkGeneralChatBridgeToken != token ||
+        _zkGeneralChatBridgeVaultId != vaultId ||
+        !identical(_zkGeneralChatBridgeMvk, mvk) ||
+        _zkGeneralChatBridgeEpoch != sessionEpoch ||
+        _zkGeneralChatBridgeForegroundEpoch != foregroundEpoch ||
+        _zkGeneralChatBridgeTerminationGeneration != terminationGeneration) {
+      _zkGeneralChatBridge?.clear();
+      _zkGeneralChatBridgeToken = token;
+      _zkGeneralChatBridgeVaultId = vaultId;
+      _zkGeneralChatBridgeMvk = mvk;
+      _zkGeneralChatBridgeEpoch = sessionEpoch;
+      _zkGeneralChatBridgeForegroundEpoch = foregroundEpoch;
+      _zkGeneralChatBridgeTerminationGeneration = terminationGeneration;
+      _zkGeneralChatBridge = zk_general_bridge.ZkGeneralChatBridge(
+        accessIsCurrent: currentAccess,
+        vaultName: vaultName,
+        sendGeneral: (prompt, history) => client.zkGeneralChat(
+          authToken: token,
+          message: prompt,
+          history: history,
+          accessGuard: () {
+            if (!currentAccess()) throw StateError('Vault access changed');
+          },
+        ),
+      );
+    }
+    final bridge = _zkGeneralChatBridge!;
+    setState(() {
+      selectedSection = _DashboardSection.chat;
+      sending = true;
+      thinking = true;
+      msgs.add(_Msg('user', text));
+      input.clear();
+    });
+    _scrollToBottom();
+    try {
+      final reply = await bridge.send(text);
+      if (!currentAccess()) return;
+      setState(() {
+        msgs.add(_Msg('assistant', reply));
+        thinking = false;
+      });
+      _scrollToBottom();
+    } catch (_) {
+      if (currentAccess()) {
+        _appendAssistantMessage(
+          'General chat is temporarily unavailable. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          sending = false;
+          thinking = false;
+        });
+      }
+    }
+  }
+
   Future<void> _sendZkPrivateChat({
     required AppState app,
     required String token,
     required String vaultId,
     required SecretKey mvk,
     required String text,
+    bool forcePrivate = false,
+    bool safeBridgeOnly = false,
   }) async {
     final vaultHandle = app.vaultHandle;
     bool currentAccess() =>
@@ -18955,6 +19059,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         identical(zk_mvk_store.ZkActiveMvk.current(), mvk);
     if (!currentAccess()) return;
     if (attachments.isNotEmpty) {
+      if (safeBridgeOnly) {
+        _appendLocalVaultReply(text,
+            'Private attachment analysis is unavailable in this version.');
+        return;
+      }
       await _sendZkPrivateAttachments(
         app: app,
         token: token,
@@ -18964,7 +19073,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
       return;
     }
-    if (parseVaultLocalMemorySaveCommand(text) != null) {
+    if (!safeBridgeOnly && parseVaultLocalMemorySaveCommand(text) != null) {
       final handled = await _tryLocalMemorySaveCommand(
         text, accessIsCurrent: currentAccess,
       );
@@ -18974,7 +19083,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
       return;
     }
-    if (parseSavedFileRenameCommand(text) != null) {
+    if (!safeBridgeOnly && parseSavedFileRenameCommand(text) != null) {
       final handled = await _trySavedFileRenameCommand(
         text, accessIsCurrent: currentAccess,
       );
@@ -19077,7 +19186,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           ZkPinFreeFileSession.instance.listOfferedForToken(token) &&
           extractLocalFileLookupQuery(text) != null;
       final turn = await _zkPrivateChatFlow!.run(
-        text, forcePrivate: privateFileLookup,
+        text, forcePrivate: forcePrivate || privateFileLookup,
       );
       if (!currentAccess()) return;
       final local = turn.local;
@@ -19317,6 +19426,36 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
 
     final zkChatMvk = zk_mvk_store.ZkActiveMvk.current();
+    final bridgeRoute = zk_general_bridge.resolveZkGeneralBridgeRoute(
+      enabled: kEnableZkGeneralChatBridge,
+      hasZkHandle: app.vaultHandle?.isNotEmpty == true,
+      hasMvk: zkChatMvk != null,
+      mvkMatchesVault: activeVaultId != null &&
+          zk_mvk_store.ZkActiveMvk.currentVaultId() == activeVaultId,
+      hasAttachments: attachments.isNotEmpty,
+      prompt: text,
+      vaultName: vaultName,
+    );
+    if (bridgeRoute == zk_general_bridge.ZkGeneralBridgeRoute.unavailable) {
+      _appendAssistantMessage(
+          'Your vault encryption key is unavailable. Please lock and unlock your vault again.');
+      return;
+    }
+    if (bridgeRoute == zk_general_bridge.ZkGeneralBridgeRoute.general) {
+      await _sendZkGeneralBridgeChat(
+        app: app, token: authToken, vaultId: activeVaultId!,
+        mvk: zkChatMvk!, text: text,
+      );
+      return;
+    }
+    if (bridgeRoute == zk_general_bridge.ZkGeneralBridgeRoute.privateLocal) {
+      await _sendZkPrivateChat(
+        app: app, token: authToken, vaultId: activeVaultId!,
+        mvk: zkChatMvk!, text: text,
+        forcePrivate: true, safeBridgeOnly: true,
+      );
+      return;
+    }
     final zkRoute = zk_chat_flow.resolveZkChatEntryRoute(
       privateChatEnabled:
           kEnableZkPrivateChat || signedPrivateChatOfferedForToken(authToken),
