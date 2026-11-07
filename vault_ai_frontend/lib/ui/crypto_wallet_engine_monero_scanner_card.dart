@@ -69,8 +69,8 @@ const String kMoneroScannerFailedCopy =
 const String kMoneroScannerStoppedCopy =
     'Scanner not enabled';
 const String kMoneroScannerDaemonPrivacyNote =
-    'Svaultai does not send your seed, spend key, or view key to a '
-    'scanner.';
+    'When enabled, scanning uses your private view key on this device. '
+    'Your spend key is not passed to the scanner.';
 
 
 class CryptoWalletEngineMoneroScannerCard extends StatelessWidget {
@@ -85,6 +85,7 @@ class CryptoWalletEngineMoneroScannerCard extends StatelessWidget {
 
 
   final MoneroScannerStatus? backendStatus;
+  final bool requirePrivateWalletCapability;
 
   const CryptoWalletEngineMoneroScannerCard({
     super.key,
@@ -96,14 +97,17 @@ class CryptoWalletEngineMoneroScannerCard extends StatelessWidget {
     this.initialRestoreHeight,
     this.onRestoreHeightChanged,
     this.backendStatus,
+    this.requirePrivateWalletCapability = false,
   });
 
-  bool get _isAvailable => scannerAdapter.isAvailable;
+  bool get _canStart => scannerAdapter.isAvailable &&
+      (!requirePrivateWalletCapability ||
+          (features?.xmrLocalScannerEnabled ?? false));
 
   MoneroSyncStatus get _effectiveStatus {
     final s = status;
     if (s != null) return s;
-    if (!_isAvailable) return MoneroSyncStatus.scannerUnavailable();
+    if (!_canStart) return MoneroSyncStatus.scannerUnavailable();
     return MoneroSyncStatus.notStarted(restoreHeight: 0);
   }
 
@@ -252,7 +256,7 @@ class CryptoWalletEngineMoneroScannerCard extends StatelessWidget {
   }
 
   Widget _buildControls(MoneroSyncStatus s) {
-    if (!_isAvailable) {
+    if (!_canStart) {
 
       return const SizedBox(
         key: Key(kMoneroScannerUnavailableCopyKey),
@@ -329,7 +333,7 @@ class CryptoWalletEngineMoneroScannerCard extends StatelessWidget {
   bool _shouldShowRestoreHeightSection(MoneroSyncStatus s) {
 
 
-    if (!_isAvailable) return false;
+    if (!_canStart) return false;
     return s.state == MoneroScannerState.notStarted;
   }
 

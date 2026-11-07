@@ -20,6 +20,8 @@ import 'crypto_wallet_engine_page.dart';
 import '../services/crypto_wallet_balance_reason.dart';
 import '../services/crypto_wallet_features.dart';
 import '../services/monero_scanner.dart';
+import '../services/monero_scan_session.dart';
+import '../services/monero_v2_scanner_input.dart';
 import '../services/monero_scanner_status.dart';
 import '../services/monero_wallet.dart';
 import 'crypto_wallet_engine_monero_scanner_card.dart';
@@ -312,7 +314,47 @@ class _CryptoWalletEngineAssetDetailPageState
       const <MoneroTransactionRow>[];
   bool _moneroScannerStarting = false;
   String? _moneroScannerInlineMessage;
+  MoneroScanSession? _moneroScanSession;
+  Future<void>? _moneroScannerClosePending;
 
+  void _closeMoneroScanSession() {
+    final session = _moneroScanSession;
+    if (session == null ||
+        (session.isClosed && _moneroScannerClosePending != null)) return;
+    final closing = session.close();
+    _moneroScannerClosePending = closing;
+    unawaited(closing.then((_) {
+      if (identical(_moneroScannerClosePending, closing)) {
+        _moneroScannerClosePending = null;
+      }
+      if (!mounted ||
+          !_isMoneroLive ||
+          !identical(_moneroScanSession, session) ||
+          widget.features?.xmrLocalScannerEnabled != true ||
+          widget.walletV2?.accessIsCurrent() != true) return;
+      _moneroScanSession = MoneroScanSession(widget.moneroScannerAdapter);
+    }));
+  }
+
+  void _onMoneroAccessChanged() {
+    if (!_isMoneroLive || widget.walletV2 == null) return;
+    if (widget.walletV2!.accessIsCurrent()) {
+      if (widget.features?.xmrLocalScannerEnabled == true &&
+          _moneroScannerClosePending == null &&
+          (_moneroScanSession?.isClosed ?? true)) {
+        _moneroScanSession = MoneroScanSession(widget.moneroScannerAdapter);
+      }
+      return;
+    }
+    _closeMoneroScanSession();
+    if (!mounted) return;
+    setState(() {
+      _moneroScannerStatus = null;
+      _moneroBalanceReading = null;
+      _moneroTransactions = const <MoneroTransactionRow>[];
+      _moneroScannerInlineMessage = null;
+    });
+  }
 
   MoneroScannerStatus? _backendMoneroScannerStatus;
 
@@ -424,6 +466,10 @@ class _CryptoWalletEngineAssetDetailPageState
     if (widget.registeredAsset != null) {
       widget.accessChanges?.addListener(_onRegisteredAccessChanged);
     }
+    if (_isMoneroLive && widget.walletV2 != null) {
+      _moneroScanSession = MoneroScanSession(widget.moneroScannerAdapter);
+      widget.accessChanges?.addListener(_onMoneroAccessChanged);
+    }
     if (_isSupported && _hasReceiveWiring) {
       _loadAddressAndBalance();
     }
@@ -436,16 +482,34 @@ class _CryptoWalletEngineAssetDetailPageState
   @override
   void didUpdateWidget(covariant CryptoWalletEngineAssetDetailPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.accessChanges != widget.accessChanges) {
+    final wasMonero =
+        oldWidget.asset == 'XMR' && oldWidget.network == 'monero_mainnet';
+    if (oldWidget.accessChanges != widget.accessChanges ||
+        wasMonero != _isMoneroLive) {
       oldWidget.accessChanges?.removeListener(_onRegisteredAccessChanged);
+      oldWidget.accessChanges?.removeListener(_onMoneroAccessChanged);
       if (widget.registeredAsset != null) {
         widget.accessChanges?.addListener(_onRegisteredAccessChanged);
       }
+      if (_isMoneroLive && widget.walletV2 != null) {
+        widget.accessChanges?.addListener(_onMoneroAccessChanged);
+      }
+    }
+    if (wasMonero != _isMoneroLive ||
+        oldWidget.moneroScannerAdapter != widget.moneroScannerAdapter ||
+        oldWidget.walletV2 != widget.walletV2 ||
+        (oldWidget.features?.xmrLocalScannerEnabled == true &&
+            widget.features?.xmrLocalScannerEnabled != true)) {
+      _closeMoneroScanSession();
+      if (!_isMoneroLive) _moneroScanSession = null;
+    }
+    if (_isMoneroLive && widget.walletV2 != null) {
+      _onMoneroAccessChanged();
     }
     if (widget.registeredAsset != null &&
         (oldWidget.authToken != widget.authToken ||
-         oldWidget.apiClient != widget.apiClient ||
-         oldWidget.registeredAsset != widget.registeredAsset)) {
+            oldWidget.apiClient != widget.apiClient ||
+            oldWidget.registeredAsset != widget.registeredAsset)) {
       _registeredAccessRevoked = true;
       _onRegisteredAccessChanged();
     }
@@ -454,6 +518,9 @@ class _CryptoWalletEngineAssetDetailPageState
   @override
   void dispose() {
     widget.accessChanges?.removeListener(_onRegisteredAccessChanged);
+    widget.accessChanges?.removeListener(_onMoneroAccessChanged);
+    final session = _moneroScanSession;
+    if (session != null) unawaited(session.close());
     _mainnetSendApprovalSession.clear();
     _pageScrollCtrl.dispose();
     super.dispose();
@@ -538,14 +605,20 @@ class _CryptoWalletEngineAssetDetailPageState
       final s = await adapter.getSyncStatus();
       final b = await adapter.getBalance();
       final txs = await adapter.getTransactions();
-      if (!mounted) return;
+      if (!mounted ||
+          (widget.walletV2 != null && !widget.walletV2!.accessIsCurrent())) {
+        return;
+      }
       setState(() {
         _moneroScannerStatus = s;
         _moneroBalanceReading = b;
         _moneroTransactions = txs;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted ||
+          (widget.walletV2 != null && !widget.walletV2!.accessIsCurrent())) {
+        return;
+      }
       setState(() {
         _moneroScannerStatus = MoneroSyncStatus.scannerUnavailable();
         _moneroBalanceReading = MoneroBalanceReading.unavailable(
@@ -558,19 +631,25 @@ class _CryptoWalletEngineAssetDetailPageState
 
   Future<void> _startMoneroScan() async {
     if (!_isMoneroLive) return;
-    if (widget.walletV2 != null) {
-      setState(() {
-        _moneroScannerInlineMessage =
-            'Private Monero scanning is unavailable while wallet access '
-            'is being prepared.';
-      });
+    if (widget.walletV2 == null) {
+      await _startLegacyMoneroScan();
       return;
     }
     if (_moneroScannerStarting) return;
-    final adapter = widget.moneroScannerAdapter;
-    if (!adapter.isAvailable) {
+    if (_moneroScanSession?.isActiveOrStarting == true) return;
+    if (widget.features?.xmrLocalScannerEnabled != true) {
       setState(() {
-        _moneroScannerInlineMessage = adapter.availabilityReason;
+        _moneroScannerInlineMessage = 'Scanner not enabled';
+      });
+      return;
+    }
+    final adapter = widget.moneroScannerAdapter;
+    final session = _moneroScanSession;
+    if (!adapter.isAvailable || session == null || session.isClosed) {
+      setState(() {
+        _moneroScannerInlineMessage = adapter.isAvailable
+            ? 'Unlock your vault before scanning.'
+            : adapter.availabilityReason;
       });
       return;
     }
@@ -582,19 +661,40 @@ class _CryptoWalletEngineAssetDetailPageState
       });
       return;
     }
+    final walletV2 = widget.walletV2;
+    if (walletV2 == null || !_v2BackupVerified || !walletV2.accessIsCurrent()) {
+      setState(() {
+        _moneroScannerInlineMessage =
+            'A verified private Monero backup is needed before scanning.';
+      });
+      return;
+    }
     setState(() {
       _moneroScannerStarting = true;
       _moneroScannerInlineMessage = null;
     });
+    MoneroScannerInput? input;
     try {
-      await adapter.startScan(
-        MoneroScannerInput(
-          privateViewKey: Uint8List(32),
-          publicSpendKey: Uint8List(32),
-          publicAddress: addr,
-          restoreHeight: 0,
-        ),
+      final secret = await walletV2.readSigningSecretForAddress(
+        const WalletV2AccountSlot('monero', 'monero_mainnet', 'XMR'),
+        addr,
       );
+      if (!mounted || !walletV2.accessIsCurrent()) return;
+      input = await moneroScannerInputFromVerifiedV2Secret(
+        secret: secret,
+        publicAddress: addr,
+      );
+      if (!mounted || !walletV2.accessIsCurrent()) return;
+      await session.start(
+        input,
+        accessIsCurrent: () =>
+            mounted &&
+            identical(_moneroScanSession, session) &&
+            widget.features?.xmrLocalScannerEnabled == true &&
+            walletV2.accessIsCurrent(),
+      );
+      input = null;
+      if (!mounted || !walletV2.accessIsCurrent()) return;
       await _loadMoneroScannerState();
     } catch (e) {
       if (!mounted) return;
@@ -603,6 +703,7 @@ class _CryptoWalletEngineAssetDetailPageState
             'Monero scan failed to start on this device.';
       });
     } finally {
+      input?.wipe();
       if (mounted) {
         setState(() {
           _moneroScannerStarting = false;
@@ -613,11 +714,48 @@ class _CryptoWalletEngineAssetDetailPageState
 
   Future<void> _stopMoneroScan() async {
     if (!_isMoneroLive) return;
-    try {
-      await widget.moneroScannerAdapter.stopScan();
-    } catch (_) {
+    if (widget.walletV2 == null) {
+      try {
+        await widget.moneroScannerAdapter.stopScan();
+      } catch (_) {}
+    } else {
+      await _moneroScanSession?.stop();
     }
     await _loadMoneroScannerState();
+  }
+
+  Future<void> _startLegacyMoneroScan() async {
+    if (_moneroScannerStarting) return;
+    final adapter = widget.moneroScannerAdapter;
+    if (!adapter.isAvailable) {
+      setState(() => _moneroScannerInlineMessage = adapter.availabilityReason);
+      return;
+    }
+    final addr = _address;
+    if (addr == null || addr.isEmpty) {
+      setState(() => _moneroScannerInlineMessage =
+          'Create your Monero wallet first before scanning.');
+      return;
+    }
+    setState(() {
+      _moneroScannerStarting = true;
+      _moneroScannerInlineMessage = null;
+    });
+    try {
+      await adapter.startScan(MoneroScannerInput(
+        privateViewKey: Uint8List(32),
+        publicSpendKey: Uint8List(32),
+        publicAddress: addr,
+        restoreHeight: 0,
+      ));
+      await _loadMoneroScannerState();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _moneroScannerInlineMessage =
+          'Monero scan failed to start on this device.');
+    } finally {
+      if (mounted) setState(() => _moneroScannerStarting = false);
+    }
   }
 
   Future<void> _loadAddressAndBalance() async {
@@ -1662,6 +1800,7 @@ class _CryptoWalletEngineAssetDetailPageState
         CryptoWalletEngineMoneroScannerCard(
           scannerAdapter: widget.moneroScannerAdapter,
           features: widget.features,
+          requirePrivateWalletCapability: widget.walletV2 != null,
           status: _moneroScannerStatus,
           backendStatus: _backendMoneroScannerStatus,
           onStart: _startMoneroScan,

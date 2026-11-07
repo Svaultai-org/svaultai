@@ -129,6 +129,11 @@ class CryptoWalletFeatures {
         supportedNetworks = const [],
         supportedAssetsByNetwork = const {};
 
+  bool get xmrLocalScannerEnabled =>
+      xmrEnabled &&
+      xmrClientScannerSupported &&
+      xmrScannerMode == 'client_local';
+
   factory CryptoWalletFeatures.fromBackend(Map<String, dynamic> raw) {
     bool b(String k) => raw[k] is bool ? raw[k] as bool : false;
     String s(String k) => raw[k] is String ? raw[k] as String : '';
