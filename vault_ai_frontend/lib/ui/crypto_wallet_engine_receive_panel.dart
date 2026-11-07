@@ -8,6 +8,7 @@ import '../api_client.dart';
 import '../services/asset_catalog.dart';
 import '../services/ethereum_wallet.dart';
 import '../services/evm_networks.dart';
+import '../services/wallet_v2_active_client.dart';
 import 'crypto_wallet_engine_design.dart';
 import 'kag_issuer_notice.dart';
 
@@ -21,6 +22,12 @@ const String kEthReceiveCopyDoneSnackbar = 'Address copied to clipboard';
 const String kEthReceiveNonCustodialAttestation =
     'Non-custodial: Svaultai never sees your private key. Your wallet is '
     'encrypted with your PIN and stored as ciphertext only.';
+const String kEthReceiveV2Attestation =
+    'Non-custodial: your private key is encrypted on this device. '
+    'Svaultai stores only ciphertext and cannot decrypt it.';
+const String kEthReceiveLegacyMigrationWarning =
+    'This existing wallet needs a private backup migration before sending. '
+    'Do not deposit new funds until it is available.';
 const String kEthReceiveAssetWarning =
     'Only send Ethereum (Sepolia testnet) to this address. Sending the '
     'wrong asset or sending on the wrong network may result in '
@@ -93,6 +100,7 @@ class CryptoWalletEngineReceivePanel extends StatefulWidget {
   final VaultAIClient client;
   final Future<String> Function(String plaintext) encryptForVault;
   final bool Function() isVaultKeyAvailable;
+  final WalletV2ActiveClient? walletV2;
 
 
   final String asset;
@@ -105,6 +113,7 @@ class CryptoWalletEngineReceivePanel extends StatefulWidget {
     required this.client,
     required this.encryptForVault,
     required this.isVaultKeyAvailable,
+    this.walletV2,
     this.asset = _kEthAsset,
     this.network,
     this.registeredAsset,
@@ -163,9 +172,45 @@ class _CryptoWalletEngineReceivePanelState
               asset: widget.asset,
               authToken: widget.authToken,
             );
+      Map<String, dynamic> resolved = body;
+      final walletV2 = widget.walletV2;
+      if (walletV2 != null &&
+          const {'no_account', 'create_eth_wallet_first', 'receive_ready'}
+              .contains(body['wallet_engine'])) {
+        final identity = await walletV2.findVerified(WalletV2AccountSlot(
+          'evm', widget.effectiveNetwork, _kEthAsset,
+        ));
+        final backendAddress = body['publicAddress'];
+        if (body['wallet_engine'] == 'receive_ready') {
+          if (body['backupStatus'] == 'wallet_v2_encrypted') {
+            if (identity == null ||
+                identity.publicAddress.toLowerCase() !=
+                    backendAddress.toString().toLowerCase() ||
+                identity.recordId != body['walletRecordId']) {
+              throw const FormatException('Wallet account verification failed');
+            }
+            await walletV2.readSigningSecret(identity);
+          } else {
+            if (identity != null) {
+              throw const FormatException('Conflicting wallet account sources');
+            }
+            resolved = {...body, 'requiresWalletMigration': true};
+          }
+        } else if (identity != null) {
+          await walletV2.readSigningSecret(identity);
+          resolved = {
+            'wallet_engine': 'receive_ready',
+            'publicAddress': identity.publicAddress,
+            'walletLabel': identity.label,
+            'walletRecordId': identity.recordId,
+            'network': receivePanelNetworkLabelFor(widget.effectiveNetwork),
+            'backupStatus': 'wallet_v2_encrypted',
+          };
+        }
+      }
       if (!mounted) return;
       setState(() {
-        _state = body;
+        _state = resolved;
         _loading = false;
       });
     } catch (e) {
@@ -179,6 +224,10 @@ class _CryptoWalletEngineReceivePanelState
 
   Future<void> _createWallet() async {
     if (_creating || (isRegisteredVaultAssetId(widget.asset) && !_isRegisteredToken)) return;
+    if (widget.walletV2 != null && !widget.walletV2!.creationEnabled) {
+      setState(() => _error = 'Wallet creation is not available yet.');
+      return;
+    }
     if (!widget.isVaultKeyAvailable()) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -192,11 +241,58 @@ class _CryptoWalletEngineReceivePanelState
       _creating = true;
       _error = null;
     });
+    final walletV2 = widget.walletV2;
+    if (walletV2 != null) {
+      try {
+        final recovered = await walletV2.recoverPendingNew(
+          WalletV2AccountSlot('evm', widget.effectiveNetwork, _kEthAsset),
+        );
+        if (recovered != null) {
+          if (!mounted) return;
+          setState(() => _creating = false);
+          await _load();
+          return;
+        }
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          _creating = false;
+          _error = 'An unfinished wallet setup could not be verified. '
+              'No new wallet was created. Retry, then contact support '
+              'if it continues.';
+        });
+        return;
+      }
+    }
     
     
     GeneratedEthereumWallet? wallet = generateEthereumWallet();
     final pkLocal = wallet.privateKeyHex;
     final publicAddress = wallet.publicAddress;
+    if (walletV2 != null) {
+      try {
+        await walletV2.createNew(
+          slot: WalletV2AccountSlot(
+            'evm', widget.effectiveNetwork, _kEthAsset,
+          ),
+          publicAddress: publicAddress,
+          label: _kDefaultWalletLabel,
+          secret: pkLocal,
+        );
+        wallet = null;
+        if (!mounted) return;
+        setState(() => _creating = false);
+        await _load();
+      } catch (e) {
+        wallet = null;
+        if (!mounted) return;
+        setState(() {
+          _creating = false;
+          _error = 'Create wallet failed: $e';
+        });
+      }
+      return;
+    }
     String? encryptedSecret;
     try {
       encryptedSecret = await widget.encryptForVault(pkLocal);
@@ -322,9 +418,21 @@ class _CryptoWalletEngineReceivePanelState
       return Padding(
         key: const Key('eth_receive_panel_error'),
         padding: const EdgeInsets.all(16),
-        child: Text(
-          _error!,
-          style: const TextStyle(color: kWalletAccentDanger),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(_error!,
+                style: const TextStyle(color: kWalletAccentDanger)),
+            if (widget.walletV2?.creationEnabled == true) ...[
+              const SizedBox(height: 12),
+              OutlinedButton(
+                key: const Key('eth_receive_panel_retry_setup'),
+                onPressed: _creating ? null : _createWallet,
+                child: const Text('Retry wallet setup'),
+              ),
+            ],
+          ],
         ),
       );
     }
@@ -447,14 +555,16 @@ class _CryptoWalletEngineReceivePanelState
           Container(
             padding: const EdgeInsets.all(12),
             decoration: walletSuccessPanel(),
-            child: const Row(
+            child: Row(
               children: [
-                Icon(Icons.shield_outlined, size: 16,
+                const Icon(Icons.shield_outlined, size: 16,
                     color: kWalletAccentSuccess),
-                SizedBox(width: 8),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    kEthReceiveNonCustodialAttestation,
+                    widget.walletV2 == null
+                        ? kEthReceiveNonCustodialAttestation
+                        : kEthReceiveV2Attestation,
                     style: TextStyle(
                       color: kWalletAccentSuccess,
                       fontSize: 13,
@@ -488,6 +598,21 @@ class _CryptoWalletEngineReceivePanelState
   }
 
   Widget _buildReadyState(BuildContext ctx, Map<String, dynamic> body) {
+    if (widget.walletV2 != null &&
+        body['requiresWalletMigration'] == true) {
+      return Padding(
+        key: const Key('eth_receive_panel_migration_warning'),
+        padding: const EdgeInsets.all(18),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: walletWarningPanel(),
+          child: const Text(
+            kEthReceiveLegacyMigrationWarning,
+            style: TextStyle(color: kWalletAccentWarning),
+          ),
+        ),
+      );
+    }
     final addr = (body['publicAddress'] ?? '').toString();
     final label = (body['walletLabel'] ?? '').toString();
     final network = (body['network'] ?? _kEthNetworkLabel).toString();

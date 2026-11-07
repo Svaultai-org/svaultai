@@ -13,6 +13,7 @@ import '../services/asset_live_store.dart';
 import 'responsive.dart' show vrDisplay;
 import '../services/crypto_wallet_dashboard_reason.dart';
 import '../services/evm_networks.dart';
+import '../services/wallet_v2_active_client.dart';
 import 'crypto_wallet_engine_activity_card.dart';
 import 'crypto_wallet_engine_design.dart';
 import 'crypto_wallet_engine_page.dart';
@@ -69,6 +70,9 @@ const String kAssetDetailBackupSaved =
 const String kAssetDetailBackupMissing =
     'No backup saved yet. Your wallet backup is created automatically '
     'when you create the wallet.';
+const String kAssetDetailPrivateBackupUnverified =
+    'This private wallet backup could not be verified. Open Receive to '
+    'check the wallet before using its address.';
 
 
 
@@ -175,6 +179,8 @@ class CryptoWalletEngineAssetDetailPage extends StatefulWidget {
 
   final Future<String> Function(String ciphertext)? decryptForVault;
   final Future<bool> Function(String pin)? verifyPin;
+  /// Optional, default-off private wallet receive client.
+  final WalletV2ActiveClient? walletV2;
   // 2026-07-13 network-scoped: the ETH Send from the asset-detail
   // page must resolve the SAME wallet the balance/receive path
   // resolves (which uses the network-scoped endpoint). See the
@@ -198,6 +204,7 @@ class CryptoWalletEngineAssetDetailPage extends StatefulWidget {
     this.accessChanges,
     this.decryptForVault,
     this.verifyPin,
+    this.walletV2,
     this.loadFromAddress,
     this.network,
     this.features,
@@ -261,6 +268,7 @@ class _CryptoWalletEngineAssetDetailPageState
   }
 
   String? _address;
+  bool _v2BackupVerified = false;
   bool _addressLoading = false;
   String? _balance;
   String? _balanceUnit;
@@ -366,13 +374,42 @@ class _CryptoWalletEngineAssetDetailPageState
   bool get _hasReceiveWiring =>
       widget.authToken != null &&
       widget.apiClient != null &&
-      widget.encryptForVault != null &&
-      widget.isVaultKeyAvailable != null;
+      ((widget.encryptForVault != null &&
+        widget.isVaultKeyAvailable != null) || widget.walletV2 != null);
 
   bool get _hasSendWiring =>
+      widget.walletV2 == null &&
       _hasReceiveWiring &&
       widget.decryptForVault != null &&
       widget.loadFromAddress != null;
+
+  Future<bool> _verifyV2BackupForAddress(String? address) async {
+    final walletV2 = widget.walletV2;
+    if (walletV2 == null || address == null || address.isEmpty ||
+        !walletV2.accessIsCurrent()) {
+      return false;
+    }
+    final slot = _isSolana
+        ? const WalletV2AccountSlot('solana', 'solana_mainnet', 'SOL')
+        : _isTron
+            ? const WalletV2AccountSlot('tron', 'tron_mainnet', 'USDT_TRC20')
+            : _isMoneroLive
+                ? const WalletV2AccountSlot('monero', 'monero_mainnet', 'XMR')
+                : WalletV2AccountSlot('evm', widget.effectiveNetwork, 'ETH');
+    try {
+      final identity = await walletV2.findVerified(slot);
+      if (identity == null ||
+          (slot.chain == 'evm'
+              ? identity.publicAddress.toLowerCase() != address.toLowerCase()
+              : identity.publicAddress != address)) {
+        return false;
+      }
+      await walletV2.readSigningSecret(identity);
+      return walletV2.accessIsCurrent();
+    } catch (_) {
+      return false;
+    }
+  }
 
   @override
   void initState() {
@@ -514,6 +551,14 @@ class _CryptoWalletEngineAssetDetailPageState
 
   Future<void> _startMoneroScan() async {
     if (!_isMoneroLive) return;
+    if (widget.walletV2 != null) {
+      setState(() {
+        _moneroScannerInlineMessage =
+            'Private Monero scanning is unavailable while wallet access '
+            'is being prepared.';
+      });
+      return;
+    }
     if (_moneroScannerStarting) return;
     final adapter = widget.moneroScannerAdapter;
     if (!adapter.isAvailable) {
@@ -597,6 +642,7 @@ class _CryptoWalletEngineAssetDetailPageState
     if (mounted) {
       setState(() {
         _addressLoading = true;
+        if (widget.walletV2 != null) _v2BackupVerified = false;
         _balanceLoading = true;
         _balanceReason = null;
       });
@@ -625,6 +671,9 @@ class _CryptoWalletEngineAssetDetailPageState
     );
 
     if (!_registeredOperationCurrent(accessGeneration)) return;
+    final v2BackupVerified =
+        await _verifyV2BackupForAddress(result.publicAddress);
+    if (!_registeredOperationCurrent(accessGeneration)) return;
 
     if (seq != null) {
       AssetLiveStore.instance.applyState(
@@ -639,6 +688,7 @@ class _CryptoWalletEngineAssetDetailPageState
     setState(() {
       _addressLoading = false;
       _address = result.publicAddress;
+      _v2BackupVerified = v2BackupVerified;
       switch (result.kind) {
         case DashboardAssetLiveStateKind.available:
           _balance = result.balanceAmount;
@@ -1018,8 +1068,11 @@ class _CryptoWalletEngineAssetDetailPageState
               ),
               authToken: widget.authToken!,
               client: widget.apiClient!,
-              encryptForVault: widget.encryptForVault!,
-              isVaultKeyAvailable: widget.isVaultKeyAvailable!,
+              encryptForVault: widget.encryptForVault ??
+                  (_) async => throw StateError('Legacy wallet unavailable'),
+              isVaultKeyAvailable: widget.walletV2?.accessIsCurrent ??
+                  widget.isVaultKeyAvailable!,
+              walletV2: widget.walletV2,
             )
           : _isTron
               ? CryptoWalletEngineTronReceivePanel(
@@ -1028,8 +1081,11 @@ class _CryptoWalletEngineAssetDetailPageState
                   ),
                   authToken: widget.authToken!,
                   client: widget.apiClient!,
-                  encryptForVault: widget.encryptForVault!,
-                  isVaultKeyAvailable: widget.isVaultKeyAvailable!,
+                  encryptForVault: widget.encryptForVault ??
+                      (_) async => throw StateError('Legacy wallet unavailable'),
+                  isVaultKeyAvailable: widget.walletV2?.accessIsCurrent ??
+                      widget.isVaultKeyAvailable!,
+                  walletV2: widget.walletV2,
                   features: widget.features,
                 )
               : _isMoneroLive
@@ -1041,8 +1097,10 @@ class _CryptoWalletEngineAssetDetailPageState
                       client: widget.apiClient!,
                       features: widget.features,
                       walletAdapter: widget.moneroWalletAdapter,
+                      walletV2: widget.walletV2,
                       encryptForVault: widget.encryptForVault,
-                      isVaultKeyAvailable: widget.isVaultKeyAvailable,
+                      isVaultKeyAvailable: widget.walletV2?.accessIsCurrent ??
+                          widget.isVaultKeyAvailable,
                     )
                   : CryptoWalletEngineReceivePanel(
                       key: Key(
@@ -1050,8 +1108,11 @@ class _CryptoWalletEngineAssetDetailPageState
                       ),
                       authToken: widget.authToken!,
                       client: widget.apiClient!,
-                      encryptForVault: widget.encryptForVault!,
-                      isVaultKeyAvailable: widget.isVaultKeyAvailable!,
+                      encryptForVault: widget.encryptForVault ??
+                          (_) async => throw StateError('Legacy wallet unavailable'),
+                      isVaultKeyAvailable: widget.walletV2?.accessIsCurrent ??
+                          widget.isVaultKeyAvailable!,
+                      walletV2: widget.walletV2,
                       asset: widget.asset,
                       registeredAsset: widget.registeredAsset,
                       network: widget.network,
@@ -1063,6 +1124,10 @@ class _CryptoWalletEngineAssetDetailPageState
 
   Future<void> _openSendPanel() async {
     if (!_registeredAccessCurrent) return;
+    if (widget.walletV2 != null) {
+      _showSnackBar(kAssetDetailSendNotReadyBanner);
+      return;
+    }
     final accessGeneration = _registeredAccessGeneration;
     if (!_registeredSendEnabled) {
       _showSnackBar('Sending is unavailable for this asset.');
@@ -1312,6 +1377,7 @@ class _CryptoWalletEngineAssetDetailPageState
 
   Future<void> _copyAddress() async {
     if (!_registeredAccessCurrent) return;
+    if (widget.walletV2 != null && !_v2BackupVerified) return;
     final addr = _address;
     if (addr == null || addr.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: addr));
@@ -1491,7 +1557,8 @@ class _CryptoWalletEngineAssetDetailPageState
   }
 
   List<Widget> _buildSupportedAssetSections() {
-    final addr = _address;
+    final addr = widget.walletV2 != null && !_v2BackupVerified
+        ? null : _address;
     final balText = _balance != null
         ? '${_balance!}${_balanceUnit != null ? ' $_balanceUnit' : ''}'
         : null;
@@ -1628,7 +1695,8 @@ class _CryptoWalletEngineAssetDetailPageState
               key: const Key(
                 'crypto_wallet_engine_asset_detail_send_btn',
               ),
-              onPressed: _registeredSendEnabled ? _openSendPanel : null,
+              onPressed: widget.walletV2 == null && _registeredSendEnabled
+                  ? _openSendPanel : null,
               icon: const Icon(Icons.north_rounded, size: 18),
               label: const Text(kAssetDetailSendLabel),
               style: walletSecondaryButtonStyle(),
@@ -2137,6 +2205,8 @@ class _CryptoWalletEngineAssetDetailPageState
 
   Widget _buildBackupPanel() {
     final hasAddress = _address != null && _address!.isNotEmpty;
+    final privateBackupUnverified = widget.walletV2 != null &&
+        hasAddress && !_v2BackupVerified;
     return Container(
       key: const Key('crypto_wallet_engine_asset_detail_backup'),
       padding: const EdgeInsets.all(16),
@@ -2161,7 +2231,9 @@ class _CryptoWalletEngineAssetDetailPageState
           ),
           const SizedBox(height: 8),
           Text(
-            hasAddress
+            privateBackupUnverified
+                ? kAssetDetailPrivateBackupUnverified
+                : hasAddress
                 ? kAssetDetailBackupSaved
                 : kAssetDetailBackupMissing,
             style: kWalletBodyStyle,

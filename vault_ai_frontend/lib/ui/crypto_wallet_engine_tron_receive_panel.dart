@@ -9,6 +9,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../api_client.dart';
 import '../services/crypto_wallet_features.dart';
 import '../services/tron_wallet.dart';
+import '../services/wallet_v2_active_client.dart';
 import 'crypto_wallet_engine_design.dart';
 
 
@@ -20,6 +21,12 @@ const String kTronReceiveCopyDoneSnackbar = 'Address copied to clipboard';
 const String kTronReceiveNonCustodialAttestation =
     'Non-custodial: Svaultai never sees your TRON secret key. Your '
     'wallet is encrypted with your PIN and stored as ciphertext only.';
+const String kTronReceiveV2CreateDescription =
+    'A new TRON secret key will be generated and encrypted on this '
+    'device before its backup is stored.';
+const String kTronReceiveLegacyMigrationWarning =
+    'This existing wallet needs a private backup migration before sending. '
+    'Do not deposit new funds until it is available.';
 const String kTronReceiveAssetWarning =
     'Only send USDT TRC20 on TRON to this address.';
 const String kTronReceiveGasNote =
@@ -53,6 +60,7 @@ class CryptoWalletEngineTronReceivePanel extends StatefulWidget {
   final VaultAIClient client;
   final Future<String> Function(String plaintext) encryptForVault;
   final bool Function() isVaultKeyAvailable;
+  final WalletV2ActiveClient? walletV2;
   final CryptoWalletFeatures? features;
   final String walletLabel;
 
@@ -62,6 +70,7 @@ class CryptoWalletEngineTronReceivePanel extends StatefulWidget {
     required this.client,
     required this.encryptForVault,
     required this.isVaultKeyAvailable,
+    this.walletV2,
     this.features,
     this.walletLabel = 'Svaultai TRON wallet',
   });
@@ -105,9 +114,48 @@ class _CryptoWalletEngineTronReceivePanelState
         asset: kTronAssetTicker,
         authToken: widget.authToken,
       );
+      Map<String, dynamic> resolved = body;
+      final walletV2 = widget.walletV2;
+      if (walletV2 != null &&
+          const {'no_account', 'create_tron_wallet_first', 'receive_ready'}
+              .contains(body['wallet_engine'])) {
+        final identity = await walletV2.findVerified(
+          const WalletV2AccountSlot('tron', 'tron_mainnet', 'USDT_TRC20'),
+        );
+        if (body['wallet_engine'] == 'receive_ready') {
+          if (identity != null) {
+            final recordId = body['walletRecordId'];
+            if (identity.publicAddress != body['publicAddress'] ||
+                (recordId != null && recordId != identity.recordId)) {
+              throw const FormatException('Wallet account verification failed');
+            }
+            await walletV2.readSigningSecret(identity);
+            resolved = {
+              ...body,
+              'walletRecordId': identity.recordId,
+              'backupStatus': 'wallet_v2_encrypted',
+              'requiresWalletMigration': false,
+            };
+          } else {
+            if (body['backupStatus'] == 'wallet_v2_encrypted') {
+              throw const FormatException('Wallet account verification failed');
+            }
+            resolved = {...body, 'requiresWalletMigration': true};
+          }
+        } else if (identity != null) {
+          await walletV2.readSigningSecret(identity);
+          resolved = {
+            'wallet_engine': 'receive_ready',
+            'publicAddress': identity.publicAddress,
+            'walletLabel': identity.label,
+            'walletRecordId': identity.recordId,
+            'backupStatus': 'wallet_v2_encrypted',
+          };
+        }
+      }
       if (!mounted) return;
       setState(() {
-        _state = body;
+        _state = resolved;
         _loading = false;
       });
     } catch (e) {
@@ -120,6 +168,12 @@ class _CryptoWalletEngineTronReceivePanelState
   }
 
   Future<void> _createWallet() async {
+    if (_creating) return;
+    final walletV2 = widget.walletV2;
+    if (walletV2 != null && !walletV2.creationEnabled) {
+      setState(() => _error = 'Wallet creation is not available yet.');
+      return;
+    }
     if (!widget.isVaultKeyAvailable()) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -135,6 +189,44 @@ class _CryptoWalletEngineTronReceivePanelState
       _creating = true;
       _error = null;
     });
+
+    if (walletV2 != null) {
+      try {
+        final slot = const WalletV2AccountSlot(
+          'tron', 'tron_mainnet', 'USDT_TRC20',
+        );
+        final recovered = await walletV2.recoverPendingNew(slot);
+        if (recovered == null) {
+          final wallet = generateTronWallet();
+          try {
+            final secretJson = jsonEncode({
+              'schema': 'tron_secret_v1',
+              'keyOrigin': 'generated_client_side',
+              'privateKeyHex': wallet.privateKeyHex,
+            });
+            await walletV2.createNew(
+              slot: slot,
+              publicAddress: wallet.publicAddress,
+              label: widget.walletLabel,
+              secret: secretJson,
+            );
+          } finally {
+            wipeTronPrivateKeyHex(wallet.privateKeyHex);
+          }
+        }
+        if (!mounted) return;
+        setState(() => _creating = false);
+        await _load();
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          _creating = false;
+          _error = 'Private wallet setup could not be verified. '
+              'Retry or contact support.';
+        });
+      }
+      return;
+    }
 
     GeneratedTronWallet? wallet;
     String? encryptedSecret;
@@ -307,15 +399,17 @@ class _CryptoWalletEngineTronReceivePanelState
           Container(
             padding: const EdgeInsets.all(12),
             decoration: walletSuccessPanel(),
-            child: const Row(
+            child: Row(
               children: [
-                Icon(Icons.shield_outlined, size: 16,
+                const Icon(Icons.shield_outlined, size: 16,
                     color: kWalletAccentSuccess),
-                SizedBox(width: 8),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    kTronReceiveNonCustodialAttestation,
-                    style: TextStyle(
+                    widget.walletV2 == null
+                        ? kTronReceiveNonCustodialAttestation
+                        : kTronReceiveV2CreateDescription,
+                    style: const TextStyle(
                       color: kWalletAccentSuccess,
                       fontSize: 13,
                     ),
@@ -348,6 +442,20 @@ class _CryptoWalletEngineTronReceivePanelState
   }
 
   Widget _buildReadyState(BuildContext ctx, Map<String, dynamic> body) {
+    if (body['requiresWalletMigration'] == true) {
+      return Padding(
+        padding: const EdgeInsets.all(18),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: walletWarningPanel(),
+          child: const Text(
+            kTronReceiveLegacyMigrationWarning,
+            key: Key('tron_receive_panel_migration_warning'),
+            style: TextStyle(color: kWalletAccentWarning, fontSize: 13),
+          ),
+        ),
+      );
+    }
     final addr = (body['publicAddress'] ?? '').toString();
     final label = (body['walletLabel'] ?? '').toString();
     // 2026-07-13 mobile fix: at 320 dp the fixed 18 dp outer padding

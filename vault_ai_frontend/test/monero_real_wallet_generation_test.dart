@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:vault_ai_frontend/services/monero_crypto_primitives.dart';
 import 'package:vault_ai_frontend/services/monero_wallet.dart';
+import 'package:vault_ai_frontend/services/wallet_v2_secret_validation.dart';
 
 
 Uint8List _fillSeed(int b) {
@@ -142,6 +143,23 @@ void main() {
       final adapter = RealMoneroWalletAdapter();
       expect(adapter.isAvailable, true);
       expect(adapter.unavailableReason, isEmpty);
+    });
+
+    test('private generation yields a locally verifiable V2 secret', () async {
+      final wallet = await RealMoneroWalletAdapter().generatePrivate(
+        restoreHeight: 3220000,
+        seedForTests: _fillSeed(0x47),
+      );
+      expect(wallet.restoreHeight, 3220000);
+      expect(moneroPrimaryAddressChecksumValid(wallet.publicAddress), true);
+      expect(
+        await walletV2SecretMatchesAddress(
+          'monero', wallet.secret, wallet.publicAddress,
+        ),
+        true,
+      );
+      expect(wallet.secret, contains('"restoreHeight":3220000'));
+      expect(wallet.secret, isNot(contains('mnemonic')));
     });
   });
 }

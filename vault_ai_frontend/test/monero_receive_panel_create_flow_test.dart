@@ -2,15 +2,22 @@
 
 
 import 'dart:typed_data';
+import 'dart:convert';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:vault_ai_frontend/api_client.dart';
+import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/services/crypto_wallet_features.dart';
 import 'package:vault_ai_frontend/services/monero_crypto_primitives.dart';
 import 'package:vault_ai_frontend/services/monero_wallet.dart';
+import 'package:vault_ai_frontend/services/wallet_v2_active_client.dart';
+import 'package:vault_ai_frontend/services/wallet_v2_migration.dart';
 import 'package:vault_ai_frontend/ui/crypto_wallet_engine_monero_receive_panel.dart';
+import 'package:vault_ai_frontend/ui/crypto_wallet_engine_asset_detail_page.dart';
+import 'package:vault_ai_frontend/ui/crypto_wallet_engine_page.dart';
 
 
 class _MoneroSpyClient extends VaultAIClient {
@@ -18,6 +25,25 @@ class _MoneroSpyClient extends VaultAIClient {
   final List<Map<String, dynamic>> createCalls = [];
 
   _MoneroSpyClient() : super(baseUrl: 'http://localhost:0');
+
+  @override
+  Future<Map<String, dynamic>> getCryptoWalletFeatures({
+    required String authToken,
+    bool Function()? responseIsCurrent,
+  }) async => {
+    'status': 'ok',
+    'schema': 'crypto_wallet_features_v1',
+    'walletEngineEnabled': true,
+    'sepoliaReceiveEnabled': true,
+    'sepoliaSendEnabled': false,
+    'defaultNetwork': 'ethereum_sepolia',
+    'defaultNetworkConfigValid': true,
+    'xmrEnabled': true,
+    'xmrReceiveEnabled': true,
+    'xmrSendEnabled': false,
+    'supportedNetworks': const ['ethereum_sepolia', 'monero_mainnet'],
+    'supportedAssetsByNetwork': const {'monero_mainnet': ['XMR']},
+  };
 
   @override
   Future<Map<String, dynamic>> getCryptoWalletReceiveNetwork({
@@ -104,6 +130,7 @@ Future<void> _pumpPanel(
   WidgetTester tester, {
   required _MoneroSpyClient client,
   required MoneroWalletAdapter adapter,
+  WalletV2ActiveClient? walletV2,
   Future<String> Function(String)? encryptForVault,
   bool Function()? isVaultKeyAvailable,
 }) async {
@@ -113,6 +140,7 @@ Future<void> _pumpPanel(
       client: client,
       features: _features(),
       walletAdapter: adapter,
+      walletV2: walletV2,
       encryptForVault:
           encryptForVault ?? ((p) async => 'vault-cipher:${p.length}'),
       isVaultKeyAvailable: isVaultKeyAvailable ?? () => true,
@@ -334,6 +362,293 @@ void main() {
     );
   });
 
+
+  group('MoneroReceivePanel — private V2 backup', () {
+    testWidgets('creates an MVK-encrypted wallet without legacy create',
+        (tester) async {
+      final legacy = _MoneroSpyClient();
+      final posts = <String>[];
+      Map<String, dynamic>? staged;
+      var state = '';
+      const recordId = 'synthetic-monero-v2-record';
+      final walletV2 = WalletV2ActiveClient(
+        codec: WalletV2EnvelopeCodec(SecretKey(List<int>.filled(32, 7))),
+        accessIsCurrent: () => true,
+        creationEnabled: true,
+        newRecordId: () => recordId,
+        post: (path, body) async {
+          posts.add(path);
+          expect(body.containsKey('pin'), false);
+          expect(jsonEncode(body), isNot(contains('privateSpendKeyHex')));
+          if (path == '/vault/wallet-v2') {
+            staged = Map<String, dynamic>.from(body);
+            state = 'migration_pending';
+            return {
+              'wallet_record_id': recordId,
+              'migration_state': state,
+            };
+          }
+          expect(path, '/vault/wallet-v2/$recordId/publish-new');
+          expect(body['readback_receipt'], 'synthetic-receipt');
+          state = 'v2_verified';
+          return {
+            'wallet_record_id': recordId,
+            'migration_state': state,
+          };
+        },
+        get: (path) async {
+          if (path == '/vault/wallet-v2/pending') {
+            return {'wallets': <Object>[]};
+          }
+          if (path == '/vault/wallet-v2') {
+            return {
+              'wallets': state == 'v2_verified' ? [
+                {
+                  'wallet_record_id': recordId,
+                  'chain': 'monero',
+                  'network': 'monero_mainnet',
+                  'asset': 'XMR',
+                  'public_address': staged!['public_address'],
+                  'wallet_label': 'Monero',
+                  'migration_state': state,
+                },
+              ] : <Object>[],
+            };
+          }
+          expect(path, '/vault/wallet-v2/$recordId');
+          return {
+            ...staged!,
+            'migration_state': state,
+            'legacy_item_id': null,
+            'readback_receipt': 'synthetic-receipt',
+          };
+        },
+      );
+      await _pumpPanel(
+        tester,
+        client: legacy,
+        adapter: RealMoneroWalletAdapter(),
+        walletV2: walletV2,
+        encryptForVault: (_) async =>
+            throw StateError('legacy encryption must not run'),
+        isVaultKeyAvailable: () => true,
+      );
+      expect(find.byKey(const Key(kMoneroReceivePanelGenerationPendingKey)),
+          findsOneWidget);
+      expect(find.text(kMoneroReceivePrivateAttestation), findsNothing);
+      await tester.tap(find.byKey(const Key(kMoneroReceivePanelCreateBtnKey)));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(legacy.createCalls, isEmpty);
+      expect(posts, [
+        '/vault/wallet-v2',
+        '/vault/wallet-v2/$recordId/publish-new',
+      ]);
+      expect(find.byKey(const Key(kMoneroReceivePanelQrKey)), findsOneWidget);
+      expect(find.text(kMoneroReceivePrivateAttestation), findsOneWidget);
+      expect(find.byKey(const Key(kMoneroReceivePanelRestoreHeightKey)),
+          findsOneWidget);
+      final verified = await walletV2.findVerified(
+        const WalletV2AccountSlot('monero', 'monero_mainnet', 'XMR'),
+      );
+      expect(verified, isNotNull);
+      final secret = await walletV2.readSigningSecret(verified!);
+      expect(secret, contains('"restoreHeight":3230000'));
+    });
+
+    testWidgets('existing legacy wallet is shown as needing migration',
+        (tester) async {
+      final existing = await RealMoneroWalletAdapter().generatePrivate(
+        restoreHeight: 3230000,
+        seedForTests: Uint8List.fromList(List<int>.filled(32, 17)),
+      );
+      final legacy = _MoneroSpyClient()
+        ..nextReceiveResponse = {
+          'wallet_engine': 'receive_ready',
+          'publicAddress': existing.publicAddress,
+          'walletLabel': 'Existing wallet',
+        };
+      var posts = 0;
+      final walletV2 = WalletV2ActiveClient(
+        codec: WalletV2EnvelopeCodec(SecretKey(List<int>.filled(32, 8))),
+        accessIsCurrent: () => true,
+        creationEnabled: true,
+        post: (_, __) async { posts++; return {}; },
+        get: (_) async => {'wallets': <Object>[]},
+      );
+      await _pumpPanel(
+        tester,
+        client: legacy,
+        adapter: RealMoneroWalletAdapter(),
+        walletV2: walletV2,
+      );
+      expect(find.text(kMoneroReceiveBackupMigrationMessage), findsOneWidget);
+      expect(find.byKey(const Key(kMoneroReceivePanelMigrationRequiredKey)),
+          findsOneWidget);
+      expect(find.byKey(const Key(kMoneroReceivePanelCreateBtnKey)), findsNothing);
+      expect(find.byKey(const Key(kMoneroReceivePanelQrKey)), findsNothing);
+      expect(find.byKey(const Key(kMoneroReceivePanelAddressTextKey)),
+          findsNothing);
+      expect(find.byKey(const Key(kMoneroReceivePanelCopyBtnKey)), findsNothing);
+      expect(find.byKey(const Key(kMoneroReceivePanelRestoreHeightKey)),
+          findsNothing);
+      expect(find.text(existing.publicAddress), findsNothing);
+      expect(find.text(kMoneroReceivePrivateAttestation), findsNothing);
+      expect(find.text(kMoneroReceiveNonCustodialAttestation), findsNothing);
+      expect(posts, 0);
+      expect(legacy.createCalls, isEmpty);
+    });
+
+    testWidgets('unreadable V2 backup never renders a receive QR',
+        (tester) async {
+      final generated = await RealMoneroWalletAdapter().generatePrivate(
+        restoreHeight: 3230000,
+        seedForTests: Uint8List.fromList(List<int>.filled(32, 11)),
+      );
+      const recordId = 'synthetic-unreadable-xmr-record';
+      final walletV2 = WalletV2ActiveClient(
+        codec: WalletV2EnvelopeCodec(SecretKey(List<int>.filled(32, 9))),
+        accessIsCurrent: () => true,
+        get: (path) async => path == '/vault/wallet-v2'
+            ? {'wallets': [
+                {
+                  'wallet_record_id': recordId,
+                  'chain': 'monero',
+                  'network': 'monero_mainnet',
+                  'asset': 'XMR',
+                  'public_address': generated.publicAddress,
+                  'wallet_label': 'Synthetic',
+                  'migration_state': 'v2_verified',
+                },
+              ]}
+            : {
+                'wallet_record_id': recordId,
+                'chain': 'monero',
+                'network': 'monero_mainnet',
+                'asset': 'XMR',
+                'public_address': generated.publicAddress,
+                'wallet_label': 'Synthetic',
+                'migration_state': 'v2_verified',
+                'envelope_version': 'v2',
+                'payload_ciphertext': 'unreadable',
+              },
+        post: (_, __) async => throw StateError('no writes expected'),
+      );
+      await _pumpPanel(
+        tester,
+        client: _MoneroSpyClient(),
+        adapter: RealMoneroWalletAdapter(),
+        walletV2: walletV2,
+      );
+      expect(find.byKey(const Key(kMoneroReceivePanelQrKey)), findsNothing);
+      expect(find.byKey(const Key(kMoneroReceivePanelCreateBtnKey)), findsNothing);
+    });
+
+    testWidgets('session loss during generation causes no V2 write',
+        (tester) async {
+      final generated = await RealMoneroWalletAdapter().generatePrivate(
+        restoreHeight: 3230000,
+        seedForTests: Uint8List.fromList(List<int>.filled(32, 13)),
+      );
+      var current = true;
+      var posts = 0;
+      final walletV2 = WalletV2ActiveClient(
+        codec: WalletV2EnvelopeCodec(SecretKey(List<int>.filled(32, 9))),
+        accessIsCurrent: () => current,
+        creationEnabled: true,
+        get: (_) async => {'wallets': <Object>[]},
+        post: (_, __) async { posts++; return {}; },
+      );
+      final adapter = InjectedMoneroWalletAdapter(
+        generator: ({required restoreHeight, required encryptForVault,
+            seedForTests}) async =>
+            throw StateError('legacy generator must not run'),
+        privateGenerator: ({required restoreHeight, seedForTests}) async {
+          current = false;
+          return generated;
+        },
+      );
+      await _pumpPanel(
+        tester,
+        client: _MoneroSpyClient(),
+        adapter: adapter,
+        walletV2: walletV2,
+      );
+      await tester.tap(find.byKey(const Key(kMoneroReceivePanelCreateBtnKey)));
+      await tester.pumpAndSettle();
+      expect(posts, 0);
+      expect(find.byKey(const Key(kMoneroReceivePanelQrKey)), findsNothing);
+    });
+
+    testWidgets('asset detail opens private XMR receive without legacy key',
+        (tester) async {
+      final walletV2 = WalletV2ActiveClient(
+        codec: WalletV2EnvelopeCodec(SecretKey(List<int>.filled(32, 9))),
+        accessIsCurrent: () => true,
+        get: (_) async => {'wallets': <Object>[]},
+        post: (_, __) async => throw StateError('no writes expected'),
+      );
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: CryptoWalletEngineAssetDetailPage(
+            asset: 'XMR',
+            network: 'monero_mainnet',
+            authToken: 'synthetic-token',
+            apiClient: _MoneroSpyClient(),
+            walletV2: walletV2,
+            features: _features(),
+            moneroWalletAdapter: RealMoneroWalletAdapter(),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final receive = find.byKey(const Key(
+        'crypto_wallet_engine_asset_detail_receive_btn',
+      ));
+      await tester.ensureVisible(receive);
+      await tester.tap(receive);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key(kMoneroReceivePanelKey)), findsOneWidget);
+      expect(find.byKey(const Key(kMoneroReceivePanelCreateBtnKey)), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('wallet dashboard opens private XMR receive without legacy key',
+        (tester) async {
+      tester.view.physicalSize = const Size(1200, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final walletV2 = WalletV2ActiveClient(
+        codec: WalletV2EnvelopeCodec(SecretKey(List<int>.filled(32, 9))),
+        accessIsCurrent: () => true,
+        get: (_) async => {'wallets': <Object>[]},
+        post: (_, __) async => throw StateError('no writes expected'),
+      );
+      await tester.pumpWidget(MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: CryptoWalletEnginePage(
+            authToken: 'synthetic-token',
+            apiClient: _MoneroSpyClient(),
+            walletV2: walletV2,
+            moneroWalletAdapter: RealMoneroWalletAdapter(),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final receive = find.byKey(const Key(
+        'crypto_wallet_engine_card_receive_btn_XMR',
+      ));
+      await tester.ensureVisible(receive);
+      await tester.tap(receive);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key(kMoneroReceivePanelKey)), findsOneWidget);
+      expect(find.byKey(const Key(kMoneroReceivePanelCreateBtnKey)), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
 
   group('MoneroReceivePanel — copy hygiene', () {
     test('no marketing exchange verbs in Monero copy constants', () {

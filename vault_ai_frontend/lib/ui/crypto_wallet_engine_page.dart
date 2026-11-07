@@ -11,6 +11,7 @@ import '../services/crypto_wallet_balance_reason.dart';
 import '../services/crypto_wallet_dashboard_reason.dart';
 import '../services/crypto_wallet_features.dart';
 import '../services/evm_networks.dart';
+import '../services/wallet_v2_active_client.dart';
 import '../services/monero_scanner.dart';
 import '../services/monero_wallet.dart';
 import 'crypto_wallet_engine_asset_detail_page.dart';
@@ -283,6 +284,8 @@ class CryptoWalletEnginePage extends StatefulWidget {
 
   final Future<String> Function(String ciphertext)? decryptForVault;
   final Future<bool> Function(String pin)? verifyPin;
+  /// Optional, default-off private wallet receive client.
+  final WalletV2ActiveClient? walletV2;
 
   // 2026-07-13 network-scoped: production bug was that the ETH Send
   // path called a legacy /crypto/wallet/{asset}/receive endpoint which
@@ -307,6 +310,7 @@ class CryptoWalletEnginePage extends StatefulWidget {
     this.isVaultKeyAvailable,
     this.decryptForVault,
     this.verifyPin,
+    this.walletV2,
     this.loadFromAddress,
     this.moneroWalletAdapter = const NullMoneroWalletAdapter(),
     this.moneroScannerAdapter = const NullMoneroScannerAdapter(),
@@ -512,6 +516,7 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
       isVaultKeyAvailable: widget.isVaultKeyAvailable,
       decryptForVault: widget.decryptForVault,
       verifyPin: widget.verifyPin,
+      walletV2: widget.walletV2,
       loadFromAddress: widget.loadFromAddress,
       effectiveNetwork: _effectiveNetwork,
       isMainnetActive: _isMainnetActive,
@@ -542,6 +547,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
 
   final Future<String> Function(String ciphertext)? decryptForVault;
   final Future<bool> Function(String pin)? verifyPin;
+  final WalletV2ActiveClient? walletV2;
   // 2026-07-13: network-scoped signature — see notes on the public
   // widget's field of the same name.
   final Future<String?> Function(String network)? loadFromAddress;
@@ -569,6 +575,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     this.isVaultKeyAvailable,
     this.decryptForVault,
     this.verifyPin,
+    this.walletV2,
     this.loadFromAddress,
     required this.effectiveNetwork,
     required this.isMainnetActive,
@@ -589,8 +596,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   bool get _hasReceiveWiring =>
       authToken != null &&
       apiClient != null &&
-      encryptForVault != null &&
-      isVaultKeyAvailable != null;
+      ((encryptForVault != null && isVaultKeyAvailable != null) ||
+          walletV2 != null);
 
   bool asset_solanaLive() => features?.solanaEnabled ?? false;
 
@@ -599,7 +606,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   bool asset_moneroLive() => features?.xmrEnabled ?? false;
 
   bool get _hasSendWiring =>
-      _hasReceiveWiring && decryptForVault != null && loadFromAddress != null;
+      walletV2 == null && _hasReceiveWiring &&
+      decryptForVault != null && loadFromAddress != null;
 
   void _openReceivePanel(BuildContext ctx, String assetForPanel) {
     if (!_hasReceiveWiring) {
@@ -635,8 +643,11 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
               key: const Key('solana_receive_panel_SOL'),
               authToken: authToken!,
               client: apiClient!,
-              encryptForVault: encryptForVault!,
-              isVaultKeyAvailable: isVaultKeyAvailable!,
+              encryptForVault: encryptForVault ??
+                  (_) async => throw StateError('Legacy wallet unavailable'),
+              isVaultKeyAvailable: walletV2?.accessIsCurrent ??
+                  isVaultKeyAvailable!,
+              walletV2: walletV2,
               features: features,
             )
           : isTronAsset
@@ -644,8 +655,11 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
                   key: const Key('tron_receive_panel_USDT_TRC20'),
                   authToken: authToken!,
                   client: apiClient!,
-                  encryptForVault: encryptForVault!,
-                  isVaultKeyAvailable: isVaultKeyAvailable!,
+                  encryptForVault: encryptForVault ??
+                      (_) async => throw StateError('Legacy wallet unavailable'),
+                  isVaultKeyAvailable: walletV2?.accessIsCurrent ??
+                      isVaultKeyAvailable!,
+                  walletV2: walletV2,
                   features: features,
                 )
               : isMoneroAsset
@@ -655,15 +669,20 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
                       client: apiClient!,
                       features: features,
                       walletAdapter: moneroWalletAdapter,
+                      walletV2: walletV2,
                       encryptForVault: encryptForVault,
-                      isVaultKeyAvailable: isVaultKeyAvailable,
+                      isVaultKeyAvailable: walletV2?.accessIsCurrent ??
+                          isVaultKeyAvailable,
                     )
                   : CryptoWalletEngineReceivePanel(
                       key: Key('eth_receive_panel_$assetForPanel'),
                       authToken: authToken!,
                       client: apiClient!,
-                      encryptForVault: encryptForVault!,
-                      isVaultKeyAvailable: isVaultKeyAvailable!,
+                      encryptForVault: encryptForVault ??
+                          (_) async => throw StateError('Legacy wallet unavailable'),
+                      isVaultKeyAvailable: walletV2?.accessIsCurrent ??
+                          isVaultKeyAvailable!,
+                      walletV2: walletV2,
                       asset: assetForPanel,
                       network: effectiveNetwork,
                     ),
@@ -692,6 +711,10 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     BuildContext ctx,
     String assetForPanel,
   ) async {
+    if (walletV2 != null) {
+      _showNotReadyBanner(ctx, kCryptoWalletEngineSendNotReadyBanner);
+      return;
+    }
     if (!_hasSendWiring) {
       _showNotReadyBanner(ctx, kCryptoWalletEngineSendNotReadyBanner);
       return;
@@ -812,6 +835,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
           isVaultKeyAvailable: isVaultKeyAvailable,
           decryptForVault: decryptForVault,
           verifyPin: verifyPin,
+          walletV2: walletV2,
           loadFromAddress: loadFromAddress,
           network: networkForDetail,
           features: features,

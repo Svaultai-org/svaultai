@@ -1,4 +1,4 @@
-
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,8 +7,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../api_client.dart';
 import '../services/crypto_wallet_features.dart';
 import '../services/monero_wallet.dart';
+import '../services/wallet_v2_active_client.dart';
 import 'crypto_wallet_engine_design.dart';
-
 
 const String kMoneroReceivePanelTitle = 'Receive Monero';
 const String kMoneroReceiveNetworkBadge = 'Monero';
@@ -18,6 +18,12 @@ const String kMoneroReceiveNonCustodialAttestation =
     'Non-custodial: Svaultai never sees your Monero spend or view key. '
     'Your wallet is encrypted with your PIN and stored as ciphertext '
     'only.';
+const String kMoneroReceivePrivateAttestation =
+    'Non-custodial: Svaultai never sees your Monero spend or view key. '
+    'Your wallet backup is encrypted with your private vault key.';
+const String kMoneroReceiveBackupMigrationMessage =
+    'This existing Monero wallet needs private backup migration before '
+    'the new private vault can use it.';
 const String kMoneroReceiveAssetWarning =
     'Only send XMR on Monero to this address.';
 const String kMoneroReceivePrivacyNote =
@@ -32,19 +38,17 @@ const String kMoneroReceiveGenerationPendingMessage =
     'created from this device.';
 const String kMoneroReceiveLoadingLabel = 'Loading Monero wallet…';
 
-
 const String kMoneroReceivePanelKey = 'monero_receive_panel';
 const String kMoneroReceivePanelQrKey = 'monero_receive_panel_qr';
 const String kMoneroReceivePanelAddressTextKey =
     'monero_receive_panel_address_text';
-const String kMoneroReceivePanelCopyBtnKey =
-    'monero_receive_panel_copy_btn';
-const String kMoneroReceivePanelWarningKey =
-    'monero_receive_panel_warning';
+const String kMoneroReceivePanelCopyBtnKey = 'monero_receive_panel_copy_btn';
+const String kMoneroReceivePanelWarningKey = 'monero_receive_panel_warning';
 const String kMoneroReceivePanelPrivacyNoteKey =
     'monero_receive_panel_privacy_note';
-const String kMoneroReceivePanelDisabledKey =
-    'monero_receive_panel_disabled';
+const String kMoneroReceivePanelDisabledKey = 'monero_receive_panel_disabled';
+const String kMoneroReceivePanelMigrationRequiredKey =
+    'monero_receive_panel_migration_required';
 const String kMoneroReceivePanelGenerationPendingKey =
     'monero_receive_panel_generation_pending';
 const String kMoneroReceivePanelRestoreHeightKey =
@@ -65,12 +69,12 @@ const String kMoneroReceiveCreateFallbackErrorMessage =
     'Monero wallet creation failed. No wallet was saved.';
 const int kMoneroReceiveDefaultRestoreHeight = 3230000;
 
-
 class CryptoWalletEngineMoneroReceivePanel extends StatefulWidget {
   final String authToken;
   final VaultAIClient client;
   final CryptoWalletFeatures? features;
   final MoneroWalletAdapter walletAdapter;
+  final WalletV2ActiveClient? walletV2;
   final Future<String> Function(String plaintext)? encryptForVault;
   final bool Function()? isVaultKeyAvailable;
   final int restoreHeight;
@@ -81,6 +85,7 @@ class CryptoWalletEngineMoneroReceivePanel extends StatefulWidget {
     required this.client,
     this.features,
     this.walletAdapter = const NullMoneroWalletAdapter(),
+    this.walletV2,
     this.encryptForVault,
     this.isVaultKeyAvailable,
     this.restoreHeight = kMoneroReceiveDefaultRestoreHeight,
@@ -91,9 +96,9 @@ class CryptoWalletEngineMoneroReceivePanel extends StatefulWidget {
       _CryptoWalletEngineMoneroReceivePanelState();
 }
 
-
 class _CryptoWalletEngineMoneroReceivePanelState
     extends State<CryptoWalletEngineMoneroReceivePanel> {
+  static const _slot = WalletV2AccountSlot('monero', 'monero_mainnet', 'XMR');
   Map<String, dynamic>? _state;
   bool _loading = true;
   bool _creating = false;
@@ -106,8 +111,7 @@ class _CryptoWalletEngineMoneroReceivePanelState
     _load();
   }
 
-  bool get _xmrEnabled =>
-      widget.features?.xmrEnabled ?? true;
+  bool get _xmrEnabled => widget.features?.xmrEnabled ?? true;
 
   Future<void> _load() async {
     if (!_xmrEnabled) {
@@ -127,9 +131,59 @@ class _CryptoWalletEngineMoneroReceivePanelState
         asset: kMoneroAssetTicker,
         authToken: widget.authToken,
       );
+      var resolved = body;
+      final walletV2 = widget.walletV2;
+      final status = body['wallet_engine'];
+      if (walletV2 != null &&
+          const {
+            'no_account',
+            'create_xmr_wallet_first',
+            'receive_ready',
+          }.contains(status)) {
+        final identity = await walletV2.findVerified(_slot);
+        int? verifiedRestoreHeight;
+        if (identity != null) {
+          // A verified list row alone cannot prove the encrypted backup can
+          // still be opened or belongs to the displayed receive address.
+          final secret = await walletV2.readSigningSecret(identity);
+          final parsed = jsonDecode(secret);
+          final height =
+              parsed is Map<String, dynamic> ? parsed['restoreHeight'] : null;
+          if (height is! int || height < 0) {
+            throw const FormatException('Invalid Monero restore height');
+          }
+          verifiedRestoreHeight = height;
+        }
+        if (status == 'receive_ready') {
+          final shownAddress = body['publicAddress']?.toString();
+          if (identity == null) {
+            resolved = {...body, 'requiresWalletMigration': true};
+          } else if (shownAddress != identity.publicAddress) {
+            throw const FormatException('Conflicting Monero wallet sources');
+          } else {
+            resolved = {
+              ...body,
+              'walletRecordId': identity.recordId,
+              'backupStatus': 'wallet_v2_encrypted',
+              'restoreHeight': verifiedRestoreHeight,
+            };
+          }
+        } else if (identity != null) {
+          resolved = {
+            'wallet_engine': 'receive_ready',
+            'publicAddress': identity.publicAddress,
+            'walletLabel': identity.label,
+            'walletRecordId': identity.recordId,
+            'backupStatus': 'wallet_v2_encrypted',
+            'restoreHeight': verifiedRestoreHeight,
+            'warning': kMoneroReceiveAssetWarning,
+            'privacyNote': kMoneroReceivePrivacyNote,
+          };
+        }
+      }
       if (!mounted) return;
       setState(() {
-        _state = body;
+        _state = resolved;
         _loading = false;
       });
     } catch (e) {
@@ -145,27 +199,29 @@ class _CryptoWalletEngineMoneroReceivePanelState
     await Clipboard.setData(ClipboardData(text: address));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(kMoneroReceiveCopyDoneSnackbar),
-      ),
+      const SnackBar(content: Text(kMoneroReceiveCopyDoneSnackbar)),
     );
   }
 
   Future<void> _createWallet() async {
-    if (!widget.walletAdapter.isAvailable) return;
-    final encryptForVault = widget.encryptForVault;
-    if (encryptForVault == null) {
+    if (_creating || !widget.walletAdapter.isAvailable) return;
+    final walletV2 = widget.walletV2;
+    if (walletV2 != null && !walletV2.creationEnabled) {
       setState(() {
-        _createFailureMessage =
-            kMoneroReceiveCreateVaultKeyMissingMessage;
+        _createFailureMessage = 'Private wallet creation is unavailable.';
       });
       return;
     }
-    if (widget.isVaultKeyAvailable != null
-        && !widget.isVaultKeyAvailable!()) {
+    final encryptForVault = widget.encryptForVault;
+    if (walletV2 == null && encryptForVault == null) {
       setState(() {
-        _createFailureMessage =
-            kMoneroReceiveCreateVaultKeyMissingMessage;
+        _createFailureMessage = kMoneroReceiveCreateVaultKeyMissingMessage;
+      });
+      return;
+    }
+    if (widget.isVaultKeyAvailable != null && !widget.isVaultKeyAvailable!()) {
+      setState(() {
+        _createFailureMessage = kMoneroReceiveCreateVaultKeyMissingMessage;
       });
       return;
     }
@@ -174,9 +230,53 @@ class _CryptoWalletEngineMoneroReceivePanelState
       _createFailureMessage = null;
     });
     try {
+      if (walletV2 != null) {
+        final recovered = await walletV2.recoverPendingNew(_slot);
+        if (recovered != null) {
+          if (!mounted) return;
+          setState(() => _creating = false);
+          await _load();
+          return;
+        }
+        // The V2 list cannot prove that an older wallet does not exist.
+        // Recheck the legacy receive view before generating a new key.
+        final latest = await widget.client.getCryptoWalletReceiveNetwork(
+          network: kMoneroNetworkId,
+          asset: kMoneroAssetTicker,
+          authToken: widget.authToken,
+        );
+        if (latest['wallet_engine'] == 'receive_ready') {
+          throw StateError('An existing Monero wallet needs migration.');
+        }
+        if (!const {
+          'no_account',
+          'create_xmr_wallet_first',
+        }.contains(latest['wallet_engine'])) {
+          throw StateError('Monero wallet status changed.');
+        }
+        if (!mounted || !walletV2.accessIsCurrent()) {
+          throw StateError('Wallet access changed.');
+        }
+        final generated = await widget.walletAdapter.generatePrivate(
+          restoreHeight: widget.restoreHeight,
+        );
+        if (!mounted || !walletV2.accessIsCurrent()) {
+          throw StateError('Wallet access changed.');
+        }
+        await walletV2.createNew(
+          slot: _slot,
+          publicAddress: generated.publicAddress,
+          label: 'Monero',
+          secret: generated.secret,
+        );
+        if (!mounted) return;
+        setState(() => _creating = false);
+        await _load();
+        return;
+      }
       final generated = await widget.walletAdapter.generate(
         restoreHeight: widget.restoreHeight,
-        encryptForVault: encryptForVault,
+        encryptForVault: encryptForVault!,
       );
       await widget.client.createCryptoWalletAccountNetwork(
         network: kMoneroNetworkId,
@@ -197,8 +297,7 @@ class _CryptoWalletEngineMoneroReceivePanelState
       if (!mounted) return;
       setState(() {
         _creating = false;
-        _createFailureMessage =
-            kMoneroReceiveCreateFallbackErrorMessage;
+        _createFailureMessage = kMoneroReceiveCreateFallbackErrorMessage;
       });
     }
   }
@@ -217,17 +316,17 @@ class _CryptoWalletEngineMoneroReceivePanelState
     if (_loading) {
       return Padding(
         padding: EdgeInsets.all(
-            MediaQuery.of(context).size.width < 600 ? 16 : 24),
+          MediaQuery.of(context).size.width < 600 ? 16 : 24,
+        ),
         child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(
-              width: 18, height: 18,
+              width: 18,
+              height: 18,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  kWalletAccentPrimary,
-                ),
+                valueColor: AlwaysStoppedAnimation<Color>(kWalletAccentPrimary),
               ),
             ),
             SizedBox(width: 12),
@@ -257,6 +356,9 @@ class _CryptoWalletEngineMoneroReceivePanelState
     if (status == 'create_xmr_wallet_first' || status == 'no_account') {
       return _buildGenerationPending();
     }
+    if (status == 'receive_ready' && body['requiresWalletMigration'] == true) {
+      return _buildMigrationRequired();
+    }
     if (status == 'receive_ready') {
       return _buildReadyState(context, body);
     }
@@ -275,8 +377,11 @@ class _CryptoWalletEngineMoneroReceivePanelState
         decoration: walletWarningPanel(),
         child: const Row(
           children: [
-            Icon(Icons.hourglass_bottom_rounded,
-                size: 18, color: kWalletAccentWarning),
+            Icon(
+              Icons.hourglass_bottom_rounded,
+              size: 18,
+              color: kWalletAccentWarning,
+            ),
             SizedBox(width: 10),
             Expanded(
               child: Text(
@@ -290,6 +395,21 @@ class _CryptoWalletEngineMoneroReceivePanelState
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMigrationRequired() {
+    return Padding(
+      key: const Key(kMoneroReceivePanelMigrationRequiredKey),
+      padding: const EdgeInsets.all(18),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: walletWarningPanel(),
+        child: const Text(
+          kMoneroReceiveBackupMigrationMessage,
+          style: TextStyle(color: kWalletAccentWarning),
         ),
       ),
     );
@@ -314,10 +434,7 @@ class _CryptoWalletEngineMoneroReceivePanelState
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
-            kMoneroReceiveNetworkBadge,
-            style: kWalletBodyStyle,
-          ),
+          const Text(kMoneroReceiveNetworkBadge, style: kWalletBodyStyle),
           const SizedBox(height: 14),
           if (!adapterAvailable)
             Container(
@@ -325,8 +442,11 @@ class _CryptoWalletEngineMoneroReceivePanelState
               decoration: walletWarningPanel(),
               child: const Row(
                 children: [
-                  Icon(Icons.hourglass_bottom_rounded, size: 16,
-                      color: kWalletAccentWarning),
+                  Icon(
+                    Icons.hourglass_bottom_rounded,
+                    size: 16,
+                    color: kWalletAccentWarning,
+                  ),
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -346,7 +466,8 @@ class _CryptoWalletEngineMoneroReceivePanelState
               key: const Key(kMoneroReceivePanelCreateProgressKey),
               children: const [
                 SizedBox(
-                  width: 18, height: 18,
+                  width: 18,
+                  height: 18,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
                     valueColor: AlwaysStoppedAnimation<Color>(
@@ -355,10 +476,7 @@ class _CryptoWalletEngineMoneroReceivePanelState
                   ),
                 ),
                 SizedBox(width: 12),
-                Text(
-                  kMoneroReceiveCreateBusyLabel,
-                  style: kWalletBodyStyle,
-                ),
+                Text(kMoneroReceiveCreateBusyLabel, style: kWalletBodyStyle),
               ],
             )
           else
@@ -377,8 +495,11 @@ class _CryptoWalletEngineMoneroReceivePanelState
               decoration: walletWarningPanel(),
               child: Row(
                 children: [
-                  const Icon(Icons.error_outline_rounded, size: 16,
-                      color: kWalletAccentDanger),
+                  const Icon(
+                    Icons.error_outline_rounded,
+                    size: 16,
+                    color: kWalletAccentDanger,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -393,27 +514,32 @@ class _CryptoWalletEngineMoneroReceivePanelState
               ),
             ),
           ],
-          const SizedBox(height: 14),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: walletSuccessPanel(),
-            child: const Row(
-              children: [
-                Icon(Icons.shield_outlined, size: 16,
-                    color: kWalletAccentSuccess),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    kMoneroReceiveNonCustodialAttestation,
-                    style: TextStyle(
-                      color: kWalletAccentSuccess,
-                      fontSize: 13,
+          if (widget.walletV2 == null) ...[
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: walletSuccessPanel(),
+              child: const Row(
+                children: [
+                  Icon(
+                    Icons.shield_outlined,
+                    size: 16,
+                    color: kWalletAccentSuccess,
+                  ),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      kMoneroReceiveNonCustodialAttestation,
+                      style: TextStyle(
+                        color: kWalletAccentSuccess,
+                        fontSize: 13,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -496,8 +622,11 @@ class _CryptoWalletEngineMoneroReceivePanelState
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.history_toggle_off, size: 16,
-                      color: kWalletTextSecondary),
+                  const Icon(
+                    Icons.history_toggle_off,
+                    size: 16,
+                    color: kWalletTextSecondary,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -515,13 +644,15 @@ class _CryptoWalletEngineMoneroReceivePanelState
             decoration: walletWarningPanel(),
             child: Row(
               children: [
-                const Icon(Icons.warning_amber_rounded, size: 16,
-                    color: kWalletAccentWarning),
+                const Icon(
+                  Icons.warning_amber_rounded,
+                  size: 16,
+                  color: kWalletAccentWarning,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    (body['warning']
-                        ?? kMoneroReceiveAssetWarning).toString(),
+                    (body['warning'] ?? kMoneroReceiveAssetWarning).toString(),
                     key: const Key(kMoneroReceivePanelWarningKey),
                     style: const TextStyle(
                       color: kWalletAccentWarning,
@@ -542,13 +673,16 @@ class _CryptoWalletEngineMoneroReceivePanelState
             ),
             child: Row(
               children: [
-                const Icon(Icons.privacy_tip_outlined, size: 16,
-                    color: kWalletTextSecondary),
+                const Icon(
+                  Icons.privacy_tip_outlined,
+                  size: 16,
+                  color: kWalletTextSecondary,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    (body['privacyNote']
-                        ?? kMoneroReceivePrivacyNote).toString(),
+                    (body['privacyNote'] ?? kMoneroReceivePrivacyNote)
+                        .toString(),
                     key: const Key(kMoneroReceivePanelPrivacyNoteKey),
                     style: kWalletMutedStyle,
                   ),
@@ -556,6 +690,33 @@ class _CryptoWalletEngineMoneroReceivePanelState
               ],
             ),
           ),
+          if (widget.walletV2 != null &&
+              body['backupStatus'] == 'wallet_v2_encrypted') ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: walletSuccessPanel(),
+              child: const Row(
+                children: [
+                  Icon(
+                    Icons.shield_outlined,
+                    size: 16,
+                    color: kWalletAccentSuccess,
+                  ),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      kMoneroReceivePrivateAttestation,
+                      style: TextStyle(
+                        color: kWalletAccentSuccess,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
