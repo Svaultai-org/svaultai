@@ -325,6 +325,7 @@ class IssuedSession(TypedDict):
     client_label: str
     device_id: Optional[str]
     new_device_trusted: bool
+    auth_method: str
     vault_meta: NotRequired[Optional[dict[str, object]]]
 
 
@@ -357,6 +358,7 @@ def issue_session_token(
     device_id: Optional[str] = None,
     client_label: str,
     file_v2_reader_capable: bool = False,
+    auth_method: str = "legacy_pin",
     vault_name: str = "",
     ttl_hours: Optional[int] = None,
     include_vault_meta: bool = False,
@@ -410,6 +412,8 @@ def issue_session_token(
         raise ValueError("issue_session_token requires vault_id")
     if not isinstance(client_label, str) or not client_label:
         raise ValueError("issue_session_token requires client_label")
+    if auth_method not in ("legacy_pin", "opaque"):
+        raise ValueError("unsupported session auth method")
 
     token_id_bytes = secrets.token_bytes(_TOKEN_ID_BYTES)
     token_id = str(uuid.UUID(bytes=token_id_bytes))
@@ -484,12 +488,12 @@ def issue_session_token(
             INSERT INTO auth_sessions (
                 token_id, token_id_hash, vault_id, device_id,
                 client_label, client_label_source, file_v2_reader_capable,
-                expires_at
-            ) VALUES (%s, %s, %s, %s, %s, 1, %s, %s)
+                auth_method, expires_at
+            ) VALUES (%s, %s, %s, %s, %s, 1, %s, %s, %s)
             """,
             (
                 token_id, token_id_hash, vault_id, device_id,
-                client_label, file_v2_reader_capable, expires_at,
+                client_label, file_v2_reader_capable, auth_method, expires_at,
             ),
         )
 
@@ -555,6 +559,7 @@ def issue_session_token(
         "client_label": client_label,
         "device_id":    device_id,
         "new_device_trusted": new_device_trusted,
+        "auth_method": auth_method,
     }
     if include_vault_meta:
         result["vault_meta"] = metadata

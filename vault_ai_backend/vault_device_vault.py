@@ -294,6 +294,11 @@ def _default_upsert(payload: dict) -> None:
                 """
                 UPDATE vault_items
                 SET encrypted_data = %s,
+                    service_ciphertext = NULL,
+                    payload_ciphertext = NULL,
+                    title_lookup_hash = NULL,
+                    legacy_item_rename_active = FALSE,
+                    title_revision = title_revision + 1,
                     created_at     = CURRENT_TIMESTAMP
                 WHERE id = %s
                 """,

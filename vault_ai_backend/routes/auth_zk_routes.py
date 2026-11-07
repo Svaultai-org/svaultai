@@ -656,6 +656,7 @@ def _zk_register_finalize_sync(
         device_id=payload.device_id,
         client_label=normalize_client_label(request.headers.get("user-agent")),
         file_v2_reader_capable=request_has_file_v2_reader(request),
+        auth_method="opaque",
     )
 
     # Session issuance and device takeover have already committed together.
@@ -1262,6 +1263,7 @@ def _zk_login_finalize_sync(
                 device_id=payload.device_id,
                 client_label=normalize_client_label(request.headers.get("user-agent")),
                 file_v2_reader_capable=request_has_file_v2_reader(request),
+                auth_method="opaque",
                 include_vault_meta=True,
                 connection=conn,
             )

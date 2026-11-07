@@ -43,6 +43,7 @@ import 'services/legacy_ciphertext_export_client.dart' as legacy_export;
 import 'services/legacy_saved_item_read_session.dart' as legacy_item_read;
 import 'services/legacy_ciphertext_migration_codec.dart' as legacy_codec;
 import 'services/legacy_saved_item_replacement.dart' as legacy_item_replace;
+import 'services/legacy_saved_item_deletion.dart' as legacy_item_delete;
 import 'services/legacy_content_migration_stager.dart' as legacy_stage;
 import 'services/legacy_stage_pin_lease.dart';
 import 'services/zk_pin_gate_migration_handoff.dart';
@@ -6130,6 +6131,7 @@ Future<Map<String, dynamic>> _replaceLegacyZkSavedItem(
     return await legacy_item_replace.LegacySavedItemReplacement(
       legacyKey: legacyKey,
       mvk: mvk,
+      allowEncryptedRename: kEnableKeylessLegacySavedItemRename,
       requireCurrentSession: checkSession,
       proofProvider: proof,
       sourceReader: (id) async {
@@ -6189,6 +6191,177 @@ Future<Map<String, dynamic>> _replaceLegacyZkSavedItem(
     export.clearGrant();
     action?.close();
     cachedPin = null;
+  }
+}
+
+Future<void> _deleteLegacyZkSavedItem(
+  AppState app, {
+  required int itemId,
+  required String itemType,
+  required String service,
+}) async {
+  final token = app.sessionToken;
+  final vaultId = app.vaultId;
+  final handle = app.vaultHandle;
+  final mvk = zk_mvk_store.ZkActiveMvk.current();
+  if (token == null || vaultId == null || handle?.isNotEmpty != true ||
+      mvk == null || itemId <= 0) {
+    throw StateError('Private saved-item deletion is unavailable');
+  }
+  final sessionEpoch = app._sessionEpoch;
+  final foregroundEpoch = app._sessionProbeEpoch;
+  final generation = st.SessionTermination.instance.generation;
+  void checkSession() {
+    if (!app.authed || !app.unlocked || !app._sessionForeground ||
+        app.sessionVerificationBlocked || app.sessionToken != token ||
+        app.vaultId != vaultId || app.vaultHandle != handle ||
+        app._sessionEpoch != sessionEpoch ||
+        app._sessionProbeEpoch != foregroundEpoch ||
+        !identical(zk_mvk_store.ZkActiveMvk.current(), mvk) ||
+        st.SessionTermination.instance.generation != generation ||
+        st.SessionTermination.instance.isTerminated) {
+      throw StateError('Vault session changed during saved-item deletion');
+    }
+  }
+  Future<String> proof() async {
+    checkSession();
+    final entered = await _promptLegacyItemActionPin(
+      'Verify saved-item deletion',
+    );
+    if (entered == null) throw const ephemeral_file.LegacyFileActionCancelled();
+    checkSession();
+    final result = await _zkActionProof(app, token, entered);
+    checkSession();
+    return result;
+  }
+  final export = legacy_export.LegacyCiphertextExportClient(
+    proofProvider: proof,
+    post: (path, body) async {
+      checkSession();
+      assertPrivateOnlyPinFreeBody(body);
+      final result = await _zkHttpPost(path, body, bearerToken: token);
+      checkSession();
+      return result;
+    },
+  );
+  try {
+    await legacy_item_delete.LegacySavedItemDeletion(
+      requireCurrentSession: checkSession,
+      proofProvider: proof,
+      sourceReader: (id) async {
+        checkSession();
+        final records = await export.listItems();
+        checkSession();
+        final matches = records.where((row) => row['item_id'] == id).toList();
+        if (matches.length != 1) throw StateError('Saved item is unavailable');
+        final row = matches.single;
+        final chars = row['ciphertext_chars'];
+        if (chars is! int || chars <= 0 ||
+            chars > legacy_export.LegacyCiphertextExportClient.maxTotalChars) {
+          throw const FormatException('Saved item is too large');
+        }
+        final source = await export.readItemSource(
+          itemId: id, ciphertextChars: chars,
+        );
+        checkSession();
+        final metadataKey = await vk_hier.VaultKeyHierarchy(mvk).metadataKey();
+        Future<String> label(Map<String, dynamic> data,
+            String plainField, String cipherField) async {
+          final encrypted = data[cipherField];
+          if (encrypted is String && encrypted.isNotEmpty) {
+            return utf8.decode(await vk_hier.aesGcmUnwrap(
+              metadataKey, vk_hier.b64urlDecode(encrypted),
+            ));
+          }
+          final plain = data[plainField];
+          if (plain is String && plain.isNotEmpty) return plain;
+          throw const FormatException('Saved-item label is unavailable');
+        }
+        final actualType = await label(source.sourceMetadata,
+            'item_type', 'item_type_ciphertext');
+        final actualService = await label(source.sourceMetadata,
+            'service', 'service_ciphertext');
+        if (actualType != itemType || actualService != service ||
+            await label(row, 'item_type', 'item_type_ciphertext') != actualType ||
+            await label(row, 'service', 'service_ciphertext') != actualService) {
+          throw const FormatException('Saved-item identity changed');
+        }
+        checkSession();
+        return legacy_item_delete.LegacySavedItemDeleteSource(
+          itemId: id, itemType: actualType, service: actualService,
+          sourceSnapshot: source.sourceSnapshot,
+        );
+      },
+      post: (path, body) async {
+        checkSession();
+        assertPrivateOnlyPinFreeBody(body);
+        final result = await _zkHttpPost(path, body, bearerToken: token);
+        checkSession();
+        return result;
+      },
+    ).delete(
+      itemId: itemId, itemType: itemType, service: service,
+      userConfirmed: true,
+    );
+  } finally {
+    export.clearGrant();
+  }
+}
+
+Future<void> _deleteSelectedZkSavedItem(
+  AppState app, {
+  required String itemId,
+  required String itemType,
+  required String service,
+}) async {
+  final token = app.sessionToken;
+  final mvk = zk_mvk_store.ZkActiveMvk.current();
+  final selectedId = int.tryParse(itemId);
+  if (token == null || mvk == null || selectedId == null || selectedId <= 0) {
+    throw StateError('Saved-item identity is unavailable');
+  }
+  final client = VaultAIClient(baseUrl: backendBaseUrl);
+  final metadata = await client.listZkItemMetadataRaw(authToken: token);
+  if (!app.unlocked || app.sessionToken != token ||
+      !identical(zk_mvk_store.ZkActiveMvk.current(), mvk)) {
+    throw StateError('Vault session changed during saved-item deletion');
+  }
+  final matches = metadata.where((row) => row['item_id'] == selectedId).toList();
+  if (matches.length != 1) throw StateError('Saved item is unavailable');
+  final row = matches.single;
+  final metadataKey = await vk_hier.VaultKeyHierarchy(mvk).metadataKey();
+  Future<String> label(String plainField, String cipherField) async {
+    final encrypted = row[cipherField];
+    if (encrypted is String && encrypted.isNotEmpty) {
+      return utf8.decode(await vk_hier.aesGcmUnwrap(
+        metadataKey, vk_hier.b64urlDecode(encrypted),
+      ));
+    }
+    final plain = row[plainField];
+    if (row['is_legacy'] == true && plain is String && plain.isNotEmpty) {
+      return plain;
+    }
+    throw const FormatException('Saved-item label is unavailable');
+  }
+  if (await label('item_type', 'item_type_ciphertext') != itemType ||
+      await label('service', 'service_ciphertext') != service) {
+    throw const FormatException('Saved-item identity changed');
+  }
+  if (!app.unlocked || app.sessionToken != token ||
+      !identical(zk_mvk_store.ZkActiveMvk.current(), mvk)) {
+    throw StateError('Vault session changed during saved-item deletion');
+  }
+  if (row['has_v2_payload'] == true) {
+    await client.deleteZkVaultSecureItemOnly(
+      authToken: token, service: service,
+      itemType: itemType, itemId: itemId,
+    );
+  } else if (row['is_legacy'] == true) {
+    await _deleteLegacyZkSavedItem(
+      app, itemId: selectedId, itemType: itemType, service: service,
+    );
+  } else {
+    throw StateError('Saved item is unavailable');
   }
 }
 
@@ -9855,10 +10028,21 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     try {
       final privateZk = _privateZkSavedItemSession(app);
-      final pin = privateZk ? null : await _VaultCrypto.currentPinOrThrow();
+      final keylessDelete = kEnableKeylessLegacySavedItemDelete &&
+          app.vaultHandle?.isNotEmpty == true &&
+          zk_mvk_store.ZkActiveMvk.current() != null;
+      final pin = privateZk || keylessDelete
+          ? null : await _VaultCrypto.currentPinOrThrow();
       if (!mounted || app.sessionToken != token || !app.unlocked) return true;
       final client = VaultAIClient(baseUrl: backendBaseUrl);
-      if (privateZk) {
+      if (keylessDelete) {
+        if (itemId == null) {
+          throw StateError('Saved-item identity is unavailable');
+        }
+        await _deleteSelectedZkSavedItem(
+          app, itemId: itemId, itemType: itemType, service: service,
+        );
+      } else if (privateZk) {
         await client.deleteZkVaultSecureItemOnly(
           authToken: token,
           service: service,
@@ -19322,7 +19506,16 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     try {
       switch (target.kind) {
         case VaultLocalContentKind.login:
-          if (_privateZkSavedItemSession(app)) {
+          if (kEnableKeylessLegacySavedItemDelete &&
+              app.vaultHandle?.isNotEmpty == true &&
+              zk_mvk_store.ZkActiveMvk.current() != null) {
+            await _deleteSelectedZkSavedItem(
+              app,
+              itemId: target.id,
+              itemType: target.itemType ?? 'login',
+              service: target.service ?? target.label,
+            );
+          } else if (_privateZkSavedItemSession(app)) {
             await client.deleteZkVaultSecureItemOnly(
               authToken: token,
               service: target.service ?? target.label,

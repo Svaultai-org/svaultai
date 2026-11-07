@@ -88,6 +88,16 @@ const bool kEnableKeylessLegacySavedItemEdit = bool.fromEnvironment(
   defaultValue: false,
 ) && kEnableKeylessSavedItemRead;
 
+const bool kEnableKeylessLegacySavedItemRename = bool.fromEnvironment(
+  'VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_RENAME',
+  defaultValue: false,
+) && kEnableKeylessLegacySavedItemEdit;
+
+const bool kEnableKeylessLegacySavedItemDelete = bool.fromEnvironment(
+  'VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_DELETE',
+  defaultValue: false,
+) && kEnableKeylessSavedItemRead;
+
 // A narrow ZK index cutover. Legacy item details still use their existing
 // reader, while list/search preflights can use the trusted metadata inventory.
 // Coordinate with VAULTAI_ZK_METADATA_INVENTORY_ENABLED on the API.

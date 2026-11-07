@@ -9,8 +9,8 @@ remain available.
 from alembic import op
 
 
-revision = "0057_keyless_legacy_item_edit"
-down_revision = "0056_file_v2_legacy_extra_manifest"
+revision = "0058_keyless_legacy_item_edit"
+down_revision = "0057_session_auth_method"
 branch_labels = None
 depends_on = None
 

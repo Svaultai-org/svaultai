@@ -21,6 +21,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
+from psycopg2.errors import UniqueViolation
 from psycopg2.extras import RealDictCursor
 
 from auth_local import SessionPrincipal, _get_secret
@@ -101,6 +102,10 @@ def _legacy_item_edit_digest(candidate: dict) -> bytes:
     ):
         value = candidate.get(field)
         _feed_digest(hasher, str(value) if field == "candidate_id" else value)
+    if candidate.get("new_service_ciphertext") is not None:
+        _feed_digest(hasher, b"encrypted-rename/v1")
+        _feed_digest(hasher, candidate["new_service_ciphertext"])
+        _feed_digest(hasher, candidate["new_title_lookup_hash"])
     return hasher.digest()
 
 
@@ -197,6 +202,8 @@ class LegacyItemEditStageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_snapshot: str = Field(..., min_length=43, max_length=43)
     candidate_encrypted_data: str = Field(..., min_length=40, max_length=174764)
+    new_service_ciphertext: Optional[str] = Field(default=None, min_length=40, max_length=5500)
+    new_title_lookup_hash: Optional[str] = Field(default=None, min_length=43, max_length=43)
 
 
 class LegacyItemEditPromoteRequest(BaseModel):
@@ -205,6 +212,13 @@ class LegacyItemEditPromoteRequest(BaseModel):
     readback_receipt: str = Field(..., min_length=1, max_length=256)
     zk_proof_token: str = Field(..., min_length=1, max_length=128)
     client_verified_exact_content: bool
+
+
+class LegacyItemDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_snapshot: str = Field(..., min_length=43, max_length=43)
+    zk_proof_token: str = Field(..., min_length=1, max_length=128)
+    confirm: bool
 
 
 class FileRetireRequest(BaseModel):
@@ -234,7 +248,7 @@ class FileStageResetRequest(BaseModel):
 _ITEM_COLUMNS = (
     "encrypted_data, item_type, service, item_type_ciphertext, "
     "service_ciphertext, payload_ciphertext, title_lookup_hash, "
-    "title_revision, created_at"
+    "title_revision, created_at, legacy_item_rename_active"
 )
 
 
@@ -267,6 +281,23 @@ def _legacy_item_edit_ciphertext(value: str) -> None:
         raise HTTPException(status_code=400, detail="candidate_ciphertext_invalid")
 
 
+def _legacy_item_rename_fields(payload: LegacyItemEditStageRequest) -> tuple[bytes | None, bytes | None]:
+    encrypted = payload.new_service_ciphertext
+    lookup = payload.new_title_lookup_hash
+    if (encrypted is None) != (lookup is None):
+        raise HTTPException(status_code=400, detail="encrypted_title_incomplete")
+    if encrypted is None:
+        return None, None
+    _require_flag("VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_RENAME")
+    raw = _decode(encrypted, field="new_service_ciphertext", max_bytes=4096)
+    if _b64(raw) != encrypted or len(raw) < 30 or raw[0] != 1:
+        raise HTTPException(status_code=400, detail="encrypted_title_invalid")
+    title_hash = _decode(lookup, field="new_title_lookup_hash", max_bytes=32)
+    if len(title_hash) != 32 or _b64(title_hash) != lookup:
+        raise HTTPException(status_code=400, detail="title_lookup_invalid")
+    return raw, title_hash
+
+
 def _require_live_legacy_item_edit_session(cur, principal: SessionPrincipal) -> None:
     """Recheck live OPAQUE registration and this session inside the transaction."""
     token_id = principal.get("token_id")
@@ -284,7 +315,8 @@ def _require_live_legacy_item_edit_session(cur, principal: SessionPrincipal) -> 
         raise HTTPException(status_code=409, detail="zk_registration_required")
     cur.execute(
         "SELECT 1 FROM auth_sessions WHERE token_id=%s AND vault_id=%s "
-        "AND revoked_at IS NULL AND expires_at>NOW() FOR SHARE",
+        "AND auth_method='opaque' AND revoked_at IS NULL "
+        "AND expires_at>NOW() FOR SHARE",
         (token_id, principal["vault_id"]),
     )
     if cur.fetchone() is None:
@@ -294,17 +326,42 @@ def _require_live_legacy_item_edit_session(cur, principal: SessionPrincipal) -> 
 def _require_legacy_item_editable(row: dict) -> None:
     if row.get("encrypted_data") is None:
         raise HTTPException(status_code=409, detail="item_not_legacy")
-    if (any(row.get(field) is not None for field in (
-            "item_type_ciphertext", "service_ciphertext", "payload_ciphertext"
-        )) or
-            row.get("item_type") in (None, "crypto_wallet_account")):
+    active_rename = row.get("legacy_item_rename_active") is True
+    rename_shape = (
+        row.get("service_ciphertext") is not None and
+        row.get("title_lookup_hash") is not None and
+        row.get("item_type_ciphertext") is None and
+        row.get("payload_ciphertext") is None
+    )
+    if (row.get("item_type") in (None, "crypto_wallet_account") or
+            row.get("item_type_ciphertext") is not None or
+            row.get("payload_ciphertext") is not None or
+            (active_rename and not rename_shape) or
+            (row.get("service_ciphertext") is not None and not active_rename) or
+            (row.get("title_lookup_hash") is not None and not active_rename)):
         raise HTTPException(status_code=409, detail="item_requires_dedicated_edit")
+
+
+def _require_legacy_item_deletable(row: dict) -> None:
+    if row.get("encrypted_data") is None:
+        raise HTTPException(status_code=409, detail="item_not_legacy")
+    if (row.get("item_type") in (None, "crypto_wallet_account") or
+            row.get("item_type_ciphertext") is not None or
+            row.get("payload_ciphertext") is not None):
+        raise HTTPException(status_code=409, detail="item_requires_dedicated_delete")
+    # An active encrypted rename has only a service sidecar and its lookup
+    # hash. A partial V2 stage or malformed sidecar must not be deleted here.
+    active_rename = row.get("legacy_item_rename_active") is True
+    if (active_rename != (row.get("service_ciphertext") is not None) or
+            active_rename != (row.get("title_lookup_hash") is not None)):
+        raise HTTPException(status_code=409, detail="item_requires_dedicated_delete")
 
 
 def _legacy_item_edit_candidate(cur, vault_id: str, item_id: int) -> dict:
     cur.execute(
         "SELECT candidate_id,source_snapshot,encrypted_data,"
-        "base_item_digest,candidate_sha256 FROM legacy_item_edit_candidates "
+        "base_item_digest,candidate_sha256,new_service_ciphertext,"
+        "new_title_lookup_hash FROM legacy_item_edit_candidates "
         "WHERE vault_id=%s AND item_id=%s FOR UPDATE",
         (vault_id, item_id),
     )
@@ -334,6 +391,7 @@ def stage_legacy_item_edit(
     if item_id <= 0:
         raise HTTPException(status_code=400, detail="invalid_item_id")
     _legacy_item_edit_ciphertext(payload.candidate_encrypted_data)
+    new_service_ct, new_title_hash = _legacy_item_rename_fields(payload)
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -352,20 +410,24 @@ def stage_legacy_item_edit(
         cur.execute(
             """INSERT INTO legacy_item_edit_candidates
                    (item_id,vault_id,candidate_id,source_snapshot,
-                    encrypted_data,base_item_digest,candidate_sha256)
-               VALUES (%s,%s,%s,%s,%s,%s,%s)
+                    encrypted_data,base_item_digest,candidate_sha256,
+                    new_service_ciphertext,new_title_lookup_hash)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT (item_id) DO UPDATE SET
                    candidate_id=EXCLUDED.candidate_id,
                    source_snapshot=EXCLUDED.source_snapshot,
                    encrypted_data=EXCLUDED.encrypted_data,
                    base_item_digest=EXCLUDED.base_item_digest,
                    candidate_sha256=EXCLUDED.candidate_sha256,
+                   new_service_ciphertext=EXCLUDED.new_service_ciphertext,
+                   new_title_lookup_hash=EXCLUDED.new_title_lookup_hash,
                    staged_at=NOW()
                WHERE legacy_item_edit_candidates.vault_id=EXCLUDED.vault_id
                RETURNING item_id""",
             (item_id, principal["vault_id"], candidate_id, snapshot,
              payload.candidate_encrypted_data,
-             _legacy_item_edit_base_digest(row), candidate_sha256),
+             _legacy_item_edit_base_digest(row), candidate_sha256,
+             new_service_ct, new_title_hash),
         )
         if cur.fetchone() is None:
             raise HTTPException(status_code=409, detail="item_owner_changed")
@@ -415,6 +477,14 @@ def readback_legacy_item_edit(
             "source_snapshot": snapshot,
             "candidate_encrypted_data": candidate["encrypted_data"],
             "new_service": None,
+            "new_service_ciphertext": (
+                _b64(bytes(candidate["new_service_ciphertext"]))
+                if candidate["new_service_ciphertext"] is not None else None
+            ),
+            "new_title_lookup_hash": (
+                _b64(bytes(candidate["new_title_lookup_hash"]))
+                if candidate["new_title_lookup_hash"] is not None else None
+            ),
             "readback_receipt": receipt,
             "receipt_expires_at": expires_at,
         }
@@ -459,6 +529,20 @@ def promote_legacy_item_edit(
             _legacy_item_edit_digest(candidate),
         ):
             raise HTTPException(status_code=409, detail="readback_required")
+        rename = candidate["new_service_ciphertext"] is not None
+        if rename:
+            _require_flag("VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_RENAME")
+            if candidate["new_title_lookup_hash"] is None:
+                raise HTTPException(status_code=409, detail="encrypted_title_incomplete")
+        service_ct = (
+            candidate["new_service_ciphertext"] if rename
+            else row["service_ciphertext"]
+        )
+        title_hash = (
+            candidate["new_title_lookup_hash"] if rename
+            else row["title_lookup_hash"]
+        )
+        active_rename = rename or row["legacy_item_rename_active"]
         service = row["service"]
         consume_recent_zk_proof_on_cursor(payload.zk_proof_token, principal, cur)
         # Count only the active legacy blob, as the existing saved-item quota
@@ -482,25 +566,27 @@ def promote_legacy_item_edit(
                     prior_item_type_ciphertext,prior_service_ciphertext,
                     prior_payload_ciphertext,prior_title_lookup_hash,
                     prior_title_revision,prior_created_at,
-                    promoted_candidate_sha256)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    promoted_candidate_sha256,encrypted_rename)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (principal["vault_id"], item_id, snapshot, row["item_type"],
              row["service"], row["encrypted_data"],
              row["item_type_ciphertext"], row["service_ciphertext"],
              row["payload_ciphertext"], row["title_lookup_hash"],
              row["title_revision"], row["created_at"],
-             candidate["candidate_sha256"]),
+             candidate["candidate_sha256"], rename),
         )
         cur.execute(
             """UPDATE vault_items
                   SET service=%s, encrypted_data=%s,
                       item_type_ciphertext=NULL,
-                      service_ciphertext=NULL,
+                      service_ciphertext=%s,
                       payload_ciphertext=NULL,
-                      title_lookup_hash=NULL,
+                      title_lookup_hash=%s,
+                      legacy_item_rename_active=%s,
                       title_revision=title_revision+1
                 WHERE vault_id=%s AND id=%s AND encrypted_data IS NOT NULL""",
-            (service, candidate["encrypted_data"], principal["vault_id"], item_id),
+            (service, candidate["encrypted_data"], service_ct, title_hash,
+             active_rename, principal["vault_id"], item_id),
         )
         if cur.rowcount != 1:
             raise HTTPException(status_code=409, detail="legacy_source_changed")
@@ -521,7 +607,78 @@ def promote_legacy_item_edit(
             pass
         return {"item_id": item_id, "id": item_id, "service": service,
                 "item_type": row["item_type"], "updated": True,
-                "created": False, "original_preserved_in_history": True}
+                "created": False, "original_preserved_in_history": True,
+                "renamed": rename,
+                "service_ciphertext": (
+                    _b64(bytes(service_ct)) if service_ct is not None else None
+                )}
+    except UniqueViolation as exc:
+        conn.rollback()
+        raise HTTPException(status_code=409, detail="duplicate_saved_item") from exc
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@router.post("/vault/items/legacy-ciphertext/{item_id}/delete")
+def delete_legacy_item_without_pin(
+    item_id: int,
+    payload: LegacyItemDeleteRequest,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    """Delete an owner-confirmed source and retained edit history atomically."""
+    _require_flag("VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_DELETE")
+    if item_id <= 0:
+        raise HTTPException(status_code=400, detail="invalid_item_id")
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="delete_confirmation_required")
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        _require_live_legacy_item_edit_session(cur, principal)
+        row = _load_item_locked(cur, principal["vault_id"], item_id)
+        _require_legacy_item_deletable(row)
+        snapshot = legacy_source_snapshot(
+            "item", row, vault_id=principal["vault_id"], record_id=item_id,
+        )
+        if snapshot != payload.source_snapshot:
+            raise HTTPException(status_code=409, detail="legacy_source_changed")
+        consume_recent_zk_proof_on_cursor(payload.zk_proof_token, principal, cur)
+        cur.execute(
+            "DELETE FROM legacy_item_edit_history WHERE vault_id=%s AND item_id=%s",
+            (principal["vault_id"], item_id),
+        )
+        cur.execute(
+            "DELETE FROM concierge_monitors WHERE vault_id=%s AND source_item_id=%s",
+            (principal["vault_id"], str(item_id)),
+        )
+        cur.execute(
+            "DELETE FROM vault_items WHERE vault_id=%s AND id=%s "
+            "AND encrypted_data IS NOT NULL RETURNING id",
+            (principal["vault_id"], item_id),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=409, detail="legacy_source_changed")
+        cur.execute(
+            "UPDATE vaults SET total_bytes=GREATEST(total_bytes-%s,0) "
+            "WHERE vault_id=%s",
+            (len(row["encrypted_data"].encode("utf-8")), principal["vault_id"]),
+        )
+        if cur.rowcount != 1:
+            raise HTTPException(status_code=404, detail="vault_not_found")
+        conn.commit()
+        try:
+            from vault_tool_result_cache import invalidate_for_event
+            event = (
+                "credential_deleted" if row["item_type"] in ("login", "credential")
+                else "secure_item_deleted"
+            )
+            invalidate_for_event(vault_id=principal["vault_id"], event=event)
+        except Exception:
+            pass
+        return {"status": "deleted", "item_id": item_id}
     except Exception:
         conn.rollback()
         raise
@@ -572,7 +729,8 @@ def stage_legacy_item(
             UPDATE vault_items
                SET item_type_ciphertext = %s,
                    service_ciphertext = %s,
-                   payload_ciphertext = %s
+                   payload_ciphertext = %s,
+                   legacy_item_rename_active = FALSE
              WHERE id = %s AND vault_id = %s AND encrypted_data IS NOT NULL
             """,
             (*ciphertexts, payload.item_id, principal["vault_id"]),
