@@ -35,6 +35,8 @@ import 'logins_page.dart';
 import 'api_client.dart';
 import 'chunked_aead.dart';
 import 'services/inheritance_credentials.dart' as inh_cred;
+import 'services/inheritance_mvk_v2.dart' as inh_mvk;
+import 'services/inheritance_v2_item_import.dart' as inh_import;
 import 'services/legacy_adoption.dart' as legacy_adopt;
 import 'services/metadata_migration_client.dart' as mmc;
 import 'services/legacy_ciphertext_export_client.dart' as legacy_export;
@@ -10672,6 +10674,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required int linkId,
     required String beneficiaryLabel,
     required bool isUpdate,
+    bool isZkV2 = false,
   }) async {
     final app = context.read<AppState>();
     final autofilledUsername = app.vaultName ?? '';
@@ -10688,9 +10691,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         builder: (ctx, setLocal) => AlertDialog(
           backgroundColor: VaultColors.surfaceElevated,
           title: Text(
-            isUpdate
-                ? 'Update credentials for $beneficiaryLabel'
-                : 'Credentials to inherit',
+            isZkV2
+                ? (isUpdate ? 'Update private vault access' : 'Prepare private vault access')
+                : (isUpdate
+                    ? 'Update credentials for $beneficiaryLabel'
+                    : 'Credentials to inherit'),
           ),
           content: SingleChildScrollView(
             child: Form(
@@ -10699,6 +10704,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (isZkV2)
+                    const Text(
+                      'Your vault key is encrypted on this device for this beneficiary. '
+                      'After access is approved or the no-response countdown ends, '
+                      'they can import supported private content into their own vault. '
+                      'Your PIN is not shared.',
+                      style: TextStyle(color: VaultColors.textSecondary, fontSize: 13),
+                    )
+                  else ...[
                   const Text(
                     'These are the Svaultai login credentials this '
                     'beneficiary will inherit. Svaultai can never read '
@@ -10750,6 +10764,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       return null;
                     },
                   ),
+                  ],
                   if (errRef != null) ...[
                     const SizedBox(height: 10),
                     Text(
@@ -10772,21 +10787,25 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               onPressed: saving
                   ? null
                   : () async {
-                      if (!(formKey.currentState?.validate() ?? false)) {
+                      if (!isZkV2 && !(formKey.currentState?.validate() ?? false)) {
                         return;
                       }
                       setLocal(() {
                         saving = true;
                         errRef = null;
                       });
-                      final submittedPin = pinCtrl.text.trim();
+                      final submittedPin = isZkV2 ? '' : pinCtrl.text.trim();
                       pinCtrl.clear();
-                      final result = await _submitInheritanceCredentials(
-                        linkId: linkId,
-                        username: usernameCtrl.text.trim(),
-                        pin: submittedPin,
-                        isUpdate: isUpdate,
-                      );
+                      final result = isZkV2
+                          ? await _submitInheritanceMvk(
+                              linkId: linkId, isUpdate: isUpdate,
+                            )
+                          : await _submitInheritanceCredentials(
+                              linkId: linkId,
+                              username: usernameCtrl.text.trim(),
+                              pin: submittedPin,
+                              isUpdate: isUpdate,
+                            );
                       if (result.ok) {
                         // Wipe the plaintext from the widget's memory
                         // as soon as we no longer need it.
@@ -10818,7 +10837,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                           strokeWidth: 2, color: Colors.white),
                     )
                   : const Icon(Icons.lock_outline),
-              label: Text(saving ? 'Saving…' : 'Save securely'),
+              label: Text(saving ? 'Saving…' : (isZkV2 ? 'Prepare access' : 'Save securely')),
             ),
           ],
         ),
@@ -10964,6 +10983,71 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         ok: false,
         code: isNetwork ? 'INH-CRED-CLIENT-NETWORK' : 'INH-CRED-CLIENT-UNKNOWN',
       );
+    }
+  }
+
+  Future<({bool ok, String code})> _submitInheritanceMvk({
+    required int linkId,
+    required bool isUpdate,
+  }) async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final ownerVaultId = app.vaultId;
+    final ownerMvk = zk_mvk_store.ZkActiveMvk.current();
+    if (!kEnableZkBeneficiaryV2Pairing || token == null ||
+        ownerVaultId == null || ownerMvk == null ||
+        zk_mvk_store.ZkActiveMvk.currentVaultId() != ownerVaultId) {
+      return (ok: false, code: 'INH-MVK-UNAVAILABLE');
+    }
+    try {
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final publicKeyResponse = await client.getInheritanceBeneficiaryPubKey(
+        linkId: linkId, authToken: token,
+      );
+      if (publicKeyResponse['crypto_version_hint'] !=
+          inh_mvk.inheritanceMvkCryptoVersion) {
+        return (ok: false, code: 'INH-MVK-PROTOCOL');
+      }
+      final encodedKey = publicKeyResponse['pk_vault_public_b64url'];
+      if (encodedKey is! String) {
+        return (ok: false, code: 'INH-MVK-NO-PUBKEY');
+      }
+      final beneficiaryPublicKey = vk_hier.b64urlDecode(encodedKey);
+      final entered = await _promptForActionPin(
+        context, 'Verify private vault sharing',
+      );
+      if (entered == null) return (ok: false, code: 'INH-MVK-CANCELLED');
+      final proof = await _zkActionProof(app, token, entered);
+      if (app.sessionToken != token ||
+          zk_mvk_store.ZkActiveMvk.currentVaultId() != ownerVaultId) {
+        throw StateError('Vault access changed.');
+      }
+      final envelope = await inh_mvk.encryptInheritanceMvk(
+        beneficiaryLinkId: linkId,
+        ownerVaultId: ownerVaultId,
+        ownerMvk: ownerMvk,
+        beneficiaryPublicKey: beneficiaryPublicKey,
+      );
+      final body = envelope.toRequestBody(linkId);
+      body['zk_proof_token'] = proof;
+      if (isUpdate) {
+        await client.replaceInheritanceCredentials(
+          body: body, authToken: token,
+        );
+      } else {
+        await client.saveInheritanceCredentials(
+          body: body, authToken: token,
+        );
+      }
+      _showSnack(isUpdate ? 'Private vault access updated' : 'Private vault access prepared');
+      return (ok: true, code: '');
+    } on InheritanceCredSaveException catch (e) {
+      if (app.handleApiException(e)) {
+        return (ok: false, code: 'INH-MVK-AUTH');
+      }
+      return (ok: false, code: e.backendCode ?? 'INH-MVK-SAVE');
+    } catch (_) {
+      return (ok: false, code: 'INH-MVK-SAVE');
     }
   }
 
@@ -11191,6 +11275,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<void> _beneficiaryRequestAccess({
     required int linkId,
     required String passerLabel,
+    bool isZkV2 = false,
   }) async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
@@ -11200,13 +11285,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       builder: (dCtx) => AlertDialog(
         backgroundColor: VaultColors.surfaceElevated,
         title: Text('Request access to $passerLabel?'),
-        content: const Text(
+        content: Text(
           'Request access if you believe the connected vault owner '
           'has died. The owner can sign in and approve immediately, '
           'with no 30-day wait, or reject to clear the request and '
           'return the connection to normal. If they do not respond, '
-          'you can claim the prepared credentials after the 30-day '
-          'no-response countdown.',
+          'you can claim the prepared ${isZkV2 ? 'private saved items' : 'credentials'} '
+          'after the 30-day no-response countdown.',
         ),
         actions: [
           TextButton(
@@ -11434,6 +11519,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return;
     }
 
+    if (pkg['crypto_version'] == inh_mvk.inheritanceMvkCryptoVersion) {
+      await _beneficiaryImportPrivateItems(
+        linkId: linkId,
+        token: token,
+        beneficiaryVaultId: vaultId,
+        beneficiarySk: localKey.skVault!,
+        package: pkg,
+      );
+      await _loadInheritances();
+      return;
+    }
+
     // 3. Stage-complete decrypt.
     //
     // 2026-07-23: reveal now runs entirely inside
@@ -11533,6 +11630,54 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       token: token,
     );
     await _loadInheritances();
+  }
+
+  Future<void> _beneficiaryImportPrivateItems({
+    required int linkId,
+    required String token,
+    required String beneficiaryVaultId,
+    required SecretKey beneficiarySk,
+    required Map<String, dynamic> package,
+  }) async {
+    final app = context.read<AppState>();
+    final beneficiaryMvk = zk_mvk_store.ZkActiveMvk.current();
+    if (!kEnableZkBeneficiaryV2Pairing || beneficiaryMvk == null ||
+        zk_mvk_store.ZkActiveMvk.currentVaultId() != beneficiaryVaultId) {
+      _showSnack('Private vault import is unavailable.');
+      return;
+    }
+    bool accessCurrent() => app.sessionToken == token &&
+        app.vaultId == beneficiaryVaultId &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == beneficiaryVaultId &&
+        identical(zk_mvk_store.ZkActiveMvk.current(), beneficiaryMvk);
+    try {
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final newItems = await inh_import.importReleasedV2SavedItems(
+        linkId: linkId,
+        beneficiaryPrivateKey: beneficiarySk,
+        releasedPackage: package,
+        fetchExport: (id) => client.getReleasedInheritanceV2VaultItems(
+          linkId: id, authToken: token,
+        ),
+        listBeneficiaryItems: () =>
+            client.listZkVaultItemsOnly(authToken: token),
+        writeBeneficiaryItem: (item, title, payload) =>
+            client.tryZkVaultItemCiphertextUpsert(
+          baseUrl: backendBaseUrl,
+          authToken: token,
+          itemType: item.itemType,
+          service: title,
+          payload: payload,
+        ),
+        accessIsCurrent: accessCurrent,
+      );
+      _showSnack(newItems == 0
+          ? 'Inherited saved items are already in your vault.'
+          : '$newItems inherited saved item${newItems == 1 ? '' : 's'} imported.');
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack('Private saved-item import paused. Try again later.');
+    }
   }
 
   Future<bool?> _inheritanceCachedPinMatches(String pin) async {
@@ -12137,6 +12282,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                             b['transfer_executes_at']?.toString();
                         final isTransferPending = status == 'transfer_pending';
                         final isLinked = b['is_linked'] == true;
+                        final isZkV2 = b['zk_pairing_v2'] == true;
                         final credentialsSaved = b['credentials_saved'] == true;
                         final credentialUpdatedAt =
                             b['credential_updated_at']?.toString();
@@ -12157,7 +12303,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                 pairingState == 'claimable';
                         final approved = pairingState == 'approved';
                         final released = pairingState == 'released';
-                        final hideLegacyTransfer = credentialsSaved ||
+                        final hideLegacyTransfer = isZkV2 ||
+                            credentialsSaved ||
                             accessRequested ||
                             approved ||
                             released;
@@ -12265,10 +12412,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                           const SizedBox(width: 6),
                                           Text(
                                             needsReencryption
-                                                ? 'Inheritance credentials: Needs update'
+                                                ? (isZkV2 ? 'Private vault access: Needs update' : 'Inheritance credentials: Needs update')
                                                 : credentialsSaved
-                                                    ? 'Inheritance credentials: Saved'
-                                                    : 'Inheritance credentials: Not saved',
+                                                    ? (isZkV2 ? 'Private vault access: Prepared' : 'Inheritance credentials: Saved')
+                                                    : (isZkV2 ? 'Private vault access: Not prepared' : 'Inheritance credentials: Not saved'),
                                             style: TextStyle(
                                               color: needsReencryption
                                                   ? Colors.orange
@@ -12302,11 +12449,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                             linkId: id,
                                             beneficiaryLabel: label,
                                             isUpdate: false,
+                                            isZkV2: isZkV2,
                                           ),
                                           icon: const Icon(
                                               Icons.add_moderator_outlined,
                                               size: 18),
-                                          label: const Text('Add credentials'),
+                                          label: Text(isZkV2 ? 'Prepare access' : 'Add credentials'),
                                         )
                                       else ...[
                                         OutlinedButton.icon(
@@ -12317,12 +12465,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                             linkId: id,
                                             beneficiaryLabel: label,
                                             isUpdate: true,
+                                            isZkV2: isZkV2,
                                           ),
                                           icon: const Icon(Icons.edit_outlined,
                                               size: 18),
                                           label: Text(needsReencryption
-                                              ? 'Re-save credentials'
-                                              : 'Update credentials'),
+                                              ? (isZkV2 ? 'Re-prepare access' : 'Re-save credentials')
+                                              : (isZkV2 ? 'Update access' : 'Update credentials')),
                                         ),
                                         OutlinedButton.icon(
                                           key: Key(
@@ -12519,6 +12668,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                 (i['zk_pairing_v2'] == true ? 'Private vault' : 'Unknown'))
                             .toString();
                         final status = (i['status'] ?? '').toString();
+                        final isZkV2 = i['zk_pairing_v2'] == true;
                         final id = (i['id'] as num?)?.toInt() ?? 0;
                         final executesAt =
                             i['transfer_executes_at']?.toString();
@@ -12646,6 +12796,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                           _beneficiaryRequestAccess(
                                         linkId: id,
                                         passerLabel: label,
+                                        isZkV2: isZkV2,
                                       ),
                                       icon: const Icon(Icons.lock_outline,
                                           size: 18),
@@ -12673,7 +12824,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                       ),
                                       icon: const Icon(Icons.download_done,
                                           size: 18),
-                                      label: const Text('Claim and reveal'),
+                                      label: Text(isZkV2 ? 'Claim and import' : 'Claim and reveal'),
                                     ),
                                   if (showReveal)
                                     FilledButton.icon(
@@ -12686,8 +12837,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                       ),
                                       icon: const Icon(Icons.visibility,
                                           size: 18),
-                                      label: const Text(
-                                          'Reveal login credentials'),
+                                      label: Text(isZkV2
+                                          ? 'Import saved items'
+                                          : 'Reveal login credentials'),
                                     ),
                                   if (showLegacyLinked)
                                     FilledButton.icon(

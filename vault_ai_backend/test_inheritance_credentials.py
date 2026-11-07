@@ -154,7 +154,7 @@ def test_save_request_rejects_unsupported_crypto_version() -> None:
     with pytest.raises(ValidationError):
         SaveCredentialPackageRequest(
             beneficiary_link_id=1,
-            crypto_version=2,  # only v1 is allowed at the wire layer
+            crypto_version=3,  # only legacy v1 and private V2 are supported
             encrypted_payload="AA",
             payload_nonce="AA",
             wrapped_key="AA",

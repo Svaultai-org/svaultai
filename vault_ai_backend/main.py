@@ -106,6 +106,7 @@ from vault_core import (
     KDF_LEGACY_ITERATIONS,
     MIN_PIN_LENGTH_NEW_VAULT,
 )
+from inheritance_protocol import ZK_BENEFICIARY_V2_MARKER as _ZK_BENEFICIARY_V2_MARKER
 from chunked_aead import decrypt_chunk, encrypt_chunk
 from cryptography.exceptions import InvalidTag
 from device_gate import verify_trusted_device
@@ -495,10 +496,14 @@ from routes.inheritance_credential_routes import (
 from routes.inheritance_release_routes import (
     router as inheritance_release_router,
 )
+from routes.inheritance_v2_export_routes import (
+    router as inheritance_v2_export_router,
+)
 from inheritance_error_codes import install_inheritance_redaction
 install_inheritance_redaction()
 app.include_router(inheritance_credential_router)
 app.include_router(inheritance_release_router)
+app.include_router(inheritance_v2_export_router)
 
                                                                       
 from routes.billing_routes import router as billing_router
@@ -10497,11 +10502,6 @@ from vault_core import (
     hash_pairing_code,
     PAIRING_CODE_TTL_MINUTES,
 )
-
-
-# Existing beneficiary_links.wrapped_vault_key is NOT NULL. V2 pairings have
-# no server-side vault key to wrap; this version marker is never key material.
-_ZK_BENEFICIARY_V2_MARKER = "zk-beneficiary-v2:no-server-key"
 
 
 def _require_zk_beneficiary_v2(principal, proof_token: str) -> None:

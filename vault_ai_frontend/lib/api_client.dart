@@ -2374,6 +2374,31 @@ class VaultAIClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> getReleasedInheritanceV2VaultItems({
+    required int linkId,
+    required String authToken,
+  }) async {
+    if (linkId <= 0) throw ArgumentError('Invalid inheritance link');
+    final response = await _sessionHttp.get(
+      Uri.parse('$baseUrl/inheritance/v2/$linkId/vault-items'),
+      headers: _defaultHeaders(authToken: authToken),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Inherited private items unavailable',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('Invalid inheritance export');
+    }
+    return decoded;
+  }
+
   Future<Map<String, dynamic>> linkBeneficiary({
     required String vaultName,
     required String pin,

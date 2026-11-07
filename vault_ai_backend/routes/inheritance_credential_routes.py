@@ -65,6 +65,11 @@ from auth_local import SessionPrincipal, verify_session_token
 from inheritance_error_codes import INHERR, inheritance_http_error
 from device_gate import verify_trusted_device
 from vault_core import get_db
+from inheritance_protocol import (
+    ZK_BENEFICIARY_V2_MARKER,
+    ZK_BENEFICIARY_V2_CRYPTO_VERSION,
+    zk_beneficiary_v2_enabled,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -128,7 +133,8 @@ def _b64url_encode_bytes(raw: bytes) -> str:
 
 class _CredentialPackageBase(BaseModel):
     beneficiary_link_id: int = Field(..., ge=1)
-    crypto_version: int = Field(..., ge=1, le=1)
+    crypto_version: int = Field(..., ge=1, le=ZK_BENEFICIARY_V2_CRYPTO_VERSION)
+    zk_proof_token: Optional[str] = Field(default=None, min_length=1, max_length=128)
     encrypted_payload: str = Field(..., min_length=1)
     payload_nonce: str = Field(..., min_length=1)
     wrapped_key: str = Field(..., min_length=1)
@@ -189,6 +195,7 @@ def _fetch_owned_link(
     cur.execute(
         f"""
         SELECT id, passer_vault_id, beneficiary_vault_id, status,
+               wrapped_vault_key,
                pairing_state, access_requested_at, cooldown_ends_at
           FROM beneficiary_links
          WHERE id = %s
@@ -207,6 +214,34 @@ def _fetch_owned_link(
             },
         )
     return row
+
+
+def _require_credential_protocol(link: dict, crypto_version: int) -> None:
+    """Keep old credential escrow confined to old links, and V2 to V2 links.
+
+    V2 remains disabled until the PIN-free import client and ciphertext export
+    have passed the full owner-to-beneficiary release test.
+    """
+    v2_link = link.get("wrapped_vault_key") == ZK_BENEFICIARY_V2_MARKER
+    if v2_link:
+        if not zk_beneficiary_v2_enabled():
+            raise HTTPException(status_code=409, detail="zk_inheritance_v2_disabled")
+        if crypto_version != ZK_BENEFICIARY_V2_CRYPTO_VERSION:
+            raise HTTPException(status_code=409, detail="zk_mvk_package_required")
+    elif crypto_version != _SUPPORTED_CRYPTO_VERSION:
+        raise HTTPException(status_code=409, detail="legacy_credential_package_required")
+
+
+def _require_v2_escrow_proof(link: dict, proof_token: Optional[str],
+                             principal: SessionPrincipal) -> None:
+    if link.get("wrapped_vault_key") != ZK_BENEFICIARY_V2_MARKER:
+        if proof_token is not None:
+            raise HTTPException(status_code=409, detail="zk_proof_not_applicable")
+        return
+    if not proof_token:
+        raise HTTPException(status_code=400, detail="zk_proof_token_required")
+    from routes.auth_zk_routes import consume_recent_zk_proof
+    consume_recent_zk_proof(proof_token, principal)
 
 
 def _fetch_beneficiary_pk(cur, *, beneficiary_vault_id) -> bytes:
@@ -405,6 +440,9 @@ def get_beneficiary_public_key(
     return BeneficiaryPubKeyResponse(
         beneficiary_link_id=link_id,
         pk_vault_public_b64url=_b64url_encode_bytes(pk),
+        crypto_version_hint=(ZK_BENEFICIARY_V2_CRYPTO_VERSION
+                             if link.get("wrapped_vault_key") == ZK_BENEFICIARY_V2_MARKER
+                             else _SUPPORTED_CRYPTO_VERSION),
     )
 
 
@@ -453,14 +491,6 @@ def save_credentials(
 ) -> CredentialStatusResponse:
     """Owner-side save. Refuses if credentials are already saved for
     this link (use /replace) or if an access request is in flight."""
-    if payload.crypto_version != _SUPPORTED_CRYPTO_VERSION:
-        raise inheritance_http_error(
-            INHERR.CRED_INVALID_PACKAGE,
-            log_details={
-                "reason": "unsupported_crypto_version",
-                "sent": payload.crypto_version,
-            },
-        )
     encrypted = _b64url_decode_bytes(
         payload.encrypted_payload,
         lo=_ENCRYPTED_PAYLOAD_MIN, hi=_ENCRYPTED_PAYLOAD_MAX,
@@ -486,6 +516,8 @@ def save_credentials(
             cur, link_id=payload.beneficiary_link_id,
             owner_vault_id=principal["vault_id"], for_update=True,
         )
+        _require_credential_protocol(link, payload.crypto_version)
+        _require_v2_escrow_proof(link, payload.zk_proof_token, principal)
         if not link.get("beneficiary_vault_id"):
             raise inheritance_http_error(
                 INHERR.CRED_BENEFICIARY_NOT_LINKED,
@@ -543,14 +575,6 @@ def replace_credentials(
     """Owner-side replace. Refuses if no credentials are saved or if
     an access request is in flight. Soft-deletes the previous row so
     audit history is preserved."""
-    if payload.crypto_version != _SUPPORTED_CRYPTO_VERSION:
-        raise inheritance_http_error(
-            INHERR.CRED_INVALID_PACKAGE,
-            log_details={
-                "reason": "unsupported_crypto_version",
-                "sent": payload.crypto_version,
-            },
-        )
     encrypted = _b64url_decode_bytes(
         payload.encrypted_payload,
         lo=_ENCRYPTED_PAYLOAD_MIN, hi=_ENCRYPTED_PAYLOAD_MAX,
@@ -576,6 +600,8 @@ def replace_credentials(
             cur, link_id=payload.beneficiary_link_id,
             owner_vault_id=principal["vault_id"], for_update=True,
         )
+        _require_credential_protocol(link, payload.crypto_version)
+        _require_v2_escrow_proof(link, payload.zk_proof_token, principal)
         if not link.get("beneficiary_vault_id"):
             raise inheritance_http_error(
                 INHERR.CRED_BENEFICIARY_NOT_LINKED,
