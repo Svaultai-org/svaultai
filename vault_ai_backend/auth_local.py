@@ -782,6 +782,7 @@ def require_signed_offer_route(principal: SessionPrincipal, *, path: str) -> Non
         raise HTTPException(status_code=409,
                             detail="pin_free_password_analysis_required")
     if (path in ("/beneficiary/create", "/beneficiary/link",
+                "/beneficiary/request-transfer",
                 "/beneficiary/claim-transfer") and
             offers & PIN_FREE_BENEFICIARY_OFFER):
         raise HTTPException(status_code=409,

@@ -11,7 +11,7 @@ void main() {
   setUp(ZkActiveMvk.clear);
   tearDown(ZkActiveMvk.clear);
 
-  test('private-only ZK refuses create, link, claim before any PIN request',
+  test('private-only ZK refuses old create, link, request, claim before any PIN request',
       () async {
     ZkActiveMvk.set(
       mvk: SecretKey(List<int>.filled(32, 51)),
@@ -46,6 +46,12 @@ void main() {
             inheritedVaultName: 'Synthetic inherited vault',
             authToken: 'synthetic-session',
           ),
+      () => client.requestTransfer(
+            linkId: 5,
+            vaultName: '',
+            pin: '123456',
+            authToken: 'synthetic-session',
+          ),
     ];
     for (final call in calls) {
       await expectLater(call(), throwsStateError);
@@ -53,7 +59,7 @@ void main() {
     expect(requests, isEmpty);
   }, skip: !kEnableZkPrivateOnlyUnlock);
 
-  test('legacy-only create, link, claim retain their request contracts',
+  test('legacy-only create, link, request, claim retain their request contracts',
       () async {
     final requests = <http.Request>[];
     final client = VaultAIClient(
@@ -82,18 +88,48 @@ void main() {
       inheritedVaultName: 'Synthetic inherited vault',
       authToken: 'synthetic-session',
     );
+    await client.requestTransfer(
+      linkId: 5,
+      vaultName: 'Synthetic legacy vault',
+      pin: '123456',
+      authToken: 'synthetic-session',
+    );
     expect(requests.map((request) => request.url.path), <String>[
       '/beneficiary/create',
       '/beneficiary/link',
       '/beneficiary/claim-transfer',
+      '/beneficiary/request-transfer',
     ]);
     for (final request in requests) {
       expect(request.method, 'POST');
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       expect(body['pin'], '123456');
-      expect(body['vault_name'], '');
+      expect(body['vault_name'], anyOf(isNull, ''));
     }
-  });
+  }, skip: kEnableZkPrivateOnlyUnlock);
+
+  test('private-only build blocks an old countdown even without an active key',
+      () async {
+    ZkActiveMvk.clear();
+    final requests = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        return http.Response('{"ok":true}', 200);
+      }),
+    );
+    await expectLater(
+      client.requestTransfer(
+        linkId: 5,
+        vaultName: '',
+        zkProofToken: 'synthetic-proof',
+        authToken: 'synthetic-session',
+      ),
+      throwsStateError,
+    );
+    expect(requests, isEmpty);
+  }, skip: !kEnableZkPrivateOnlyUnlock);
 
   test('private handle still blocks before PIN lookup when MVK is unavailable',
       () {

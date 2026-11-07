@@ -1052,6 +1052,11 @@ bool _privateBeneficiarySession(AppState app, String token) =>
     app.vaultHandle?.isNotEmpty == true &&
     (kPrivateOnlyUnlockEnabled || hasSignedBeneficiaryOffer(token));
 
+bool _privateLegacyInheritanceUnavailable(String token) =>
+    kPrivateOnlyUnlockEnabled ||
+    kSignedBeneficiaryClientEnabled ||
+    hasSignedBeneficiaryOffer(token);
+
 void _requireAvailableBeneficiaryOffer(AppState app, String token) {
   if (kSignedBeneficiaryClientEnabled &&
       app.vaultHandle?.isNotEmpty == true &&
@@ -10951,10 +10956,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<void> _claimInheritance(int linkId, String label) async {
     final app = context.read<AppState>();
     final token = app.sessionToken ?? '';
-    if (_privateBeneficiarySession(app, token) ||
-        (kSignedBeneficiaryClientEnabled &&
-            app.vaultHandle?.isNotEmpty == true)) {
-      _showSnack('This older inheritance claim is unavailable with private access.');
+    if (_privateLegacyInheritanceUnavailable(token)) {
+      _showSnack('This older inheritance link cannot be claimed with private access.');
       return;
     }
     final inheritedNameCtrl = TextEditingController(text: '$label (inherited)');
@@ -11073,6 +11076,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   Future<void> _requestTransfer(int linkId, String label) async {
     final app = context.read<AppState>();
+    if (_privateLegacyInheritanceUnavailable(app.sessionToken ?? '')) {
+      _showSnack('This older inheritance link cannot be claimed with private access.');
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
@@ -13365,10 +13372,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                             pairingState == 'paired_no_credentials';
                         final app = context.read<AppState>();
                         final legacyClaimBlocked =
-                            _privateBeneficiarySession(
-                                app, app.sessionToken ?? '') ||
-                            (kSignedBeneficiaryClientEnabled &&
-                                app.vaultHandle?.isNotEmpty == true);
+                            _privateLegacyInheritanceUnavailable(
+                                app.sessionToken ?? '');
 
                         return Container(
                           margin: const EdgeInsets.only(bottom: 8),
@@ -13505,7 +13510,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                           ? 'Import saved items'
                                           : 'Reveal login credentials'),
                                     ),
-                                  if (showLegacyLinked)
+                                  if (showLegacyLinked && !legacyClaimBlocked)
                                     FilledButton.icon(
                                       onPressed: () =>
                                           _requestTransfer(id, label),
@@ -13528,14 +13533,25 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                           size: 18),
                                       label: const Text('Claim'),
                                     ),
-                                  if (readyToClaim &&
-                                      i['zk_pairing_v2'] != true &&
-                                      !credentialsSaved &&
-                                      pairingState == 'paired_no_credentials' &&
-                                      legacyClaimBlocked)
-                                    const Text('Older inheritance claim unavailable with private access.'),
                                 ],
                               ),
+                              if (legacyClaimBlocked &&
+                                  !isZkV2 &&
+                                  !credentialsSaved &&
+                                  pairingState == 'paired_no_credentials' &&
+                                  (isLinked || isPending)) ...[
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'This older inheritance link cannot be claimed with private access. '
+                                  'The original vault data remains saved. '
+                                  'A new private link can share supported saved items; '
+                                  'files and other content are not transferable yet.',
+                                  style: TextStyle(
+                                    color: VaultColors.textSecondary,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
                               if (isZkV2)
                                 TextButton.icon(
                                   onPressed: _showBeneficiaryKeyFingerprint,

@@ -75,6 +75,7 @@ def test_v3_v4_bits_keep_password_and_chat_distinct():
             file_download=False, file_create=False, beneficiary=True,
         )
     for path in ("/beneficiary/create", "/beneficiary/link",
+                 "/beneficiary/request-transfer",
                  "/beneficiary/claim-transfer", "/beneficiary/create/"):
         with pytest.raises(HTTPException) as exc:
             auth_local.require_signed_offer_route(
@@ -113,6 +114,7 @@ def test_offered_legacy_actions_are_rejected_before_request_body():
 
     for token in (offered, combined):
         for path in ("/beneficiary/create", "/beneficiary/link",
+                     "/beneficiary/request-transfer",
                      "/beneficiary/claim-transfer", "/beneficiary/create/"):
             assert asyncio.run(probe(path, token)) == (0, 409)
     assert asyncio.run(probe("/beneficiary/create", original)) == (1, 200)

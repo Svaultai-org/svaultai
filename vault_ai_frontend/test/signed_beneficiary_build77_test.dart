@@ -105,6 +105,7 @@ void main() {
     for (final path in [
       '/beneficiary/create',
       '/beneficiary/link',
+      '/beneficiary/request-transfer',
       '/beneficiary/claim-transfer',
       '/beneficiary/create/',
     ]) {
@@ -144,6 +145,15 @@ void main() {
       throwsStateError,
     );
     await expectLater(
+      client.requestTransfer(
+        linkId: 1,
+        vaultName: 'synthetic',
+        zkProofToken: 'synthetic-proof',
+        authToken: token,
+      ),
+      throwsStateError,
+    );
+    await expectLater(
       client.claimTransfer(
         linkId: 1,
         vaultName: 'synthetic',
@@ -162,6 +172,28 @@ void main() {
     );
     expect(sent, isEmpty);
   });
+
+  test('flagged build does not start an old transfer without an offer',
+      () async {
+    final sent = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        sent.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+    await expectLater(
+      client.requestTransfer(
+        linkId: 1,
+        vaultName: 'synthetic',
+        zkProofToken: 'synthetic-proof',
+        authToken: _signedToken(7),
+      ),
+      throwsStateError,
+    );
+    expect(sent, isEmpty);
+  }, skip: !kSignedBeneficiaryClientEnabled);
 
   test('private V2 pairing sends ciphertext and proof without PIN', () async {
     final sent = <http.Request>[];

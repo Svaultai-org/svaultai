@@ -328,6 +328,7 @@ void assertOfferedReadPinFreeRequest(
       (signedOffers & 8) != 0,
     '/security-center/analyze-passwords' => (signedOffers & 16) != 0,
     '/beneficiary/create' || '/beneficiary/link' ||
+    '/beneficiary/request-transfer' ||
     '/beneficiary/claim-transfer' => (signedOffers & 64) != 0,
     _ => false,
   };
@@ -2635,6 +2636,13 @@ class VaultAIClient {
     String? zkProofToken,
     required String authToken,
   }) async {
+    // This endpoint starts the older clone flow. A private beneficiary cannot
+    // complete that claim without sending a PIN and decrypting on the server.
+    if (kEnableZkPrivateOnlyUnlock || kSignedBeneficiaryClientEnabled ||
+        (_signedOfferBits(authToken) & 64) != 0) {
+      throw StateError('Older inheritance transfer is unavailable with private access.');
+    }
+    requireLegacyBeneficiaryPinActionAllowed();
     _rejectBeneficiaryPin(authToken, pin);
     final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/request-transfer'),

@@ -57,6 +57,7 @@ def _replaced_pin_route(path: str, offers: int) -> str | None:
     path = path.rstrip("/")
     if (offers & PIN_FREE_BENEFICIARY_OFFER and
             path in ("/beneficiary/create", "/beneficiary/link",
+                     "/beneficiary/request-transfer",
                      "/beneficiary/claim-transfer")):
         return "pin_free_beneficiary_required"
     if (offers & PIN_FREE_PASSWORD_ANALYSIS_OFFER and
@@ -83,6 +84,7 @@ def _candidate_pin_path(path: str) -> bool:
     path = path.rstrip("/")
     return (_replaced_private_chat_path(path) or
             path in ("/beneficiary/create", "/beneficiary/link",
+                     "/beneficiary/request-transfer",
                      "/beneficiary/claim-transfer") or
             path == "/security-center/analyze-passwords" or
             path in ("/list-files", "/download-file", "/download-file/manifest",
