@@ -63,6 +63,7 @@ import 'services/zk_auth_service.dart';
 import 'services/zk_pin_free_item_read_session.dart';
 import 'services/zk_pin_free_file_session.dart';
 import 'services/legacy_file_read_session.dart' as legacy_file_read;
+import 'services/ephemeral_legacy_file_action.dart' as ephemeral_file;
 import 'services/legacy_chunked_local_download.dart' as legacy_chunked_download;
 import 'services/legacy_file_metadata_consistency.dart';
 import 'services/auth_retry.dart';
@@ -1022,6 +1023,38 @@ Future<String> _zkActionProof(
     throw StateError('Vault access changed during verification.');
   }
   return proof.token;
+}
+
+/// Derive an older file key for one owner-approved read. Keep it out of the
+/// vault-wide PIN and key caches; only the current file action holds it.
+Future<SecretKey> _ephemeralLegacyContentKey({
+  required AppState app,
+  required String token,
+  required String vaultId,
+  required String pin,
+  required bool Function() accessIsCurrent,
+}) async {
+  final name = app.vaultName;
+  if (!accessIsCurrent() || name == null || app.vaultId != vaultId) {
+    throw StateError('Vault access changed');
+  }
+  final meta = await _API.getVaultMeta(vaultName: name, authToken: token);
+  if (!accessIsCurrent() || meta['vault_id'] != vaultId) {
+    throw StateError('Vault access changed');
+  }
+  final salt = meta['pin_salt'];
+  final iterations = meta['kdf_iterations'];
+  if (salt is! String || salt.isEmpty || salt.length > 200 ||
+      iterations is! int || iterations < 100000 || iterations > 2000000) {
+    throw const FormatException('Older vault key metadata is unavailable');
+  }
+  final key = await _deriveVaultPbkdf2Key(
+    pin: pin,
+    pinSaltBase64: salt,
+    iterations: iterations,
+  );
+  if (!accessIsCurrent()) throw StateError('Vault access changed');
+  return key;
 }
 
 class _ZkActionPromptCancelled implements Exception {
@@ -16178,6 +16211,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required String fallbackFileName,
     required String? fallbackMime,
     bool requireReadyV2 = false,
+    bool requirePinFreeChat = false,
   }) async {
     final pinFreeLegacyDownloadOffered = ZkPinFreeFileSession.instance
         .downloadOfferedForToken(authToken);
@@ -16203,6 +16237,20 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           allowDisabledRoute:
               pinFreeLegacyDownloadOffered && !requireReadyV2,
         );
+    if ((requirePinFreeChat || signedPrivateChatOfferedForToken(authToken)) &&
+        !availableV2) {
+      if (!pinFreeLegacyDownloadOffered) {
+        throw StateError('Private file access changed. Sign in again.');
+      }
+      return _fetchPinFreeChatLegacyFile(
+        client: client,
+        vaultName: vaultName,
+        authToken: authToken,
+        fileId: fileId,
+        fallbackFileName: fallbackFileName,
+        fallbackMime: fallbackMime,
+      );
+    }
     if (!availableV2 && pinFreeZkFile && !requireReadyV2) {
       throw StateError('This file needs private migration before opening.');
     }
@@ -16470,6 +16518,170 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
     }
     return (bytes: out, contentType: mime, fileName: fileName);
+  }
+
+  /// Open one older chat-card file using a fresh OPAQUE proof and a local key.
+  /// The card never falls through to the legacy PIN-bearing download route.
+  Future<({Uint8List bytes, String? contentType, String fileName})>
+      _fetchPinFreeChatLegacyFile({
+    required VaultAIClient client,
+    required String vaultName,
+    required String authToken,
+    required String fileId,
+    required String fallbackFileName,
+    required String? fallbackMime,
+  }) async {
+    final app = context.read<AppState>();
+    final vaultId = app.vaultId;
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    final handle = app.vaultHandle;
+    final sessionEpoch = app._sessionEpoch;
+    final foregroundEpoch = app._sessionProbeEpoch;
+    final terminationGeneration = st.SessionTermination.instance.generation;
+    bool currentAccess() =>
+        mounted && app.authed && app.unlocked && app._sessionForeground &&
+        !app.sessionVerificationBlocked &&
+        app.sessionToken == authToken && app.vaultId == vaultId &&
+        app.vaultName == vaultName && app.vaultHandle == handle &&
+        app._sessionEpoch == sessionEpoch &&
+        app._sessionProbeEpoch == foregroundEpoch &&
+        st.SessionTermination.instance.generation == terminationGeneration &&
+        !st.SessionTermination.instance.isTerminated &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
+        identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
+        ZkPinFreeFileSession.instance.downloadOfferedForToken(authToken);
+    if (vaultId == null || mvk == null || handle?.isNotEmpty != true ||
+        !currentAccess()) {
+      throw StateError('Private file access is unavailable.');
+    }
+
+    final inventory = await client.listZkFileMetadata(
+      authToken: authToken, requireLegacyComplete: true,
+    );
+    if (!currentAccess()) throw StateError('Vault session changed');
+    final matches = (inventory['files'] as List)
+        .whereType<Map<String, dynamic>>()
+        .where((row) => row['id'] == fileId)
+        .toList();
+    if (matches.length != 1 || matches.single['v2_ready'] == true ||
+        matches.single['v2_retired'] == true) {
+      throw const FormatException('Older file is unavailable');
+    }
+    final listed = matches.single;
+    final listedName = listed['saved_name'] is String &&
+            (listed['saved_name'] as String).trim().isNotEmpty
+        ? listed['saved_name'] as String
+        : listed['file_name'] is String &&
+                (listed['file_name'] as String).trim().isNotEmpty
+            ? listed['file_name'] as String
+            : fallbackFileName;
+    final listedMime = listed['content_type'] is String &&
+            (listed['content_type'] as String).trim().isNotEmpty
+        ? listed['content_type'] as String
+        : fallbackMime;
+    final storageMode = listed['storage_mode'] ?? 'inline';
+    if (storageMode != 'inline' && storageMode != 'chunked' &&
+        storageMode != 'chunks') {
+      throw const FormatException('Unsupported older file storage');
+    }
+
+    final action = ephemeral_file.EphemeralLegacyFileAction(
+      promptPin: () => _promptForActionPin(context, 'Verify file download'),
+      verifyPin: (pin) {
+        if (!currentAccess()) throw StateError('Vault session changed');
+        return _zkActionProof(app, authToken, pin);
+      },
+      deriveKey: (pin) => _ephemeralLegacyContentKey(
+        app: app, token: authToken, vaultId: vaultId, pin: pin,
+        accessIsCurrent: currentAccess,
+      ),
+      accessIsCurrent: currentAccess,
+    );
+    try {
+      final legacyKey = await action.open();
+      if (!currentAccess()) throw StateError('Vault session changed');
+      if (storageMode == 'chunked' || storageMode == 'chunks') {
+        final proof = await action.proof();
+        final manifest = await client.getZkLegacyChunkedManifest(
+          authToken: authToken, fileId: fileId, zkProofToken: proof,
+          accessGuard: () {
+            if (!currentAccess()) throw StateError('Vault session changed');
+          },
+        );
+        if (!currentAccess() || manifest['file_size'] != listed['file_size'] ||
+            manifest['chunk_size'] != listed['chunk_size'] ||
+            manifest['chunk_count'] != listed['chunk_count']) {
+          throw const FormatException('Older file changed before download');
+        }
+        final keyBytes = Uint8List.fromList(await legacyKey.extractBytes());
+        late Uint8List bytes;
+        try {
+          bytes = await legacy_chunked_download.LegacyChunkedLocalDownload(
+            readEncryptedFrame: (index) => client.downloadChunk(
+              authToken: authToken, fileId: fileId, chunkIndex: index,
+              downloadToken: manifest['download_token'] as String,
+            ),
+            legacyKey: keyBytes,
+            accessIsCurrent: currentAccess,
+          ).read(
+            fileSize: manifest['file_size'] as int,
+            chunkSize: manifest['chunk_size'] as int,
+            chunkCount: manifest['chunk_count'] as int,
+          );
+        } finally {
+          keyBytes.fillRange(0, keyBytes.length, 0);
+        }
+        final refreshed = await client.listZkFileMetadata(
+          authToken: authToken, requireLegacyComplete: true,
+        );
+        if (!currentAccess()) throw StateError('Vault session changed');
+        final currentRows = (refreshed['files'] as List)
+            .whereType<Map<String, dynamic>>()
+            .where((row) => row['id'] == fileId)
+            .toList();
+        if (currentRows.length != 1) {
+          throw const FormatException('Older file changed during download');
+        }
+        requireUnchangedLegacyFileMetadata(listed, currentRows.single);
+        return (bytes: bytes, contentType: listedMime, fileName: listedName);
+      }
+
+      Future<Map<String, dynamic>> post(
+          String path, Map<String, dynamic> body) async {
+        if (path != '/vault/legacy-ciphertext/export/start' &&
+            path != '/vault/legacy-ciphertext/export/page') {
+          throw StateError('Unsupported older file export route');
+        }
+        if (!currentAccess()) throw StateError('Vault session changed');
+        final result = await _zkHttpPost(path, body, bearerToken: authToken);
+        if (!currentAccess()) throw StateError('Vault session changed');
+        return result;
+      }
+      final reader = legacy_file_read.LegacyFileReadSession(
+        export: legacy_export.LegacyCiphertextExportClient(
+          post: post, proofProvider: action.proof,
+        ),
+        codec: legacy_codec.LegacyCiphertextMigrationCodec(
+          legacyKey: legacyKey, mvk: mvk,
+        ),
+        isCurrent: currentAccess,
+      );
+      try {
+        final opened = await reader.readFileWith(fileId, (opened) async {
+          requireUnchangedLegacyFileMetadata(
+            listed, opened.sourceMetadata, sourceIsExport: true,
+          );
+          return opened;
+        });
+        if (!currentAccess()) throw StateError('Vault session changed');
+        return (bytes: opened.bytes, contentType: listedMime,
+                fileName: listedName);
+      } finally {
+        reader.close();
+      }
+    } finally {
+      action.close();
+    }
   }
 
   Future<Map<String, dynamic>?> _fetchRelatedFilesEnvelope(
@@ -16846,6 +17058,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         fallbackFileName: msg.fileName!,
         fallbackMime: msg.mimeType,
         requireReadyV2: msg.payload?['zk_private_chat_v2'] == true,
+        requirePinFreeChat: msg.payload?['pin_free_chat_file'] == true,
       );
 
       if (!mounted) return;
@@ -17036,6 +17249,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         fallbackFileName: msg.fileName!,
         fallbackMime: msg.mimeType,
         requireReadyV2: msg.payload?['zk_private_chat_v2'] == true,
+        requirePinFreeChat: msg.payload?['pin_free_chat_file'] == true,
       );
       if (!mounted) return;
       final ok = FileDownloader().downloadBytes(
@@ -18624,6 +18838,83 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     return true;
   }
 
+  /// A private chat filename lookup reads only session-scoped metadata. An
+  /// older match becomes a card only when the same session has the proof-only
+  /// download offer; opening that card derives its key on this device.
+  Future<bool> _tryPinFreeChatFileLookup({
+    required VaultAIClient client,
+    required String token,
+    required String text,
+    required bool Function() accessIsCurrent,
+  }) async {
+    final query = extractLocalFileLookupQuery(text);
+    if (query == null) return false;
+    final listOffered = ZkPinFreeFileSession.instance.listOfferedForToken(token);
+    final downloadOffered =
+        ZkPinFreeFileSession.instance.downloadOfferedForToken(token);
+    if (!listOffered || !downloadOffered) {
+      if (!signedPrivateChatOfferedForToken(token)) return false;
+      _appendLocalVaultReply(text,
+          'Private file access changed. Sign in again to search your files.');
+      return true;
+    }
+    if (!accessIsCurrent()) throw StateError('Vault session changed');
+    final inventory = await client.listZkFileMetadata(
+      authToken: token, requireLegacyComplete: true,
+    );
+    if (!accessIsCurrent()) throw StateError('Vault session changed');
+    final raw = inventory['files'];
+    if (raw is! List || raw.length > 500) {
+      throw const FormatException('Private file inventory is unavailable');
+    }
+    final files = raw.whereType<Map<String, dynamic>>()
+        .map(_VaultStoredFile.fromJson)
+        .toList(growable: false);
+    if (files.length != raw.length) {
+      throw const FormatException('Private file inventory is incomplete');
+    }
+    final lookup = resolveLocalVaultFileLookupResult(
+      query: query,
+      files: files.map((file) => VaultLocalFileLookupEntry(
+        id: file.id, fileName: file.fileName, savedName: file.savedName,
+        mimeType: file.contentType, assetType: file.assetType,
+        relativePath: file.relativePath, sizeBytes: file.fileSize,
+      )),
+    );
+    if (lookup.isAmbiguous) {
+      _appendLocalVaultReply(text,
+          'Several saved files match "$query". Open Files and choose one.');
+      return true;
+    }
+    final match = lookup.match;
+    if (match == null) return false;
+    final selected = files.where((file) => file.id == match.entry.id).toList();
+    if (selected.length != 1 || !accessIsCurrent()) {
+      throw StateError('Private file selection changed');
+    }
+    final file = selected.single;
+    final label = match.entry.displayName;
+    _zkPrivateChatFlow?.clear();
+    setState(() {
+      selectedSection = _DashboardSection.chat;
+      _nextSelectionHint = {'kind': 'file', 'id': file.id};
+      input.clear();
+      msgs.add(_Msg('user', text));
+      msgs.add(_Msg(
+        'assistant', 'Found “$label” among your saved files.',
+        kind: ChatMessage.kVaultFile,
+        fileId: file.id,
+        fileName: file.fileName,
+        mimeType: file.contentType,
+        payload: file.v2Available
+            ? const {'zk_private_chat_v2': true}
+            : const {'pin_free_chat_file': true},
+      ));
+    });
+    _scrollToBottom();
+    return true;
+  }
+
   Future<void> _send() async {
     if (_sendDispatchInFlight || sending) return;
     if (input.text.trim().isEmpty && attachments.isEmpty) return;
@@ -18720,6 +19011,22 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _appendLocalVaultReply(
         text,
         'Private memory search is unavailable. Please try again later.',
+      );
+      return;
+    }
+    try {
+      if (await _tryPinFreeChatFileLookup(
+        client: client,
+        token: token,
+        text: text,
+        accessIsCurrent: memoryAccessIsCurrent,
+      )) return;
+      if (!memoryAccessIsCurrent()) return;
+    } catch (_) {
+      if (!memoryAccessIsCurrent()) return;
+      _appendLocalVaultReply(
+        text,
+        'Private file search is unavailable. Please try again later.',
       );
       return;
     }
