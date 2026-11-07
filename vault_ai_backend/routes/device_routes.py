@@ -434,6 +434,18 @@ class SelfApprovalRequest(BaseModel):
     zk_proof_token: Optional[str] = None
 
 
+class SelfApprovalProofRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    zk_proof_token: str
+
+
+def _require_pending_proof_self_approval(vault_id: str) -> None:
+    from routes.auth_zk_routes import pending_device_proof_enabled
+
+    if not pending_device_proof_enabled() or not is_vault_zk_adopted(vault_id):
+        raise HTTPException(status_code=404, detail="not_found")
+
+
 def _verify_self_approval_credential(
     vault_id: str, device_id: str, principal, payload: SelfApprovalRequest,
 ) -> None:
@@ -867,6 +879,38 @@ async def finalize_self_approval_endpoint(
         "device_id": device_id,
         "already_trusted": False,
     }
+
+
+@router.post("/devices/request-self-approval-proof")
+async def request_self_approval_proof_endpoint(
+    payload: SelfApprovalProofRequest,
+    request: Request,
+    principal=Depends(verify_session_token),
+):
+    """Proof-only form of pending-device self-approval for strict clients."""
+
+    _require_pending_proof_self_approval(principal["vault_id"])
+    return await request_self_approval_endpoint(
+        SelfApprovalRequest(zk_proof_token=payload.zk_proof_token),
+        request,
+        principal,
+    )
+
+
+@router.post("/devices/finalize-self-approval-proof")
+async def finalize_self_approval_proof_endpoint(
+    payload: SelfApprovalProofRequest,
+    request: Request,
+    principal=Depends(verify_session_token),
+):
+    """Proof-only final approval; the existing cooldown and session gates run."""
+
+    _require_pending_proof_self_approval(principal["vault_id"])
+    return await finalize_self_approval_endpoint(
+        SelfApprovalRequest(zk_proof_token=payload.zk_proof_token),
+        request,
+        principal,
+    )
 
 
 @router.post("/devices/cancel-self-approval")

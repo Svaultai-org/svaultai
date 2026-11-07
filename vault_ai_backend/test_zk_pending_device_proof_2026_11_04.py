@@ -333,6 +333,48 @@ def test_self_approval_finalize_needs_new_proof_and_elapsed_cooldown(harness):
     assert db.device_status == "trusted"
 
 
+def test_strict_self_approval_routes_accept_proof_only(harness):
+    zk, device, client, db, selected, handle, finish, *rest = harness
+    headers = {"X-Device-Id": DEVICE_A}
+    for path in (
+        "/devices/request-self-approval-proof",
+        "/devices/finalize-self-approval-proof",
+    ):
+        refused = client.post(path, headers=headers, json={
+            "pin": "123456", "zk_proof_token": "synthetic-proof",
+        })
+        assert refused.status_code == 422, refused.text
+    assert db.cooldown_until is None and db.device_status == "pending"
+
+    _, first_proof = _proof(harness)
+    started = client.post("/devices/request-self-approval-proof",
+                          headers=headers, json={"zk_proof_token": first_proof})
+    assert started.status_code == 200, started.text
+    assert first_proof not in db.slots
+    db.cooldown_until = db.now - timedelta(seconds=1)
+
+    _, second_proof = _proof(harness)
+    approved = client.post("/devices/finalize-self-approval-proof",
+                           headers=headers, json={"zk_proof_token": second_proof})
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["status"] == "trusted"
+    assert second_proof not in db.slots and db.device_status == "trusted"
+
+
+def test_strict_self_approval_route_is_off_without_pending_proof(harness):
+    zk, device, client, db, selected, handle, finish, *rest = harness
+    with mock.patch.dict("os.environ", {
+        "VAULTAI_ZK_PENDING_DEVICE_PROOF_ENABLED": "false",
+    }):
+        response = client.post(
+            "/devices/request-self-approval-proof",
+            headers={"X-Device-Id": DEVICE_A},
+            json={"zk_proof_token": "synthetic-proof"},
+        )
+    assert response.status_code == 404
+    assert db.cooldown_until is None
+
+
 def test_pending_init_and_finalize_are_rate_limited(harness):
     zk, device, client, db, selected, handle, finish, init_limit, final_limit, bad_limit, issue, legacy_pin, notify, app = harness
     init_limit.side_effect = HTTPException(status_code=429, detail="rate limited")
