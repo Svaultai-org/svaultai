@@ -17,6 +17,7 @@ from auth_local import (
     PIN_FREE_FILE_CREATE_OFFER,
     PIN_FREE_FILE_DOWNLOAD_OFFER,
     PIN_FREE_FILE_LIST_OFFER,
+    PIN_FREE_FILE_MUTATION_OFFER,
     PIN_FREE_PASSWORD_ANALYSIS_OFFER,
     PIN_FREE_PRIVATE_CHAT_OFFER,
     _parse_token_claims,
@@ -25,6 +26,13 @@ from auth_local import (
 
 _DEEP_JOB = re.compile(r"^/vault-analysis/deep-answer/[^/]+/(?:poll|debug)$")
 _RELATED_FILE = re.compile(r"^/files/[^/]+/related$")
+_OLD_FILE_MUTATIONS = {
+    ("POST", "/name-file"),
+    ("PATCH", "/manage/file"),
+    ("DELETE", "/manage/file"),
+    ("POST", "/manage/file/delete"),
+    ("DELETE", "/delete-file"),
+}
 
 
 def _replaced_private_chat_path(path: str) -> bool:
@@ -53,8 +61,11 @@ def _signed_offer_bits(headers: list[tuple[bytes, bytes]]) -> int:
     return offers
 
 
-def _replaced_pin_route(path: str, offers: int) -> str | None:
+def _replaced_pin_route(path: str, offers: int, method: str = "POST") -> str | None:
     path = path.rstrip("/")
+    if (offers & PIN_FREE_FILE_MUTATION_OFFER and
+            (method, path) in _OLD_FILE_MUTATIONS):
+        return "pin_free_file_mutation_required"
     if (offers & PIN_FREE_BENEFICIARY_OFFER and
             path in ("/beneficiary/create", "/beneficiary/link",
                      "/beneficiary/request-transfer",
@@ -80,8 +91,12 @@ def _replaced_pin_route(path: str, offers: int) -> str | None:
     return None
 
 
-def _candidate_pin_path(path: str) -> bool:
+def _candidate_pin_path(path: str, method: str = "POST") -> bool:
     path = path.rstrip("/")
+    if (method, path) in _OLD_FILE_MUTATIONS:
+        return True
+    if method != "POST":
+        return False
     return (_replaced_private_chat_path(path) or
             path in ("/beneficiary/create", "/beneficiary/link",
                      "/beneficiary/request-transfer",
@@ -100,10 +115,11 @@ class SignedPrivateChatPreBodyGate:
 
     async def __call__(self, scope, receive, send) -> None:
         reason = None
-        if (scope.get("type") == "http" and scope.get("method") == "POST" and
-                _candidate_pin_path(scope.get("path", ""))):
+        method = scope.get("method", "")
+        if (scope.get("type") == "http" and
+                _candidate_pin_path(scope.get("path", ""), method)):
             offers = _signed_offer_bits(scope.get("headers", []))
-            reason = _replaced_pin_route(scope.get("path", ""), offers)
+            reason = _replaced_pin_route(scope.get("path", ""), offers, method)
         if reason is not None:
             response = JSONResponse(
                 status_code=409,

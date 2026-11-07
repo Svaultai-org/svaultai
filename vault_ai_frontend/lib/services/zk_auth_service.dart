@@ -65,6 +65,10 @@ const bool kSignedFileCreateClientEnabled = bool.fromEnvironment(
   'VAULTAI_ENABLE_SIGNED_FILE_CREATE',
   defaultValue: false,
 );
+const bool kSignedFileMutationClientEnabled = bool.fromEnvironment(
+  'VAULTAI_ENABLE_SIGNED_FILE_MUTATION',
+  defaultValue: false,
+);
 const bool kSignedPrivateChatClientEnabled = bool.fromEnvironment(
   'VAULTAI_ENABLE_SIGNED_PRIVATE_CHAT',
   defaultValue: false,
@@ -90,13 +94,13 @@ bool hasSignedBeneficiaryOffer(String token) {
       return false;
     }
     if (wire[0] == 3) {
-      if (wire.length != 50 || (wire[1] & ~95) != 0) return true;
+      if (wire.length != 50 || (wire[1] & ~127) != 0) return true;
       return (wire[1] & 64) != 0;
     }
     if (wire[0] == 4) {
       if (wire.length != 51) return true;
       final offers = (wire[1] << 8) | wire[2];
-      if ((offers & ~607) != 0 || (offers & 519) != 519) return true;
+      if ((offers & ~639) != 0 || (offers & 519) != 519) return true;
       return (offers & 64) != 0;
     }
     return false;
@@ -109,6 +113,7 @@ bool hasSignedBeneficiaryOffer(String token) {
 bool signedOfferTokenMatches(
   Map<String, dynamic> response, {
   bool requireFileCreateOffer = false,
+  bool requireFileMutationOffer = false,
   bool requirePrivateChatOffer = false,
   bool requirePasswordAnalysisOffer = false,
   bool requireBeneficiaryOffer = false,
@@ -121,6 +126,10 @@ bool signedOfferTokenMatches(
       response['pin_free_file_create_signed'] == true) {
     return false;
   }
+  if (requireFileMutationOffer &&
+      response['pin_free_file_mutation_signed'] != true) return false;
+  if (!requireFileMutationOffer &&
+      response['pin_free_file_mutation_signed'] == true) return false;
   if (requirePrivateChatOffer &&
       response['pin_free_private_chat_signed'] != true) {
     return false;
@@ -156,6 +165,7 @@ bool signedOfferTokenMatches(
         (response['pin_free_legacy_file_download'] == true ? 4 : 0) |
         (requireFileCreateOffer ? 8 : 0) |
         (requirePasswordAnalysisOffer ? 16 : 0) |
+        (requireFileMutationOffer ? 32 : 0) |
         (requireBeneficiaryOffer &&
                 response['pin_free_beneficiary_v2'] == true
             ? 64
@@ -1024,12 +1034,14 @@ class ZkAuthService {
       },
     );
     if ((kSignedReadOffersClientEnabled || kSignedFileCreateClientEnabled ||
+            kSignedFileMutationClientEnabled ||
             kSignedPrivateChatClientEnabled ||
             kSignedPasswordAnalysisClientEnabled ||
             kSignedBeneficiaryClientEnabled) &&
         !signedOfferTokenMatches(
           finalizeResponse,
           requireFileCreateOffer: kSignedFileCreateClientEnabled,
+          requireFileMutationOffer: kSignedFileMutationClientEnabled,
           requirePrivateChatOffer: kSignedPrivateChatClientEnabled,
           requirePasswordAnalysisOffer: kSignedPasswordAnalysisClientEnabled,
           requireBeneficiaryOffer: kSignedBeneficiaryClientEnabled,

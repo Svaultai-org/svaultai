@@ -268,13 +268,13 @@ int _signedOfferBits(String token) {
     final wire = base64Url.decode(base64Url.normalize(token));
     if (wire.length == 48 || wire.isEmpty) return 0;
     if (wire[0] == 3) {
-      if (wire.length != 50 || (wire[1] & ~95) != 0) return 95;
+      if (wire.length != 50 || (wire[1] & ~127) != 0) return 127;
       return wire[1];
     }
     if (wire[0] == 4) {
-      if (wire.length != 51) return 607;
+      if (wire.length != 51) return 639;
       final offers = (wire[1] << 8) | wire[2];
-      if ((offers & ~607) != 0 || (offers & 519) != 519) return 607;
+      if ((offers & ~639) != 0 || (offers & 519) != 519) return 639;
       return offers;
     }
     return 0;
@@ -288,6 +288,9 @@ bool signedPrivateChatOfferedForToken(String token) =>
 
 bool signedPasswordAnalysisOfferedForToken(String token) =>
     (_signedOfferBits(token) & 16) != 0;
+
+bool signedFileMutationOfferedForToken(String token) =>
+    (_signedOfferBits(token) & 32) != 0;
 
 /// An authenticated OPAQUE offer replaces a specific older read route for the
 /// life of that bearer. Keep this check at the HTTP boundary as well as at
@@ -306,6 +309,11 @@ void assertOfferedReadPinFreeRequest(
   final signedOffers = _signedOfferBits(token);
   // FastAPI can redirect a trailing slash while preserving the POST body.
   final path = uri.path.replaceFirst(RegExp(r'/+$'), '');
+  if ((signedOffers & 32) != 0 &&
+      (path == '/name-file' || path == '/manage/file' ||
+          path == '/manage/file/delete' || path == '/delete-file')) {
+    throw StateError('This file action uses the private vault route.');
+  }
   final fileSession = ZkPinFreeFileSession.instance;
   final itemSession = ZkPinFreeItemReadSession.instance;
   final offered = switch (path) {
@@ -6381,7 +6389,13 @@ class VaultAIClient {
     }
 
     checkAccess();
-    final uri = Uri.parse('$baseUrl/manage/file/delete');
+    final mutationOffered = signedFileMutationOfferedForToken(authToken);
+    if (mutationOffered && zkProofToken == null) {
+      throw StateError('Private file deletion needs vault verification.');
+    }
+    final uri = Uri.parse(mutationOffered
+        ? '$baseUrl/manage/file/delete-proof'
+        : '$baseUrl/manage/file/delete');
 
     final response = await _sessionHttpWithGuard(checkAccess).post(
       uri,

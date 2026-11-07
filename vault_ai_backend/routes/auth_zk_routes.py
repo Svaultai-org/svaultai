@@ -197,6 +197,7 @@ from auth_local import (
     PIN_FREE_FILE_LIST_OFFER,
     PIN_FREE_FILE_DOWNLOAD_OFFER,
     PIN_FREE_FILE_CREATE_OFFER,
+    PIN_FREE_FILE_MUTATION_OFFER,
     PIN_FREE_PASSWORD_ANALYSIS_OFFER,
     PIN_FREE_BENEFICIARY_OFFER,
     PIN_FREE_PRIVATE_CHAT_OFFER,
@@ -913,6 +914,7 @@ class ZkLoginFinalizeResponse(BaseModel):
     pin_free_v2_file_upload: bool = False
     pin_free_read_offers_signed: bool = False
     pin_free_file_create_signed: bool = False
+    pin_free_file_mutation_signed: bool = False
     pin_free_password_analysis_signed: bool = False
     pin_free_beneficiary_signed: bool = False
     pin_free_beneficiary_v2: bool = False
@@ -958,6 +960,27 @@ def _signed_file_create_negotiation(request: Request, *, signed_reads: bool) -> 
         raise HTTPException(status_code=409, detail="signed_read_offers_required")
     if os.getenv("VAULTAI_SIGNED_FILE_CREATE_ENABLED", "false").strip().lower() != "true":
         raise HTTPException(status_code=409, detail="signed_file_create_unavailable")
+    return True
+
+
+def _signed_file_mutation_negotiation(
+    request: Request, *, signed_reads: bool,
+) -> bool:
+    header = request.headers.get("x-svaultai-pin-free-file-mutation", "")
+    if header not in ("", "1"):
+        raise HTTPException(status_code=400,
+                            detail="invalid_file_mutation_capability")
+    if header != "1":
+        return False
+    if not signed_reads or not request_has_file_v2_reader(request):
+        raise HTTPException(status_code=409,
+                            detail="signed_read_offers_required")
+    for flag in ("VAULTAI_SIGNED_FILE_MUTATION_ENABLED",
+                 "VAULTAI_ZK_FILE_DELETE_PROOF_ENABLED",
+                 "VAULTAI_ZK_FILE_V2_RENAME_ENABLED"):
+        if os.getenv(flag, "false").strip().lower() != "true":
+            raise HTTPException(status_code=409,
+                                detail="signed_file_mutation_unavailable")
     return True
 
 
@@ -1039,12 +1062,14 @@ def _beneficiary_v2_offer_ready(conn, vault_id: str) -> bool:
 def _signed_offer_token(
     token: str, *, signed_reads: bool, item_read: bool,
     file_list: bool, file_download: bool, file_create: bool,
+    file_mutation: bool = False,
     private_chat: bool = False,
     password_analysis: bool = False,
     beneficiary: bool = False,
 ) -> str:
     if not signed_reads:
-        if file_create or private_chat or password_analysis or beneficiary:
+        if (file_create or file_mutation or private_chat or
+                password_analysis or beneficiary):
             raise ValueError("capability requires negotiated session offers")
         return token
     if file_download and not file_list:
@@ -1055,6 +1080,7 @@ def _signed_offer_token(
             (PIN_FREE_FILE_LIST_OFFER if file_list else 0) |
             (PIN_FREE_FILE_DOWNLOAD_OFFER if file_download else 0) |
             (PIN_FREE_FILE_CREATE_OFFER if file_create else 0) |
+            (PIN_FREE_FILE_MUTATION_OFFER if file_mutation else 0) |
             (PIN_FREE_PASSWORD_ANALYSIS_OFFER if password_analysis else 0) |
             (PIN_FREE_BENEFICIARY_OFFER if beneficiary else 0) |
             (PIN_FREE_PRIVATE_CHAT_OFFER if private_chat else 0))
@@ -1217,6 +1243,9 @@ def _zk_login_finalize_sync(
     with _zk_login_phase("validation"):
         signed_read_offers_requested = _signed_read_offer_negotiation(request)
         signed_file_create_requested = _signed_file_create_negotiation(
+            request, signed_reads=signed_read_offers_requested,
+        )
+        signed_file_mutation_requested = _signed_file_mutation_negotiation(
             request, signed_reads=signed_read_offers_requested,
         )
         signed_password_analysis_requested = _signed_password_analysis_negotiation(
@@ -1408,6 +1437,7 @@ def _zk_login_finalize_sync(
             # A negotiated client must never fall back to the old PIN upload
             # if a transient trust/route check prevents its V2 write.
             file_create=signed_file_create_requested,
+            file_mutation=signed_file_mutation_requested,
             password_analysis=signed_password_analysis_requested,
             beneficiary=beneficiary_capable,
             private_chat=(signed_private_chat_requested and offer_base and
@@ -1429,6 +1459,7 @@ def _zk_login_finalize_sync(
             pin_free_v2_file_upload=file_create_capable,
             pin_free_read_offers_signed=signed_read_offers_requested,
             pin_free_file_create_signed=signed_file_create_requested,
+            pin_free_file_mutation_signed=signed_file_mutation_requested,
             pin_free_password_analysis_signed=signed_password_analysis_requested,
             pin_free_beneficiary_signed=signed_beneficiary_requested,
             pin_free_beneficiary_v2=beneficiary_capable,

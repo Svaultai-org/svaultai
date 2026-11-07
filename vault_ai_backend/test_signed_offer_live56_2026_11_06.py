@@ -62,7 +62,7 @@ def test_live_legacy_bearer_unchanged_and_v3_bits_authenticated():
     with pytest.raises(ValueError):
         auth_local.sign_opaque_read_offer_token(signed, 0)
     with pytest.raises(ValueError):
-        auth_local.sign_opaque_read_offer_token(old, 32)
+        auth_local.sign_opaque_read_offer_token(old, 64)
 
 
 def test_signed_routes_block_only_offered_reads_and_old_upload_actions():

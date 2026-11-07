@@ -82,6 +82,90 @@ def test_signed_offer_blocks_replaced_file_post_before_receive(bits, path, reaso
     )
 
 
+@pytest.mark.parametrize("method,path", [
+    ("POST", "/name-file"),
+    ("PATCH", "/manage/file"),
+    ("DELETE", "/manage/file"),
+    ("POST", "/manage/file/delete"),
+    ("DELETE", "/delete-file"),
+])
+@pytest.mark.parametrize("bits", [39, 551])
+def test_signed_file_mutation_offer_blocks_old_routes_before_body(
+    method, path, bits,
+):
+    old = auth_local._format_token(bytes(range(16)))
+    offered = auth_local.sign_opaque_read_offer_token(old, bits)
+    for candidate in (path, path + "/"):
+        assert asyncio.run(_probe(candidate, _header(offered), method)) == (
+            0, 409, {"detail": "pin_free_file_mutation_required"},
+        )
+    assert asyncio.run(_probe(path, _header(old), method)) == (1, 200, b"ok")
+    assert asyncio.run(_probe(path, _header(old) + _header(offered), method)) == (
+        0, 409, {"detail": "pin_free_file_mutation_required"},
+    )
+    assert asyncio.run(_probe("/manage/file/delete-proof", _header(offered))) == (
+        1, 200, b"ok",
+    )
+    assert asyncio.run(_probe(path, _header(offered), "OPTIONS")) == (
+        1, 200, b"ok",
+    )
+    with pytest.raises(HTTPException) as blocked:
+        auth_local.require_signed_offer_route(
+            {"pin_free_read_offers": bits}, path=path,
+        )
+    assert blocked.value.detail == "pin_free_file_mutation_required"
+
+
+def test_file_mutation_offer_needs_explicit_client_and_server_flags(monkeypatch):
+    def request(*, offered: bool, reader: bool) -> Request:
+        headers = []
+        if offered:
+            headers.append((b"x-svaultai-pin-free-file-mutation", b"1"))
+        if reader:
+            headers.append((b"x-svaultai-file-v2-reader", b"1"))
+        return Request({"type": "http", "method": "POST",
+                        "path": "/auth/zk-login-finalize", "headers": headers})
+
+    negotiate = auth_zk_routes._signed_file_mutation_negotiation
+    assert negotiate(request(offered=False, reader=False),
+                     signed_reads=False) is False
+    with pytest.raises(HTTPException) as disabled:
+        negotiate(request(offered=True, reader=True), signed_reads=True)
+    assert disabled.value.detail == "signed_file_mutation_unavailable"
+    for flag in ("VAULTAI_SIGNED_FILE_MUTATION_ENABLED",
+                 "VAULTAI_ZK_FILE_DELETE_PROOF_ENABLED",
+                 "VAULTAI_ZK_FILE_V2_RENAME_ENABLED"):
+        monkeypatch.setenv(flag, "true")
+    for signed_reads, reader in ((False, True), (True, False)):
+        with pytest.raises(HTTPException) as missing:
+            negotiate(request(offered=True, reader=reader),
+                      signed_reads=signed_reads)
+        assert missing.value.detail == "signed_read_offers_required"
+    assert negotiate(request(offered=True, reader=True), signed_reads=True)
+    old = auth_local._format_token(bytes(range(16)))
+    issued = auth_zk_routes._signed_offer_token(
+        old, signed_reads=True, item_read=True, file_list=True,
+        file_download=True, file_create=False, file_mutation=True,
+    )
+    assert auth_local._parse_token_claims(issued) == (bytes(range(16)), 39)
+
+
+def test_existing_signed_clients_keep_old_mutations_without_new_bit():
+    old = auth_local._format_token(bytes(range(16)))
+    for bits in (15, 519, 543):
+        offered = auth_local.sign_opaque_read_offer_token(old, bits)
+        for method, path in (
+            ("POST", "/name-file"),
+            ("PATCH", "/manage/file"),
+            ("DELETE", "/manage/file"),
+            ("POST", "/manage/file/delete"),
+            ("DELETE", "/delete-file"),
+        ):
+            assert asyncio.run(_probe(path, _header(offered), method)) == (
+                1, 200, b"ok",
+            )
+
+
 def test_pin_free_successors_and_unoffered_routes_remain_available():
     old = auth_local._format_token(bytes(range(16)))
     offered = auth_local.sign_opaque_read_offer_token(old, 15)

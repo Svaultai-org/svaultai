@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from psycopg2.extras import RealDictCursor
 
 
@@ -66,6 +66,14 @@ class FileDeleteRequest(BaseModel):
     file_id: str
     pin: Optional[str] = Field(default=None, min_length=1, max_length=64)
     zk_proof_token: Optional[str] = Field(default=None, min_length=1, max_length=128)
+
+
+class FileDeleteProofRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    vault_name: str
+    file_id: str
+    zk_proof_token: str = Field(min_length=1, max_length=128)
 
 
 def _normalize(value: str) -> str:
@@ -561,3 +569,18 @@ async def delete_file_post(
 ):
     vault_id = principal["vault_id"]
     return _delete_file_impl(payload, vault_id, principal)
+
+
+@router.post("/file/delete-proof")
+async def delete_file_proof(
+    payload: FileDeleteProofRequest,
+    principal=Depends(verify_trusted_device),
+):
+    vault_id = principal["vault_id"]
+    return _delete_file_impl(
+        FileDeleteRequest(
+            vault_name=payload.vault_name,
+            file_id=payload.file_id,
+            zk_proof_token=payload.zk_proof_token,
+        ), vault_id, principal,
+    )

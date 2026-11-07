@@ -7,6 +7,7 @@ from unittest import mock
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 import main
 import vault_core
@@ -62,6 +63,28 @@ class _StagedFileDb:
         pass
 
 
+class _ProofDeleteDb(_StagedFileDb):
+    def __init__(self):
+        super().__init__()
+
+        def execute(sql, params):
+            self.cur.sql.append((sql, params))
+            normalized = " ".join(sql.lower().split())
+            if "select storage_mode" in normalized:
+                self.cur.result = {"has_legacy_inline": True}
+            elif "from file_v2_records" in normalized:
+                self.cur.result = None
+            elif "delete from uploaded_files" in normalized:
+                self.cur.result = {
+                    "id": "synthetic-file", "file_name": "opaque-label",
+                    "file_size": 4,
+                }
+            else:
+                self.cur.result = None
+
+        self.cur.execute = execute
+
+
 @pytest.fixture
 def proof_gate(monkeypatch):
     monkeypatch.setenv("VAULTAI_ZK_FILE_DELETE_PROOF_ENABLED", "true")
@@ -115,6 +138,31 @@ def test_vault_manage_delete_aliases_pass_session_to_proof_gate(
         assert raised.value.status_code == 409
         proof_gate.assert_called_once_with("synthetic-proof", PRINCIPAL)
     verify_pin.assert_not_called()
+
+
+def test_proof_only_file_delete_roundtrip_and_no_pin_field(
+    monkeypatch, proof_gate,
+):
+    db = _ProofDeleteDb()
+    verify_pin = mock.Mock()
+    monkeypatch.setattr(vault_manage_routes, "get_db", lambda: db)
+    monkeypatch.setattr(vault_manage_routes, "verify_vault_pin", verify_pin)
+    payload = vault_manage_routes.FileDeleteProofRequest(
+        vault_name="", file_id="synthetic-file",
+        zk_proof_token="synthetic-proof",
+    )
+    result = asyncio.run(vault_manage_routes.delete_file_proof(payload, PRINCIPAL))
+    assert result["status"] == "deleted"
+    assert result["file"]["id"] == "synthetic-file"
+    assert db.commits == 1
+    assert any("DELETE FROM uploaded_files" in sql for sql, _ in db.cur.sql)
+    proof_gate.assert_called_once_with("synthetic-proof", PRINCIPAL)
+    verify_pin.assert_not_called()
+    with pytest.raises(ValidationError):
+        vault_manage_routes.FileDeleteProofRequest.model_validate({
+            "vault_name": "", "file_id": "synthetic-file",
+            "zk_proof_token": "synthetic-proof", "pin": "synthetic-pin",
+        })
 
 
 @pytest.mark.parametrize("pin,proof,expected", [

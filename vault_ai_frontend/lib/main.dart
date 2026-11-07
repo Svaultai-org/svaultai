@@ -1153,6 +1153,7 @@ const bool kZkPrivateOnlyClientReady = kEnableZkPrivateChat &&
     kEnableKeylessSavedItemWrite &&
     kEnableZkBeneficiaryProof &&
     kEnableZkBeneficiaryV2Pairing &&
+    kEnableZkLegacyFileRename &&
     kEnableZkLegacyFileDeleteProof &&
     kEnableZkImportSessionActions;
 
@@ -5398,6 +5399,14 @@ Future<Map<String, dynamic>> _zkHttpPost(
       throw OpaqueUnavailable('Signed file creation needs the V2 writer.');
     }
     headers['X-SVaultAI-Pin-Free-File-Create'] = '1';
+  }
+  if (path == '/auth/zk-login-finalize' && kSignedFileMutationClientEnabled) {
+    if (!kSignedReadOffersClientEnabled || !kEnableFileV2UiRead ||
+        !kEnableZkLegacyFileRename || !kEnableZkLegacyFileDeleteProof) {
+      throw OpaqueUnavailable(
+          'Signed file mutation needs private rename and delete.');
+    }
+    headers['X-SVaultAI-Pin-Free-File-Mutation'] = '1';
   }
   if (path == '/auth/zk-login-finalize' && kSignedPrivateChatClientEnabled) {
     if (!kSignedPrivateChatLocalReadersReady ||
