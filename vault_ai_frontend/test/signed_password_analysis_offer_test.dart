@@ -1,6 +1,9 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/services/zk_auth_service.dart';
 
 String _signedToken(int bits) => base64Url
@@ -47,5 +50,31 @@ void main() {
       ),
       isFalse,
     );
+  });
+
+  test('signed analyzer offer rejects a raw PIN before HTTP send', () async {
+    final token = _signedToken(23);
+    final sent = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.invalid',
+      httpClient: MockClient((request) async {
+        sent.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+    expect(signedPasswordAnalysisOfferedForToken(token), isTrue);
+    await expectLater(
+      client.analyzePasswords(
+        authToken: token,
+        vaultName: 'Synthetic vault',
+        pin: '7319462085',
+      ),
+      throwsStateError,
+    );
+    expect(sent, isEmpty);
+  });
+
+  test('read-only offer alone does not claim local analyzer support', () {
+    expect(signedPasswordAnalysisOfferedForToken(_signedToken(7)), isFalse);
   });
 }

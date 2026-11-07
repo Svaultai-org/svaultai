@@ -20,8 +20,9 @@ import 'services/zk_local_password_analysis.dart';
 bool useLocalZkPasswordAnalysis({
   required bool hasZkHandle,
   required bool hasMvk,
+  bool signedPasswordAnalysisOffered = false,
 }) =>
-    hasZkHandle || hasMvk;
+    hasZkHandle || hasMvk || signedPasswordAnalysisOffered;
 
 class SecurityCenterPage extends StatefulWidget {
   const SecurityCenterPage({super.key});
@@ -44,10 +45,16 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
   
   bool _analyzing = false;
 
-  bool get _useLocalZkAnalysis => useLocalZkPasswordAnalysis(
-        hasZkHandle: context.read<AppState>().vaultHandle?.isNotEmpty == true,
-        hasMvk: zk_mvk_store.ZkActiveMvk.current() != null,
-      );
+  bool get _useLocalZkAnalysis {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    return useLocalZkPasswordAnalysis(
+      hasZkHandle: app.vaultHandle?.isNotEmpty == true,
+      hasMvk: zk_mvk_store.ZkActiveMvk.current() != null,
+      signedPasswordAnalysisOffered: token != null &&
+          signedPasswordAnalysisOfferedForToken(token),
+    );
+  }
 
   @override
   void initState() {

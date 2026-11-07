@@ -27,4 +27,15 @@ void main() {
       isFalse,
     );
   });
+
+  test('signed local analyzer offer cannot fall back after local key loss', () {
+    expect(
+      useLocalZkPasswordAnalysis(
+        hasZkHandle: false,
+        hasMvk: false,
+        signedPasswordAnalysisOffered: true,
+      ),
+      isTrue,
+    );
+  });
 }

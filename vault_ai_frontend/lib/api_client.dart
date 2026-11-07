@@ -241,13 +241,13 @@ int _signedOfferBits(String token) {
     final wire = base64Url.decode(base64Url.normalize(token));
     if (wire.length == 48 || wire.isEmpty) return 0;
     if (wire[0] == 3) {
-      if (wire.length != 50 || (wire[1] & ~15) != 0) return 15;
+      if (wire.length != 50 || (wire[1] & ~31) != 0) return 31;
       return wire[1];
     }
     if (wire[0] == 4) {
-      if (wire.length != 51) return 527;
+      if (wire.length != 51) return 543;
       final offers = (wire[1] << 8) | wire[2];
-      if ((offers & ~527) != 0 || (offers & 519) != 519) return 527;
+      if ((offers & ~543) != 0 || (offers & 519) != 519) return 543;
       return offers;
     }
     return 0;
@@ -258,6 +258,9 @@ int _signedOfferBits(String token) {
 
 bool signedPrivateChatOfferedForToken(String token) =>
     (_signedOfferBits(token) & 512) != 0;
+
+bool signedPasswordAnalysisOfferedForToken(String token) =>
+    (_signedOfferBits(token) & 16) != 0;
 
 /// An authenticated OPAQUE offer replaces a specific older read route for the
 /// life of that bearer. Keep this check at the HTTP boundary as well as at
@@ -293,6 +296,7 @@ void assertOfferedReadPinFreeRequest(
       (signedOffers & 518) != 0 || fileSession.listOfferedForToken(token) ||
           fileSession.downloadOfferedForToken(token),
     '/upload-file' || '/upload-file/init' => (signedOffers & 8) != 0,
+    '/security-center/analyze-passwords' => (signedOffers & 16) != 0,
     _ => false,
   };
   if (!offered) return;
