@@ -1203,10 +1203,28 @@ class TransferActionRequest(BaseModel):
     zk_proof_token: Optional[str] = None
 
 
+class BeneficiaryProofListRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    zk_proof_token: str = Field(..., min_length=1, max_length=128)
+
+
+class BeneficiaryProofActionRequest(BeneficiaryProofListRequest):
+    link_id: int = Field(..., gt=0)
+
+
 def _beneficiary_opaque_reauth_enabled() -> bool:
     return os.getenv(
         "VAULTAI_ZK_BENEFICIARY_PROOF_ENABLED", "false",
     ).strip().lower() == "true"
+
+
+def _require_beneficiary_proof_route(vault_id: str) -> None:
+    from vault_core import is_vault_zk_adopted
+
+    if not _beneficiary_opaque_reauth_enabled() or not is_vault_zk_adopted(
+        vault_id
+    ):
+        raise HTTPException(status_code=404, detail="not_found")
 
 
 def _verify_beneficiary_action(
@@ -11635,6 +11653,79 @@ async def beneficiary_delete_endpoint(
         raise HTTPException(status_code=404, detail="Beneficiary link not found.")
 
     return {"deleted": True}
+
+
+@app.post("/beneficiary/proof/list-mine")
+@limiter.limit("60/hour")
+async def beneficiary_proof_list_mine_endpoint(
+    request: Request,
+    payload: BeneficiaryProofListRequest,
+    principal=Depends(verify_trusted_device),
+):
+    _require_beneficiary_proof_route(principal["vault_id"])
+    return await beneficiary_list_mine_endpoint(
+        request, BeneficiaryListRequest(zk_proof_token=payload.zk_proof_token),
+        principal,
+    )
+
+
+@app.post("/beneficiary/proof/list-inheritances")
+@limiter.limit("60/hour")
+async def beneficiary_proof_list_inheritances_endpoint(
+    request: Request,
+    payload: BeneficiaryProofListRequest,
+    principal=Depends(verify_trusted_device),
+):
+    _require_beneficiary_proof_route(principal["vault_id"])
+    return await beneficiary_list_inheritances_endpoint(
+        request, BeneficiaryListRequest(zk_proof_token=payload.zk_proof_token),
+        principal,
+    )
+
+
+@app.post("/beneficiary/proof/request-transfer")
+@limiter.limit("10/hour")
+async def beneficiary_proof_request_transfer_endpoint(
+    request: Request,
+    payload: BeneficiaryProofActionRequest,
+    principal=Depends(verify_trusted_device),
+):
+    _require_beneficiary_proof_route(principal["vault_id"])
+    return await beneficiary_request_transfer_endpoint(
+        request, TransferActionRequest(
+            link_id=payload.link_id, zk_proof_token=payload.zk_proof_token,
+        ), principal,
+    )
+
+
+@app.post("/beneficiary/proof/cancel-transfer")
+@limiter.limit("20/hour")
+async def beneficiary_proof_cancel_transfer_endpoint(
+    request: Request,
+    payload: BeneficiaryProofActionRequest,
+    principal=Depends(verify_trusted_device),
+):
+    _require_beneficiary_proof_route(principal["vault_id"])
+    return await beneficiary_cancel_transfer_endpoint(
+        request, TransferActionRequest(
+            link_id=payload.link_id, zk_proof_token=payload.zk_proof_token,
+        ), principal,
+    )
+
+
+@app.post("/beneficiary/proof/delete")
+@limiter.limit("20/hour")
+async def beneficiary_proof_delete_endpoint(
+    request: Request,
+    payload: BeneficiaryProofActionRequest,
+    principal=Depends(verify_trusted_device),
+):
+    _require_beneficiary_proof_route(principal["vault_id"])
+    return await beneficiary_delete_endpoint(
+        request, DeleteBeneficiaryRequest(
+            link_id=payload.link_id, zk_proof_token=payload.zk_proof_token,
+        ), principal,
+    )
 
 
 @app.post("/rotate-vault-kdf")

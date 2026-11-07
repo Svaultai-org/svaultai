@@ -201,3 +201,58 @@ def test_all_four_pin_only_beneficiary_routes_use_shared_proof_gate(monkeypatch)
         checked.assert_called_once_with(
             PRINCIPAL, pin=None, proof_token="synthetic-proof",
         )
+
+
+def test_strict_beneficiary_route_models_exclude_pin_and_vault_name():
+    for model, body in (
+        (main.BeneficiaryProofListRequest, {"zk_proof_token": "synthetic-proof"}),
+        (main.BeneficiaryProofActionRequest,
+         {"zk_proof_token": "synthetic-proof", "link_id": 7}),
+    ):
+        parsed = model.model_validate(body)
+        assert "pin" not in parsed.model_dump()
+        assert "vault_name" not in parsed.model_dump()
+        for forbidden in ("pin", "vault_name"):
+            with pytest.raises(Exception):
+                model.model_validate({**body, forbidden: "synthetic"})
+
+
+def test_strict_beneficiary_routes_delegate_only_proof(monkeypatch, gates):
+    verify_pin, consume, is_zk = gates
+    monkeypatch.setenv("VAULTAI_ZK_BENEFICIARY_PROOF_ENABLED", "true")
+    routes = (
+        (main.beneficiary_proof_list_mine_endpoint,
+         "beneficiary_list_mine_endpoint", main.BeneficiaryProofListRequest(
+             zk_proof_token="synthetic-proof")),
+        (main.beneficiary_proof_list_inheritances_endpoint,
+         "beneficiary_list_inheritances_endpoint",
+         main.BeneficiaryProofListRequest(zk_proof_token="synthetic-proof")),
+        (main.beneficiary_proof_request_transfer_endpoint,
+         "beneficiary_request_transfer_endpoint",
+         main.BeneficiaryProofActionRequest(
+             zk_proof_token="synthetic-proof", link_id=7)),
+        (main.beneficiary_proof_cancel_transfer_endpoint,
+         "beneficiary_cancel_transfer_endpoint",
+         main.BeneficiaryProofActionRequest(
+             zk_proof_token="synthetic-proof", link_id=7)),
+        (main.beneficiary_proof_delete_endpoint,
+         "beneficiary_delete_endpoint",
+         main.BeneficiaryProofActionRequest(
+             zk_proof_token="synthetic-proof", link_id=7)),
+    )
+    for wrapper, legacy_name, payload in routes:
+        delegated = mock.AsyncMock(return_value={"ok": True})
+        with monkeypatch.context() as context:
+            context.setattr(main, legacy_name, delegated)
+            result = asyncio.run(inspect.unwrap(wrapper)(None, payload, PRINCIPAL))
+        assert result == {"ok": True}
+        delegated.assert_awaited_once()
+        passed_payload = delegated.await_args.args[1]
+        assert passed_payload.pin is None
+        assert passed_payload.vault_name == ""
+        assert passed_payload.zk_proof_token == "synthetic-proof"
+        if hasattr(payload, "link_id"):
+            assert passed_payload.link_id == 7
+    verify_pin.assert_not_called()
+    consume.assert_not_called()  # Each existing handler consumes it on execution.
+    assert is_zk.call_count == len(routes)
