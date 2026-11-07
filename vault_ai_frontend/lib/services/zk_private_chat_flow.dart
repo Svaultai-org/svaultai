@@ -41,6 +41,7 @@ class ZkPrivateChatFlow {
   final bool Function() accessIsCurrent;
   final List<ZkGeneralChatTurn> _generalHistory = [];
   ZkLocalChatRecord? _selection;
+  bool _lastTurnWasPrivate = false;
 
   ZkPrivateChatFlow({
     required this.loadIndex,
@@ -50,6 +51,7 @@ class ZkPrivateChatFlow {
 
   void clear() {
     _selection = null;
+    _lastTurnWasPrivate = false;
     _generalHistory.clear();
   }
 
@@ -61,12 +63,15 @@ class ZkPrivateChatFlow {
 
   Future<ZkPrivateChatTurn> run(String prompt, {bool forcePrivate = false}) async {
     _checkAccess();
+    final keepPrivateContext = _lastTurnWasPrivate &&
+        ZkLocalChatRouter.referencesPreviousPrivateResult(prompt);
+    final effectiveForcePrivate = forcePrivate || keepPrivateContext;
     final preliminary = ZkLocalChatRouter.resolve(
       prompt: prompt,
       savedItems: const [],
       files: const [],
       previousSelection: _selection,
-      forcePrivate: forcePrivate,
+      forcePrivate: effectiveForcePrivate,
     );
     if (preliminary.disposition == ZkLocalChatDisposition.unsupportedAction) {
       return ZkPrivateChatTurn(local: preliminary);
@@ -79,6 +84,7 @@ class ZkPrivateChatFlow {
       _checkAccess();
       _generalHistory.add(ZkGeneralChatTurn(role: 'user', content: prompt));
       _generalHistory.add(ZkGeneralChatTurn(role: 'assistant', content: reply));
+      _lastTurnWasPrivate = false;
       while (_generalHistory.length > 10) {
         _generalHistory.removeAt(0);
       }
@@ -92,8 +98,9 @@ class ZkPrivateChatFlow {
       savedItems: index.savedItems,
       files: index.files,
       previousSelection: _selection,
-      forcePrivate: forcePrivate,
+      forcePrivate: effectiveForcePrivate,
     );
+    _lastTurnWasPrivate = true;
     _selection = result.disposition == ZkLocalChatDisposition.found
         ? result.selection
         : null;

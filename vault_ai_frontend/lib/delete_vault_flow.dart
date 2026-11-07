@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'api_client.dart';
 import 'l10n/app_localizations.dart';
+import 'main.dart' show kPrivateOnlyUnlockEnabled;
 
 
 
@@ -64,7 +65,8 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
       final status = await widget.client.getDeleteStatus(
         authToken: widget.authToken,
       );
-      final requiresOpaque = status['requires_opaque_verification'] == true;
+      final requiresOpaque = kPrivateOnlyUnlockEnabled ||
+          status['requires_opaque_verification'] == true;
       if (requiresOpaque && widget.zkProofForPin == null) {
         throw StateError('OPAQUE verification is unavailable.');
       }

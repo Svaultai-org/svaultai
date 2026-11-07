@@ -35,12 +35,47 @@ void main() {
       zkProofToken: 'synthetic-proof',
       authToken: _token,
     );
-    expect(requests.single.url.path, '/beneficiary/delete');
+    expect(requests.single.url.path, kEnableZkPrivateOnlyUnlock
+        ? '/beneficiary/proof/delete' : '/beneficiary/delete');
     final body = jsonDecode(requests.single.body) as Map<String, dynamic>;
     expect(body['zk_proof_token'], 'synthetic-proof');
     expect(body.containsKey('pin'), isFalse);
     expect(body['link_id'], 7);
+    if (kEnableZkPrivateOnlyUnlock) {
+      expect(body.keys.toSet(), {'link_id', 'zk_proof_token'});
+    }
   });
+
+  test('strict beneficiary lists and cancellation use proof-only routes',
+      () async {
+    final requests = <http.Request>[];
+    final client = clientFor(requests);
+    await client.listBeneficiaries(
+      vaultName: 'synthetic private name',
+      zkProofToken: 'proof-one', authToken: _token,
+    );
+    await client.listInheritances(
+      vaultName: 'synthetic private name',
+      zkProofToken: 'proof-two', authToken: _token,
+    );
+    await client.cancelTransfer(
+      linkId: 7, vaultName: 'synthetic private name',
+      zkProofToken: 'proof-three', authToken: _token,
+    );
+    expect(requests.map((r) => r.url.path), [
+      '/beneficiary/proof/list-mine',
+      '/beneficiary/proof/list-inheritances',
+      '/beneficiary/proof/cancel-transfer',
+    ]);
+    for (final request in requests) {
+      expect(request.body, isNot(contains('synthetic private name')));
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      expect(body.containsKey('pin'), isFalse);
+      expect(body.containsKey('vault_name'), isFalse);
+    }
+    expect((jsonDecode(requests.last.body) as Map).keys.toSet(),
+        {'link_id', 'zk_proof_token'});
+  }, skip: !kEnableZkPrivateOnlyUnlock);
 
   test('legacy file deletion uses one-time proof without raw PIN', () async {
     final requests = <http.Request>[];
@@ -114,7 +149,7 @@ void main() {
         zkProofToken: 'proof',
         authToken: _token,
       ),
-      throwsArgumentError,
+      kEnableZkPrivateOnlyUnlock ? throwsStateError : throwsArgumentError,
     );
     await expectLater(
       client.deleteVaultFile(
@@ -152,10 +187,16 @@ void main() {
       importId: 'synthetic-import',
     );
     expect(requests.length, 3);
+    expect(requests.map((r) => r.url.path), [
+      '/imports/session/start',
+      '/imports/session/synthetic-import/complete',
+      '/imports/session/synthetic-import/cancel',
+    ]);
     for (final request in requests) {
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       expect(body.containsKey('pin'), isFalse);
-      expect(body['vault_name'], '');
+      expect(body.containsKey('vault_name'), isFalse);
+      expect(body.containsKey('root_folder_name'), isFalse);
     }
   });
 
@@ -246,4 +287,39 @@ void main() {
     );
     expect(requests, isEmpty);
   }, skip: !kPrivateOnlyTransportRejectPin);
+
+  test('strict delete and device actions use proof-only request shapes',
+      () async {
+    final requests = <http.Request>[];
+    final client = clientFor(requests);
+    await client.confirmDeleteVault(
+      authToken: _token, requestToken: 'delete-request',
+      zkProofToken: 'proof-delete', confirmationPhrase: 'DELETE MY VAULT',
+    );
+    await client.requestSelfApproval(
+      authToken: _token, zkProofToken: 'proof-request',
+    );
+    await client.finalizeSelfApproval(
+      authToken: _token, zkProofToken: 'proof-finalize',
+    );
+    expect(requests.map((r) => r.url.path), [
+      '/vault/delete/confirm-proof',
+      '/devices/request-self-approval-proof',
+      '/devices/finalize-self-approval-proof',
+    ]);
+    for (final request in requests) {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      expect(body.containsKey('pin'), isFalse);
+      expect(body.containsKey('vault_name'), isFalse);
+    }
+    final before = requests.length;
+    await expectLater(client.confirmDeleteVault(
+      authToken: _token, requestToken: 'delete-request', pin: '123456',
+      confirmationPhrase: 'DELETE MY VAULT',
+    ), throwsStateError);
+    await expectLater(client.requestSelfApproval(
+      authToken: _token, pin: '123456',
+    ), throwsStateError);
+    expect(requests.length, before);
+  }, skip: !kEnableZkPrivateOnlyUnlock);
 }

@@ -1456,7 +1456,13 @@ class VaultAIClient {
       throw ArgumentError(
           'Exactly one delete verification method is required.');
     }
-    final uri = Uri.parse('$baseUrl/vault/delete/confirm');
+    if (kEnableZkPrivateOnlyUnlock &&
+        (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
+      throw StateError('Private vault deletion requires an OPAQUE proof.');
+    }
+    final uri = Uri.parse(kEnableZkPrivateOnlyUnlock
+        ? '$baseUrl/vault/delete/confirm-proof'
+        : '$baseUrl/vault/delete/confirm');
     final body = jsonEncode({
       'request_token': requestToken,
       if (pin != null) 'pin': pin,
@@ -1906,7 +1912,13 @@ class VaultAIClient {
     String? pin,
     String? zkProofToken,
   }) async {
-    final uri = Uri.parse('$baseUrl/devices/request-self-approval');
+    if (kEnableZkPrivateOnlyUnlock &&
+        (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
+      throw StateError('Private device approval requires an OPAQUE proof.');
+    }
+    final uri = Uri.parse(kEnableZkPrivateOnlyUnlock
+        ? '$baseUrl/devices/request-self-approval-proof'
+        : '$baseUrl/devices/request-self-approval');
     final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
@@ -1938,7 +1950,13 @@ class VaultAIClient {
     String? pin,
     String? zkProofToken,
   }) async {
-    final uri = Uri.parse('$baseUrl/devices/finalize-self-approval');
+    if (kEnableZkPrivateOnlyUnlock &&
+        (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
+      throw StateError('Private device approval requires an OPAQUE proof.');
+    }
+    final uri = Uri.parse(kEnableZkPrivateOnlyUnlock
+        ? '$baseUrl/devices/finalize-self-approval-proof'
+        : '$baseUrl/devices/finalize-self-approval');
     final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
@@ -2523,6 +2541,10 @@ class VaultAIClient {
     String? clientRequestId,
   }) async {
     _rejectBeneficiaryPin(authToken, pin);
+    if (kEnableZkPrivateOnlyUnlock &&
+        (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
+      throw StateError('Private inheritance access requires an OPAQUE proof.');
+    }
     final headers = _defaultHeaders(authToken: authToken, json: true);
     if (clientRequestId != null && clientRequestId.isNotEmpty) {
       final cri = clientRequestId.length > 64
@@ -2531,7 +2553,9 @@ class VaultAIClient {
       headers['X-Client-Request-Id'] = cri;
     }
     final response = await _sessionHttp.post(
-      Uri.parse('$baseUrl/beneficiary/list-mine'),
+      Uri.parse(kEnableZkPrivateOnlyUnlock
+          ? '$baseUrl/beneficiary/proof/list-mine'
+          : '$baseUrl/beneficiary/list-mine'),
       headers: headers,
       body: jsonEncode(_pinOrZkProofBody(
         pin: pin,
@@ -2586,8 +2610,14 @@ class VaultAIClient {
     required String authToken,
   }) async {
     _rejectBeneficiaryPin(authToken, pin);
+    if (kEnableZkPrivateOnlyUnlock &&
+        (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
+      throw StateError('Private inheritance access requires an OPAQUE proof.');
+    }
     final response = await _sessionHttp.post(
-      Uri.parse('$baseUrl/beneficiary/list-inheritances'),
+      Uri.parse(kEnableZkPrivateOnlyUnlock
+          ? '$baseUrl/beneficiary/proof/list-inheritances'
+          : '$baseUrl/beneficiary/list-inheritances'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(_pinOrZkProofBody(
         pin: pin,
@@ -2709,8 +2739,14 @@ class VaultAIClient {
     required String authToken,
   }) async {
     _rejectBeneficiaryPin(authToken, pin);
+    if (kEnableZkPrivateOnlyUnlock &&
+        (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
+      throw StateError('Private inheritance access requires an OPAQUE proof.');
+    }
     final response = await _sessionHttp.post(
-      Uri.parse('$baseUrl/beneficiary/cancel-transfer'),
+      Uri.parse(kEnableZkPrivateOnlyUnlock
+          ? '$baseUrl/beneficiary/proof/cancel-transfer'
+          : '$baseUrl/beneficiary/cancel-transfer'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
         'link_id': linkId,
@@ -2738,12 +2774,18 @@ class VaultAIClient {
     required String authToken,
   }) async {
     _rejectBeneficiaryPin(authToken, pin);
+    if (kEnableZkPrivateOnlyUnlock &&
+        (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
+      throw StateError('Private inheritance access requires an OPAQUE proof.');
+    }
     final response = await _sessionHttp.post(
-      Uri.parse('$baseUrl/beneficiary/delete'),
+      Uri.parse(kEnableZkPrivateOnlyUnlock
+          ? '$baseUrl/beneficiary/proof/delete'
+          : '$baseUrl/beneficiary/delete'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
         'link_id': linkId,
-        'vault_name': '',
+        if (!kEnableZkPrivateOnlyUnlock) 'vault_name': '',
         ..._pinOrZkProofBody(pin: pin, zkProofToken: zkProofToken),
       }),
     );
@@ -4252,12 +4294,16 @@ class VaultAIClient {
     int totalFiles = 0,
     int totalBytesPlanned = 0,
   }) async {
-    final uri = Uri.parse('$baseUrl/imports/start');
+    if (kEnableZkPrivateOnlyUnlock && !zkSessionOnly) {
+      throw StateError('Private import requires an OPAQUE session.');
+    }
+    final uri = Uri.parse(zkSessionOnly
+        ? '$baseUrl/imports/session/start' : '$baseUrl/imports/start');
     if (zkSessionOnly && rootFolderName != null) {
       throw ArgumentError('Private import cannot send a folder name.');
     }
     final body = <String, dynamic>{
-      'vault_name': '',
+      if (!zkSessionOnly) 'vault_name': '',
       ..._importAuthBody(pin: pin, zkSessionOnly: zkSessionOnly),
       'total_files': totalFiles,
       'total_bytes_planned': totalBytesPlanned,
@@ -4327,9 +4373,14 @@ class VaultAIClient {
     required String importId,
     bool zkSessionOnly = false,
   }) async {
-    final uri = Uri.parse('$baseUrl/imports/$importId/cancel');
+    if (kEnableZkPrivateOnlyUnlock && !zkSessionOnly) {
+      throw StateError('Private import requires an OPAQUE session.');
+    }
+    final uri = Uri.parse(zkSessionOnly
+        ? '$baseUrl/imports/session/$importId/cancel'
+        : '$baseUrl/imports/$importId/cancel');
     final body = <String, dynamic>{
-      'vault_name': '',
+      if (!zkSessionOnly) 'vault_name': '',
       ..._importAuthBody(pin: pin, zkSessionOnly: zkSessionOnly),
     };
 
@@ -4366,9 +4417,14 @@ class VaultAIClient {
     int failedCountDelta = 0,
     int skippedDuplicateCountDelta = 0,
   }) async {
-    final uri = Uri.parse('$baseUrl/imports/$importId/complete');
+    if (kEnableZkPrivateOnlyUnlock && !zkSessionOnly) {
+      throw StateError('Private import requires an OPAQUE session.');
+    }
+    final uri = Uri.parse(zkSessionOnly
+        ? '$baseUrl/imports/session/$importId/complete'
+        : '$baseUrl/imports/$importId/complete');
     final body = <String, dynamic>{
-      'vault_name': '',
+      if (!zkSessionOnly) 'vault_name': '',
       ..._importAuthBody(pin: pin, zkSessionOnly: zkSessionOnly),
       'failed_count_delta': failedCountDelta,
       'skipped_duplicate_count_delta': skippedDuplicateCountDelta,

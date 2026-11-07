@@ -99,6 +99,36 @@ void main() {
     expect(generalCalls, 0);
   });
 
+  test('contextual follow-up after private lookup cannot reach general AI',
+      () async {
+    var generalCalls = 0;
+    final flow = ZkPrivateChatFlow(
+      accessIsCurrent: () => true,
+      loadIndex: () async => const ZkPrivateChatIndex(
+        savedItems: [],
+        files: [ZkLocalChatRecord(
+          kind: ZkLocalChatKind.file,
+          id: 'photo-red',
+          title: 'red coat photo.jpg',
+          mediaKind: ZkLocalMediaKind.photo,
+        )],
+        incomplete: false,
+      ),
+      sendGeneral: (_, __) async {
+        generalCalls++;
+        return 'unexpected general reply';
+      },
+    );
+    final found = await flow.run('Find my red coat photo');
+    expect(found.local.selection?.id, 'photo-red');
+    final followUp = await flow.run('What about that one?');
+    expect(followUp.local.disposition, isNot(ZkLocalChatDisposition.general));
+    expect(generalCalls, 0);
+    final unrelated = await flow.run('What is encryption?');
+    expect(unrelated.local.disposition, ZkLocalChatDisposition.general);
+    expect(generalCalls, 1);
+  });
+
   test('general AI history excludes every private turn', () async {
     final received = <List<ZkGeneralChatTurn>>[];
     final flow = ZkPrivateChatFlow(
@@ -115,7 +145,7 @@ void main() {
     );
     await flow.run('What is encryption?');
     await flow.run('Find my passport file');
-    await flow.run('How does it work?');
+    await flow.run('How does encryption work?');
     expect(received, hasLength(2));
     expect(received.first, isEmpty);
     expect(received.last.map((turn) => turn.content).toList(),

@@ -98,6 +98,15 @@ class ZkLocalChatRouter {
     r'^(?:please\s+)?(?:show|open|view|play|display|where\s+is)\s+(?:me\s+)?(?:it|that|this|the\s+one)\??$',
     caseSensitive: false,
   );
+  static final RegExp _contextReference = RegExp(
+    r'\b(it|its|that|this|these|those|one|ones|same)\b',
+    caseSensitive: false,
+  );
+
+  /// A reference after a private turn stays in the local vault flow. Its
+  /// meaning may depend on the prior private result, even without "my vault".
+  static bool referencesPreviousPrivateResult(String prompt) =>
+      _contextReference.hasMatch(prompt);
   static const Set<String> _stop = {
     'a',
     'an',

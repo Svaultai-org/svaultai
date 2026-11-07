@@ -11,7 +11,8 @@ import 'device_id.dart';
 import 'l10n/app_localizations.dart';
 import 'services/zk_auth_service.dart';
 import 'ui/responsive.dart';
-import 'main.dart' show AppState, backendBaseUrl, kEnableLegacyAuthFallback;
+import 'main.dart' show AppState, backendBaseUrl,
+    kEnableLegacyAuthFallback, kPrivateOnlyUnlockEnabled;
 
 
 const bool kEnableZkPendingDeviceProof = bool.fromEnvironment(
@@ -207,6 +208,9 @@ class _DevicePendingPageState extends State<DevicePendingPage> {
     required String confirmLabel,
   }) async {
     final app = context.read<AppState>();
+    if (kPrivateOnlyUnlockEnabled && !kEnableZkPendingDeviceProof) {
+      throw StateError('Private device approval is unavailable.');
+    }
     if (kEnableZkPendingDeviceProof) {
       final handle = app.vaultHandle;
       if (handle != null && handle.isNotEmpty) {
@@ -225,7 +229,7 @@ class _DevicePendingPageState extends State<DevicePendingPage> {
       }
       // A normal ZK build cannot infer a legacy account from a missing
       // handle. Only an explicit legacy migration build may use the PIN path.
-      if (!kEnableLegacyAuthFallback) {
+      if (kPrivateOnlyUnlockEnabled || !kEnableLegacyAuthFallback) {
         throw StateError('Sign in again to verify this device.');
       }
     }

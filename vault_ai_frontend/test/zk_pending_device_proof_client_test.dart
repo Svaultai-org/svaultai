@@ -121,8 +121,12 @@ void main() {
       expect(body.containsKey('pin'), isFalse);
       expect(request.body, isNot(contains('synthetic-pin-only')));
     }
-    expect(sent.first.url.path, '/devices/request-self-approval');
-    expect(sent.last.url.path, '/devices/finalize-self-approval');
+    expect(sent.first.url.path, kEnableZkPrivateOnlyUnlock
+        ? '/devices/request-self-approval-proof'
+        : '/devices/request-self-approval');
+    expect(sent.last.url.path, kEnableZkPrivateOnlyUnlock
+        ? '/devices/finalize-self-approval-proof'
+        : '/devices/finalize-self-approval');
     setApiClientDeviceId('');
   });
 
@@ -180,5 +184,5 @@ void main() {
       pin: 'synthetic-legacy-pin',
       zkProofToken: 'synthetic-proof',
     ), throwsArgumentError);
-  });
+  }, skip: kEnableZkPrivateOnlyUnlock);
 }
