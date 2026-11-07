@@ -1126,6 +1126,11 @@ const bool kZkPrivateOnlyClientReady = kEnableZkPrivateChat &&
     kEnableZkLegacyFileDeleteProof &&
     kEnableZkImportSessionActions;
 
+// Wallet receive/send still uses the older PIN-derived key for some assets.
+// A private-only release must not start until every offered wallet action has
+// a verified client-held-key path and existing records have been read back.
+const bool kPrivateWalletFeatureParityReady = false;
+
 bool legacyAuthFallbackPermitted({
   required bool opaqueLookupMissed,
   required bool isHandle,
@@ -1207,6 +1212,12 @@ Future<void> main() async {
       'Private-only unlock requires private chat, V2 file read/upload, '
       'keyless saved-item read/write, and PIN-free action routes '
       'in the same build.',
+    );
+  }
+  if (kPrivateOnlyUnlockEnabled && !kPrivateWalletFeatureParityReady) {
+    throw StateError(
+      'Private-only unlock requires PIN-free wallet access for every '
+      'supported asset. This build does not yet provide it.',
     );
   }
   if (kReleaseMode && !backendBaseUrl.startsWith('https://')) {
