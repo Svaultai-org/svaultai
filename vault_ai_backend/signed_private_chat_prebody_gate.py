@@ -18,6 +18,7 @@ from auth_local import (
     PIN_FREE_FILE_DOWNLOAD_OFFER,
     PIN_FREE_FILE_LIST_OFFER,
     PIN_FREE_FILE_MUTATION_OFFER,
+    PIN_FREE_ITEM_READ_OFFER,
     PIN_FREE_PASSWORD_ANALYSIS_OFFER,
     PIN_FREE_PRIVATE_CHAT_OFFER,
     _parse_token_claims,
@@ -63,6 +64,9 @@ def _signed_offer_bits(headers: list[tuple[bytes, bytes]]) -> int:
 
 def _replaced_pin_route(path: str, offers: int, method: str = "POST") -> str | None:
     path = path.rstrip("/")
+    if (offers & PIN_FREE_ITEM_READ_OFFER and
+            path in ("/list-secure-items", "/get-secure-item")):
+        return "pin_free_read_required"
     if (offers & PIN_FREE_FILE_MUTATION_OFFER and
             (method, path) in _OLD_FILE_MUTATIONS):
         return "pin_free_file_mutation_required"
@@ -98,6 +102,7 @@ def _candidate_pin_path(path: str, method: str = "POST") -> bool:
     if method != "POST":
         return False
     return (_replaced_private_chat_path(path) or
+            path in ("/list-secure-items", "/get-secure-item") or
             path in ("/beneficiary/create", "/beneficiary/link",
                      "/beneficiary/request-transfer",
                      "/beneficiary/claim-transfer") or
