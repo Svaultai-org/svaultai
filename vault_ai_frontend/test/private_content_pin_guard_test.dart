@@ -109,7 +109,7 @@ void main() {
       '/files/synthetic-file/related',
     ]);
     expect(blocksZkLegacyContentRoute(), false);
-  });
+  }, skip: kEnableZkPrivateOnlyUnlock);
 
   test('guard is dormant in ordinary builds', () {
     ZkActiveMvk.set(

@@ -906,6 +906,9 @@ Map<String, dynamic> buildChatRequestBody({
   String? kdfSaltUsed,
   int? kdfIterationsUsed,
 }) {
+  if (kPrivateOnlyTransportRejectPin) {
+    throw StateError('Older PIN-based chat is unavailable in private mode.');
+  }
   return <String, dynamic>{
     'encrypted_message': encryptedMessage,
     'vault_name': '',
@@ -1781,6 +1784,9 @@ class VaultAIClient {
     int? cursor,
     int? limit,
   }) async {
+    if (kPrivateOnlyTransportRejectPin) {
+      throw StateError('Use local password analysis in private mode.');
+    }
     final uri = Uri.parse('$baseUrl/security-center/analyze-passwords');
     final body = jsonEncode({
       'vault_name': '',
@@ -2105,7 +2111,8 @@ class VaultAIClient {
     String? kdfSaltUsed,
     int? kdfIterationsUsed,
   }) async* {
-    if (signedPrivateChatOfferedForToken(authToken)) {
+    if (kPrivateOnlyTransportRejectPin ||
+        signedPrivateChatOfferedForToken(authToken)) {
       throw StateError('This session uses private chat.');
     }
     final uri = Uri.parse('$baseUrl/chat');
@@ -2276,7 +2283,8 @@ class VaultAIClient {
     String query = '',
     String? resumeJobId,
   }) async {
-    if (signedPrivateChatOfferedForToken(authToken) ||
+    if (kPrivateOnlyTransportRejectPin ||
+        signedPrivateChatOfferedForToken(authToken) ||
         private_content_guard.blocksZkLegacyContentRoute(
         vaultHandle: vaultHandle)) {
       throw const private_content_guard.PrivateContentSearchUnavailable(
@@ -2315,7 +2323,8 @@ class VaultAIClient {
     required String jobId,
     String? vaultHandle,
   }) async {
-    if (signedPrivateChatOfferedForToken(authToken) ||
+    if (kPrivateOnlyTransportRejectPin ||
+        signedPrivateChatOfferedForToken(authToken) ||
         private_content_guard.blocksZkLegacyContentRoute(
         vaultHandle: vaultHandle)) {
       throw const private_content_guard.PrivateContentSearchUnavailable(
@@ -3134,6 +3143,9 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
+    if (kPrivateOnlyTransportRejectPin) {
+      throw StateError('Legacy server PIN rotation is unavailable in private mode.');
+    }
     final uri = Uri.parse('$baseUrl/rotate-vault-kdf');
 
     final response = await _sessionHttp.post(
@@ -5233,6 +5245,9 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
+    if (kPrivateOnlyTransportRejectPin) {
+      throw StateError('Use private vault stats in private mode.');
+    }
     final uri = Uri.parse('$baseUrl/vault-stats');
 
     final response = await _sessionHttp.post(
@@ -6567,7 +6582,8 @@ class VaultAIClient {
     required String authToken,
     String? vaultHandle,
   }) async {
-    if (signedPrivateChatOfferedForToken(authToken) ||
+    if (kPrivateOnlyTransportRejectPin ||
+        signedPrivateChatOfferedForToken(authToken) ||
         private_content_guard.blocksZkLegacyContentRoute(
         vaultHandle: vaultHandle)) {
       throw const private_content_guard.PrivateContentSearchUnavailable(

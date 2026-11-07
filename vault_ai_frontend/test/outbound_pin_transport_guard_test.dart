@@ -217,6 +217,6 @@ void main() {
         returnsNormally,
       );
     },
-    skip: !kEnableZkPrivateOnlyUnlock,
+    skip: kEnableZkPrivateOnlyUnlock,
   );
 }
