@@ -6625,6 +6625,154 @@ class VaultAIClient {
     return decoded;
   }
 
+  /// Wallet V2 migration transport. The service performs MVK wrapping and
+  /// exact readback locally; this boundary accepts only ciphertext metadata
+  /// and a one-time OPAQUE proof, never a PIN or plaintext wallet secret.
+  Future<Map<String, dynamic>> walletV2MigrationPost({
+    required String authToken,
+    required String path,
+    required Map<String, dynamic> body,
+  }) async {
+    const stage = '/vault/wallet-v2/migrate/stage';
+    const retire = '/vault/wallet-v2/migrate/retire';
+    final allowed = path == stage
+        ? const <String>{
+            'legacy_item_id', 'source_snapshot', 'wallet_record_id', 'chain',
+            'network', 'asset', 'public_address', 'wallet_label',
+            'payload_ciphertext', 'envelope_version',
+          }
+        : path == retire
+            ? const <String>{
+                'legacy_item_id', 'wallet_record_id', 'source_snapshot',
+                'readback_receipt', 'zk_proof_token',
+                'client_verified_exact_bytes',
+              }
+            : null;
+    if (allowed == null || body.keys.toSet().difference(allowed).isNotEmpty ||
+        !body.keys.toSet().containsAll(allowed)) {
+      throw StateError('Invalid wallet migration request');
+    }
+    final response = await _sessionHttp.post(
+      Uri.parse('$baseUrl$path'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(body),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Wallet migration failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('Invalid wallet migration response');
+    }
+    return decoded;
+  }
+
+  Future<Map<String, dynamic>> walletV2Read({
+    required String authToken,
+    required String path,
+  }) async {
+    if (!RegExp(r'^/vault/wallet-v2/[A-Za-z0-9_-]{16,128}$')
+        .hasMatch(path)) {
+      throw StateError('Invalid wallet V2 read path');
+    }
+    final response = await _sessionHttp.get(
+      Uri.parse('$baseUrl$path'),
+      headers: _defaultHeaders(authToken: authToken),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Wallet V2 read failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('Invalid wallet V2 response');
+    }
+    return decoded;
+  }
+
+  /// New-wallet V2 transport. A newly generated wallet is staged first;
+  /// only an exact local readback may publish it for Receive and Send.
+  Future<Map<String, dynamic>> walletV2NewPost({
+    required String authToken,
+    required String path,
+    required Map<String, dynamic> body,
+  }) async {
+    const stage = '/vault/wallet-v2';
+    final publish = RegExp(
+      r'^/vault/wallet-v2/[A-Za-z0-9_-]{16,128}/publish-new$',
+    );
+    final allowed = path == stage
+        ? const <String>{
+            'wallet_record_id', 'chain', 'network', 'asset',
+            'public_address', 'wallet_label', 'payload_ciphertext',
+            'envelope_version', 'migration_state',
+          }
+        : publish.hasMatch(path)
+            ? const <String>{
+                'readback_receipt', 'client_verified_exact_bytes',
+              }
+            : null;
+    if (allowed == null ||
+        body.keys.toSet().difference(allowed).isNotEmpty ||
+        !body.keys.toSet().containsAll(allowed) ||
+        (path == stage && body['migration_state'] != 'migration_pending')) {
+      throw StateError('Invalid wallet V2 request');
+    }
+    final response = await _sessionHttp.post(
+      Uri.parse('$baseUrl$path'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(body),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Wallet V2 request failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('Invalid wallet V2 response');
+    }
+    return decoded;
+  }
+
+  Future<Map<String, dynamic>> walletV2List({
+    required String authToken,
+  }) async {
+    final response = await _sessionHttp.get(
+      Uri.parse('$baseUrl/vault/wallet-v2'),
+      headers: _defaultHeaders(authToken: authToken),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Wallet V2 list failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('Invalid wallet V2 list response');
+    }
+    return decoded;
+  }
+
   /// ZK ciphertext-first outgoing-history persistence. Fire-and-
   /// forget from the panel; a failure never blocks the send-success
   /// UI.

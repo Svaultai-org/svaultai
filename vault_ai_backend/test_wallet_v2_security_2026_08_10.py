@@ -11,13 +11,13 @@ from routes import crypto_wallet_routes as legacy
 VALID = {
     "wallet_record_id": "opaque_wallet_record_1234567890",
     "chain": "evm",
-    "network": "ethereum-mainnet",
+    "network": "ethereum_mainnet",
     "asset": "ETH",
     "public_address": "0x0000000000000000000000000000000000000001",
     "wallet_label": "Zero balance QA",
     "payload_ciphertext": "AQIDBA",
     "envelope_version": "v2",
-    "migration_state": "v2_verified",
+    "migration_state": "migration_pending",
 }
 
 
@@ -43,13 +43,22 @@ def test_backend_has_no_decrypt_or_sign_primitive():
 
 def test_ciphertext_roundtrip_and_vault_scope(monkeypatch):
     rows = {}
+    vault_a = "00000000-0000-0000-0000-000000000001"
+    vault_b = "00000000-0000-0000-0000-000000000099"
+    token = "00000000-0000-0000-0000-000000000002"
 
     class Cursor:
         rowcount = 0
 
         def execute(self, sql, args):
-            if sql.lstrip().startswith("INSERT"):
+            if sql.lstrip().startswith("SELECT vault_handle"):
+                self.selected = {"vault_handle": "synthetic"}
+            elif sql.lstrip().startswith("SELECT 1 FROM vault_items"):
+                self.selected = None
+            elif sql.lstrip().startswith("INSERT"):
                 rows[(args[0], args[1])] = args[1:]
+            elif sql.lstrip().startswith("SELECT wallet_record_id") and "FOR UPDATE" in sql:
+                self.selected = None
             elif sql.lstrip().startswith("SELECT wallet_record_id"):
                 self.selected = rows.get((args[0], args[1]))
 
@@ -57,6 +66,8 @@ def test_ciphertext_roundtrip_and_vault_scope(monkeypatch):
             selected = getattr(self, "selected", None)
             if not selected:
                 return None
+            if isinstance(selected, dict):
+                return selected
             return {
                 "wallet_record_id": selected[0], "chain": selected[1],
                 "network": selected[2], "asset": selected[3],
@@ -74,18 +85,25 @@ def test_ciphertext_roundtrip_and_vault_scope(monkeypatch):
         def commit(self):
             pass
 
+        def rollback(self):
+            pass
+
         def close(self):
             pass
 
     monkeypatch.setenv("WALLET_V2_READ_ENABLED", "true")
     monkeypatch.setenv("WALLET_V2_WRITE_ENABLED", "true")
+    monkeypatch.setenv("VAULT_SESSION_SECRET", "synthetic-wallet-proof-secret-12345678901234567890")
     monkeypatch.setattr(route, "get_db", lambda: Conn())
+    monkeypatch.setattr(route, "require_content_write", lambda _p: None)
+    monkeypatch.setattr(route, "require_crypto_access", lambda _p: None)
     payload = route.WalletV2CreateRequest(**VALID)
-    route.create_wallet_v2(payload, {"vault_id": "vault-a"})
-    read = route.read_wallet_v2(VALID["wallet_record_id"], {"vault_id": "vault-a"})
+    route.create_wallet_v2(payload, {"vault_id": vault_a, "token_id": token})
+    read = route.read_wallet_v2(VALID["wallet_record_id"], {"vault_id": vault_a, "token_id": token})
     assert read["payload_ciphertext"] == VALID["payload_ciphertext"]
+    assert read["migration_state"] == "migration_pending"
     with pytest.raises(HTTPException) as exc:
-        route.read_wallet_v2(VALID["wallet_record_id"], {"vault_id": "vault-b"})
+        route.read_wallet_v2(VALID["wallet_record_id"], {"vault_id": vault_b, "token_id": token})
     assert exc.value.status_code == 404
 
 

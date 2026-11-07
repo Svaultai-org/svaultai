@@ -922,11 +922,16 @@ def _load_wallet_account_record(
             from zk_migration_flags import ZkMigrationFlags
             if not ZkMigrationFlags.from_environment(os.environ).wallet_read_enabled:
                 return None
+            from evm_networks import NETWORK_ETHEREUM_SEPOLIA
+            base_asset, _, requested_network = asset.partition(":")
+            requested_network = requested_network or NETWORK_ETHEREUM_SEPOLIA
             cur.execute("""SELECT wallet_record_id,chain,network,asset,public_address,
               wallet_label,migration_state FROM wallet_v2_records
               WHERE vault_id=%s AND UPPER(asset)=UPPER(%s)
-              ORDER BY created_at DESC LIMIT 1""", (vault_id, asset.split(':')[0]))
-            v2 = cur.fetchone()
+                AND migration_state='v2_verified'
+              ORDER BY created_at DESC LIMIT 32""", (vault_id, base_asset))
+            v2 = next((row for row in cur.fetchall()
+                       if _record_matches_network(row["network"], requested_network)), None)
             if not v2:
                 return None
             return {"schema": "crypto_wallet_account_v2", "asset": v2["asset"],
