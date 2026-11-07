@@ -20,11 +20,15 @@ class ZkPrivateChatIndex {
   final List<ZkLocalChatRecord> savedItems;
   final List<ZkLocalChatRecord> files;
   final bool incomplete;
+  final int totalListedFiles;
+  final int contentIndexedFiles;
 
   const ZkPrivateChatIndex({
     required this.savedItems,
     required this.files,
     required this.incomplete,
+    this.totalListedFiles = 0,
+    this.contentIndexedFiles = 0,
   });
 }
 
@@ -38,11 +42,25 @@ class ZkPrivateChatIndexLoader {
   final SecretKey mvk;
   final ZkPrivateChatGet get;
   final bool Function() accessIsCurrent;
+  final bool includeSavedItems;
+  final int fileLimit;
+  final int textFileLimit;
+  final int textFileByteLimit;
+  final int extractedTextByteLimit;
+  final int totalTextByteLimit;
+  final bool allowPartialFileListing;
 
   const ZkPrivateChatIndexLoader({
     required this.mvk,
     required this.get,
     required this.accessIsCurrent,
+    this.includeSavedItems = true,
+    this.fileLimit = maxFiles,
+    this.textFileLimit = maxTextFiles,
+    this.textFileByteLimit = maxTextFileBytes,
+    this.extractedTextByteLimit = maxTotalTextBytes,
+    this.totalTextByteLimit = maxTotalTextBytes,
+    this.allowPartialFileListing = false,
   });
 
   void _checkAccess() {
@@ -61,75 +79,79 @@ class ZkPrivateChatIndexLoader {
   Future<ZkPrivateChatIndex> load() async {
     _checkAccess();
     var incomplete = false;
-    final metadataKey = await VaultKeyHierarchy(mvk).metadataKey();
-    _checkAccess();
-
-    Future<String> decryptRequired(Object? encoded) async {
-      if (encoded is! String || encoded.isEmpty) {
-        throw const FormatException('Missing private item ciphertext');
-      }
-      final clear = await aesGcmUnwrap(metadataKey, b64urlDecode(encoded));
-      _checkAccess();
-      return utf8.decode(clear);
-    }
-
-    final itemResponse = await _get('/vault/ciphertext/vault-items');
-    if (itemResponse is! List || itemResponse.length > maxSavedItems) {
-      throw const FormatException('Private saved-item index is unavailable');
-    }
     final savedItems = <ZkLocalChatRecord>[];
-    for (final raw in itemResponse) {
+    if (includeSavedItems) {
+      final metadataKey = await VaultKeyHierarchy(mvk).metadataKey();
       _checkAccess();
-      if (raw is! Map) {
-        incomplete = true;
-        continue;
+
+      Future<String> decryptRequired(Object? encoded) async {
+        if (encoded is! String || encoded.isEmpty) {
+          throw const FormatException('Missing private item ciphertext');
+        }
+        final clear = await aesGcmUnwrap(metadataKey, b64urlDecode(encoded));
+        _checkAccess();
+        return utf8.decode(clear);
       }
-      try {
-        final id = raw['item_id'];
-        if (id is! int || id <= 0) {
-          throw const FormatException('Invalid item ID');
+
+      final itemResponse = await _get('/vault/ciphertext/vault-items');
+      if (itemResponse is! List || itemResponse.length > maxSavedItems) {
+        throw const FormatException('Private saved-item index is unavailable');
+      }
+      for (final raw in itemResponse) {
+        _checkAccess();
+        if (raw is! Map) {
+          incomplete = true;
+          continue;
         }
-        final service = await decryptRequired(raw['service_ciphertext']);
-        final type = await decryptRequired(raw['item_type_ciphertext']);
-        final payload = jsonDecode(
-          await decryptRequired(raw['payload_ciphertext']),
-        );
-        if (payload is! Map) {
-          throw const FormatException('Invalid private item');
-        }
-        final notes =
-            payload['notes'] is String ? payload['notes'] as String : '';
-        final fields = payload['fields'];
-        final extra = <String>[];
-        if (fields is Map) {
-          const searchable = {
-            'username',
-            'email',
-            'url',
-            'website',
-            'account_name',
-            'label',
-            'description',
-          };
-          for (final entry in fields.entries) {
-            if (!searchable.contains(entry.key.toString().toLowerCase())) {
-              continue;
-            }
-            final value = entry.value;
-            if (value is String) extra.add(value);
+        try {
+          final id = raw['item_id'];
+          if (id is! int || id <= 0) {
+            throw const FormatException('Invalid item ID');
           }
+          final service = await decryptRequired(raw['service_ciphertext']);
+          final type = await decryptRequired(raw['item_type_ciphertext']);
+          final payload = jsonDecode(
+            await decryptRequired(raw['payload_ciphertext']),
+          );
+          if (payload is! Map) {
+            throw const FormatException('Invalid private item');
+          }
+          final notes =
+              payload['notes'] is String ? payload['notes'] as String : '';
+          final fields = payload['fields'];
+          final extra = <String>[];
+          if (fields is Map) {
+            const searchable = {
+              'username',
+              'email',
+              'url',
+              'website',
+              'account_name',
+              'label',
+              'description',
+            };
+            for (final entry in fields.entries) {
+              if (!searchable.contains(entry.key.toString().toLowerCase())) {
+                continue;
+              }
+              final value = entry.value;
+              if (value is String) extra.add(value);
+            }
+          }
+          final searchText = '$type $notes ${extra.join(' ')}';
+          savedItems.add(
+            ZkLocalChatRecord(
+              kind: ZkLocalChatKind.savedItem,
+              id: id.toString(),
+              title: service.trim().isEmpty ? type : service,
+              searchText: searchText.length > 8192
+                  ? searchText.substring(0, 8192)
+                  : searchText,
+            ),
+          );
+        } catch (_) {
+          incomplete = true;
         }
-        final searchText = '$type $notes ${extra.join(' ')}';
-        savedItems.add(ZkLocalChatRecord(
-          kind: ZkLocalChatKind.savedItem,
-          id: id.toString(),
-          title: service.trim().isEmpty ? type : service,
-          searchText: searchText.length > 8192
-              ? searchText.substring(0, 8192)
-              : searchText,
-        ));
-      } catch (_) {
-        incomplete = true;
       }
     }
 
@@ -138,9 +160,17 @@ class ZkPrivateChatIndexLoader {
       throw const FormatException('Private file index is unavailable');
     }
     final fileRows = listing['files'] as List;
-    if (fileRows.length > maxFiles) {
+    if (fileLimit < 1 ||
+        textFileLimit < 0 ||
+        textFileByteLimit < 0 ||
+        extractedTextByteLimit < 0 ||
+        totalTextByteLimit < 0) {
+      throw ArgumentError('Invalid private file scan limits');
+    }
+    if (fileRows.length > fileLimit && !allowPartialFileListing) {
       throw const FormatException('Private file index exceeds safe limit');
     }
+    if (fileRows.length > fileLimit) incomplete = true;
     final reader = FileV2Reader(
       mvk: mvk,
       get: (path) async {
@@ -154,7 +184,8 @@ class ZkPrivateChatIndexLoader {
     final files = <ZkLocalChatRecord>[];
     var textFiles = 0;
     var textBytes = 0;
-    for (final row in fileRows) {
+    var contentIndexedFiles = 0;
+    for (final row in fileRows.take(fileLimit)) {
       _checkAccess();
       if (row is! Map || row['file_id'] is! String) {
         incomplete = true;
@@ -176,9 +207,9 @@ class ZkPrivateChatIndexLoader {
         var fullTextRead = false;
         final isText = _isTextFile(manifest.contentType, manifest.displayName);
         if (isText &&
-            manifest.totalBytes <= maxTextFileBytes &&
-            textFiles < maxTextFiles &&
-            textBytes + manifest.totalBytes <= maxTotalTextBytes) {
+            manifest.totalBytes <= textFileByteLimit &&
+            textFiles < textFileLimit &&
+            textBytes + manifest.totalBytes <= totalTextByteLimit) {
           final download = await reader.download(manifest.fileId);
           _checkAccess();
           content = utf8.decode(download.bytes);
@@ -194,23 +225,28 @@ class ZkPrivateChatIndexLoader {
         final extracted = manifest.extractedText;
         if (!fullTextRead && extracted != null && extracted.isNotEmpty) {
           final extractedBytes = utf8.encode(extracted).length;
-          if (textFiles < maxTextFiles &&
-              textBytes + extractedBytes <= maxTotalTextBytes) {
+          if (extractedBytes <= extractedTextByteLimit &&
+              textFiles < textFileLimit &&
+              textBytes + extractedBytes <= totalTextByteLimit) {
             content = extracted;
             textFiles++;
             textBytes += extractedBytes;
+            fullTextRead = true;
           } else {
             incomplete = true;
           }
         }
-        files.add(ZkLocalChatRecord(
-          kind: ZkLocalChatKind.file,
-          id: manifest.fileId,
-          title: manifest.displayName,
-          searchText: content,
-          mimeType: manifest.contentType,
-          mediaKind: _mediaKind(manifest.contentType, manifest.displayName),
-        ));
+        if (fullTextRead) contentIndexedFiles++;
+        files.add(
+          ZkLocalChatRecord(
+            kind: ZkLocalChatKind.file,
+            id: manifest.fileId,
+            title: manifest.displayName,
+            searchText: content,
+            mimeType: manifest.contentType,
+            mediaKind: _mediaKind(manifest.contentType, manifest.displayName),
+          ),
+        );
       } catch (_) {
         incomplete = true;
       }
@@ -220,6 +256,8 @@ class ZkPrivateChatIndexLoader {
       savedItems: savedItems,
       files: files,
       incomplete: incomplete,
+      totalListedFiles: fileRows.length,
+      contentIndexedFiles: contentIndexedFiles,
     );
   }
 

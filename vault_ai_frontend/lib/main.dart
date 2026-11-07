@@ -68,6 +68,7 @@ import 'services/zk_private_chat.dart' as zk_private_chat;
 import 'services/zk_general_chat_bridge.dart' as zk_general_bridge;
 import 'services/zk_private_chat_flow.dart' as zk_chat_flow;
 import 'services/zk_private_chat_index.dart' as zk_chat_index;
+import 'services/zk_private_credential_scan.dart' as zk_credential_scan;
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/vault_key_hierarchy.dart' as vk_hier;
 import 'services/zk_auth_service.dart';
@@ -10448,6 +10449,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   List<_VaultStoredFile> vaultFiles = [];
 
   String? activeDeepScanJobId;
+  bool _privateCredentialScanInFlight = false;
   String? activeDeepScanIntent;
   String? activeDeepScanQuery;
   String? activeDeepScanStatus;
@@ -18180,7 +18182,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       throw Exception('Session expired.');
     }
     if (private_content_guard.blocksZkLegacyContentRoute(
-        vaultHandle: app.vaultHandle)) {
+            vaultHandle: app.vaultHandle) ||
+        signedPrivateChatOfferedForToken(token)) {
       if (!kEnableZkPrivateChat && !signedPrivateChatOfferedForToken(token)) {
         throw const private_content_guard.PrivateContentSearchUnavailable(
           private_content_guard.relatedFilesPrivateMessage,
@@ -18307,8 +18310,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return;
     }
     if (private_content_guard.blocksZkLegacyContentRoute(
-        vaultHandle: app.vaultHandle)) {
-      _appendAssistantMessage(private_content_guard.deepScanPrivateMessage);
+            vaultHandle: app.vaultHandle) ||
+        signedPrivateChatOfferedForToken(token)) {
+      await _scanPrivateCredentialFiles(app, token);
       return;
     }
     final String pin;
@@ -18382,6 +18386,107 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
+  Future<void> _scanPrivateCredentialFiles(AppState app, String token) async {
+    if (_privateCredentialScanInFlight) {
+      _showSnack('Private file scan is already running.');
+      return;
+    }
+    if (!kEnableZkPrivateChat && !signedPrivateChatOfferedForToken(token)) {
+      _appendAssistantMessage(private_content_guard.deepScanPrivateMessage);
+      return;
+    }
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    final vaultId = app.vaultId;
+    final epoch = app._sessionEpoch;
+    final foregroundEpoch = app._sessionProbeEpoch;
+    final termination = st.SessionTermination.instance.generation;
+    bool currentAccess() =>
+        mounted &&
+        app.unlocked &&
+        app.sessionToken == token &&
+        app.vaultId == vaultId &&
+        app._sessionEpoch == epoch &&
+        app._sessionProbeEpoch == foregroundEpoch &&
+        app._sessionForeground &&
+        !app.sessionVerificationBlocked &&
+        vaultId != null &&
+        mvk != null &&
+        identical(mvk, zk_mvk_store.ZkActiveMvk.current()) &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
+        st.SessionTermination.instance.generation == termination &&
+        !st.SessionTermination.instance.isTerminated;
+    if (!currentAccess()) {
+      _appendAssistantMessage('Unlock your vault to scan its private files.');
+      return;
+    }
+    _privateCredentialScanInFlight = true;
+    try {
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final index = await zk_chat_index.ZkPrivateChatIndexLoader(
+        mvk: mvk!,
+        accessIsCurrent: currentAccess,
+        includeSavedItems: false,
+        fileLimit: 500,
+        textFileLimit: 128,
+        textFileByteLimit: 256 * 1024,
+        extractedTextByteLimit: 256 * 1024,
+        totalTextByteLimit: 4 * 1024 * 1024,
+        allowPartialFileListing: true,
+        get: (path) => client.zkPrivateChatCiphertextGet(
+          authToken: token,
+          path: path,
+          accessGuard: () {
+            if (!currentAccess()) throw StateError('Vault access changed');
+          },
+        ),
+      ).load();
+      if (!currentAccess()) return;
+      final scan = zk_credential_scan.ZkPrivateCredentialScan.scan(index);
+      setState(() {
+        selectedSection = _DashboardSection.chat;
+        _markPriorCredentialCardsStale();
+        msgs.add(_Msg('assistant', scan.summary));
+        if (kZkChatFileCardsEnabled) {
+          for (final file in scan.matches.take(6)) {
+            msgs.add(
+              _Msg(
+                'assistant',
+                'Possible match: “${file.title}”.',
+                kind: ChatMessage.kVaultFile,
+                fileId: file.id,
+                fileName: file.title,
+                mimeType: file.mimeType,
+                payload: const {'zk_private_chat_v2': true},
+              ),
+            );
+          }
+        } else if (scan.matches.isNotEmpty) {
+          msgs.add(
+            _Msg('assistant', 'File viewing is not enabled in this build.'),
+          );
+        }
+        if (scan.matches.length > 6) {
+          msgs.add(
+            _Msg(
+              'assistant',
+              'Showing the first 6 possible matches. Search by saved name '
+                  'to find another file.',
+            ),
+          );
+        }
+      });
+      _scrollToBottom();
+    } catch (_) {
+      if (!currentAccess()) return;
+      _appendAssistantMessage(
+        'The private file scan could not finish. No file was changed. '
+        'Please try again later.',
+      );
+    } finally {
+      _privateCredentialScanInFlight = false;
+    }
+  }
+
   void _focusActiveDeepScanCard() {
     if (!mounted) return;
     _scrollToBottom();
@@ -18417,7 +18522,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final token = app.sessionToken;
     if (token == null || app.vaultId == null) return null;
     if (private_content_guard.blocksZkLegacyContentRoute(
-        vaultHandle: app.vaultHandle)) {
+            vaultHandle: app.vaultHandle) ||
+        signedPrivateChatOfferedForToken(token)) {
       return null;
     }
     final String pin;
@@ -20592,6 +20698,21 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         text: text,
         currentAccess: currentAccess,
       );
+      return;
+    }
+    if (zk_credential_scan.ZkPrivateCredentialScan.shouldRouteLocally(
+      text,
+      privateChatEnabled: kEnableZkPrivateChat,
+      signedPrivateChatOffer: signedPrivateChatOfferedForToken(token),
+    )) {
+      _zkPrivateChatFlow?.clear();
+      setState(() {
+        selectedSection = _DashboardSection.chat;
+        input.clear();
+        msgs.add(_Msg('user', text));
+      });
+      _scrollToBottom();
+      await _scanPrivateCredentialFiles(app, token);
       return;
     }
     if (!safeBridgeOnly && parseVaultLocalMemorySaveCommand(text) != null) {
