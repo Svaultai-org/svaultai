@@ -6,6 +6,7 @@ import sys
 import uuid
 import logging
 import base64
+import binascii
 import re
 import secrets
 import string
@@ -1156,6 +1157,18 @@ class LinkBeneficiaryRequest(BaseModel):
     vault_name: str                               
     pin: str                                    
     pairing_code: str
+
+
+class ZkCreateBeneficiaryRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    passer_label_ciphertext: str = Field(..., min_length=40, max_length=4096)
+    zk_proof_token: str = Field(..., min_length=1, max_length=128)
+
+
+class ZkLinkBeneficiaryRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    pairing_code: str = Field(..., min_length=1, max_length=128)
+    zk_proof_token: str = Field(..., min_length=1, max_length=128)
 
 
 class BeneficiaryListRequest(BaseModel):
@@ -10486,6 +10499,124 @@ from vault_core import (
 )
 
 
+# Existing beneficiary_links.wrapped_vault_key is NOT NULL. V2 pairings have
+# no server-side vault key to wrap; this version marker is never key material.
+_ZK_BENEFICIARY_V2_MARKER = "zk-beneficiary-v2:no-server-key"
+
+
+def _require_zk_beneficiary_v2(principal, proof_token: str) -> None:
+    if not _env_bool("VAULTAI_ZK_BENEFICIARY_V2_PAIRING_ENABLED"):
+        raise HTTPException(status_code=404, detail="Not found")
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """SELECT vault_handle, opaque_registration_record, pk_vault_public
+                 FROM vaults WHERE vault_id = %s""",
+            (principal["vault_id"],),
+        )
+        row = cur.fetchone()
+    finally:
+        conn.close()
+    if not row or row["vault_handle"] is None or row["opaque_registration_record"] is None:
+        raise HTTPException(status_code=409, detail="zk_vault_required")
+    if row["pk_vault_public"] is None or len(bytes(row["pk_vault_public"])) != 32:
+        raise HTTPException(status_code=409, detail="zk_inheritance_public_key_required")
+    from routes.auth_zk_routes import consume_recent_zk_proof
+    consume_recent_zk_proof(proof_token, principal)
+
+
+def _decode_zk_pairing_label(value: str) -> bytes:
+    # Reject non-canonical base64url and empty/implausible AES-GCM envelopes.
+    if not value or any(c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" for c in value):
+        raise HTTPException(status_code=400, detail="invalid_label_ciphertext")
+    try:
+        raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    except (ValueError, binascii.Error):
+        raise HTTPException(status_code=400, detail="invalid_label_ciphertext")
+    if (len(raw) < 29 or len(raw) > 3072 or
+            base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != value):
+        raise HTTPException(status_code=400, detail="invalid_label_ciphertext")
+    return raw
+
+
+@app.post("/beneficiary/zk-create")
+@limiter.limit("10/hour")
+async def beneficiary_zk_create_endpoint(
+    request: Request,
+    payload: ZkCreateBeneficiaryRequest,
+    principal=Depends(verify_trusted_device),
+):
+    label_ciphertext = _decode_zk_pairing_label(payload.passer_label_ciphertext)
+    _require_zk_beneficiary_v2(principal, payload.zk_proof_token)
+    pairing_code = generate_pairing_code()
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=PAIRING_CODE_TTL_MINUTES)
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """INSERT INTO beneficiary_links
+                 (passer_vault_id, passer_label, passer_label_ciphertext,
+                  pairing_code_hash, pairing_expires_at, wrapped_vault_key, status)
+               VALUES (%s, NULL, %s, %s, %s, %s, 'pairing_pending')
+               RETURNING id""",
+            (principal["vault_id"], label_ciphertext,
+             hash_pairing_code(pairing_code), expires_at,
+             _ZK_BENEFICIARY_V2_MARKER),
+        )
+        link_id = cur.fetchone()["id"]
+        conn.commit()
+    finally:
+        conn.close()
+    return {"link_id": link_id, "pairing_code": pairing_code,
+            "expires_at": expires_at.isoformat(),
+            "ttl_minutes": PAIRING_CODE_TTL_MINUTES,
+            "pairing_protocol": "zk-beneficiary-v2"}
+
+
+@app.post("/beneficiary/zk-link")
+@limiter.limit("10/hour")
+async def beneficiary_zk_link_endpoint(
+    request: Request,
+    payload: ZkLinkBeneficiaryRequest,
+    principal=Depends(verify_trusted_device),
+):
+    _require_zk_beneficiary_v2(principal, payload.zk_proof_token)
+    code_hash = hash_pairing_code(payload.pairing_code.strip())
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """SELECT id, passer_vault_id, status, pairing_expires_at,
+                      wrapped_vault_key
+                 FROM beneficiary_links
+                WHERE pairing_code_hash = %s FOR UPDATE""",
+            (code_hash,),
+        )
+        row = cur.fetchone()
+        if not row or row["wrapped_vault_key"] != _ZK_BENEFICIARY_V2_MARKER:
+            raise HTTPException(status_code=404, detail="Invalid or expired pairing code.")
+        if row["status"] != "pairing_pending":
+            raise HTTPException(status_code=409, detail="Pairing code already used.")
+        if not row["pairing_expires_at"] or row["pairing_expires_at"] <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=410, detail="Pairing code expired.")
+        if str(row["passer_vault_id"]) == str(principal["vault_id"]):
+            raise HTTPException(status_code=400, detail="Cannot link a vault to itself.")
+        cur.execute(
+            """UPDATE beneficiary_links
+                  SET beneficiary_vault_id = %s, pairing_code_hash = NULL,
+                      pairing_expires_at = NULL, status = 'linked',
+                      updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s""",
+            (principal["vault_id"], row["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"link_id": row["id"], "status": "linked",
+            "pairing_protocol": "zk-beneficiary-v2"}
+
+
 @app.post("/beneficiary/create")
 @limiter.limit("10/hour")
 async def beneficiary_create_endpoint(
@@ -10565,8 +10696,6 @@ async def beneficiary_link_endpoint(
     if not pairing_code:
         raise HTTPException(status_code=400, detail="Pairing code is required.")
 
-    beneficiary_vault_key = verify_vault_pin(vault_id, payload.pin)
-
     code_hash = hash_pairing_code(pairing_code)
 
     conn = get_db()
@@ -10586,6 +10715,11 @@ async def beneficiary_link_endpoint(
 
         if not row:
             raise HTTPException(status_code=404, detail="Invalid or expired pairing code.")
+
+        if row["wrapped_vault_key"] == _ZK_BENEFICIARY_V2_MARKER:
+            raise HTTPException(status_code=409, detail="zk_client_update_required")
+
+        beneficiary_vault_key = verify_vault_pin(vault_id, payload.pin)
 
         if row["status"] != "pairing_pending":
             raise HTTPException(status_code=400, detail="Pairing code already used.")
@@ -10660,6 +10794,7 @@ async def beneficiary_list_mine_endpoint(
             SELECT bl.id,
                    bl.passer_label,
                    bl.passer_label_ciphertext,
+                   bl.wrapped_vault_key = %s AS zk_pairing_v2,
                    bl.status,
                    bl.beneficiary_vault_id IS NOT NULL AS is_linked,
                    bl.pairing_expires_at,
@@ -10681,7 +10816,7 @@ async def beneficiary_list_mine_endpoint(
              WHERE bl.passer_vault_id = %s
              ORDER BY bl.created_at DESC
             """,
-            (vault_id,),
+            (_ZK_BENEFICIARY_V2_MARKER, vault_id),
         )
         rows = cursor.fetchall() or []
     finally:
@@ -10703,6 +10838,7 @@ async def beneficiary_list_mine_endpoint(
                     else None
                 ),
                 "status": r["status"],
+                "zk_pairing_v2": bool(r["zk_pairing_v2"]),
                 "pairing_state": r.get("pairing_state") or "paired_no_credentials",
                 "is_linked": bool(r["is_linked"]),
                 "pairing_expires_at": iso(r["pairing_expires_at"]),
@@ -10749,6 +10885,7 @@ async def beneficiary_list_inheritances_endpoint(
             """
             SELECT bl.id,
                    bl.passer_label,
+                   bl.wrapped_vault_key = %s AS zk_pairing_v2,
                    bl.status,
                    bl.transfer_requested_at,
                    bl.transfer_executes_at,
@@ -10766,7 +10903,7 @@ async def beneficiary_list_inheritances_endpoint(
              WHERE bl.beneficiary_vault_id = %s
              ORDER BY bl.created_at DESC
             """,
-            (vault_id,),
+            (_ZK_BENEFICIARY_V2_MARKER, vault_id),
         )
         rows = cursor.fetchall() or []
     finally:
@@ -10786,6 +10923,7 @@ async def beneficiary_list_inheritances_endpoint(
                 "passer_label": r["passer_label"],
                 "owner_vault_name": None,
                 "status": r["status"],
+                "zk_pairing_v2": bool(r["zk_pairing_v2"]),
                 "pairing_state": r.get("pairing_state") or "paired_no_credentials",
                 "credentials_saved": bool(r.get("credentials_saved")),
                 "access_requested_at": iso(r.get("access_requested_at")),
@@ -10832,9 +10970,11 @@ async def beneficiary_request_transfer_endpoint(
             WHERE id = %s
               AND beneficiary_vault_id = %s
               AND status = 'linked'
+              AND wrapped_vault_key <> %s
             RETURNING id, passer_vault_id, passer_label
             """,
-            (requested_at, executes_at, payload.link_id, vault_id),
+            (requested_at, executes_at, payload.link_id, vault_id,
+             _ZK_BENEFICIARY_V2_MARKER),
         )
         row = cursor.fetchone()
         conn.commit()
@@ -10940,8 +11080,6 @@ async def beneficiary_claim_transfer_endpoint(
 
     vault_id = principal["vault_id"]
 
-    beneficiary_vault_key = verify_vault_pin(vault_id, payload.pin)
-
     conn = get_db()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -10960,6 +11098,10 @@ async def beneficiary_claim_transfer_endpoint(
         link = cursor.fetchone()
         if not link:
             raise HTTPException(status_code=404, detail="Inheritance link not found.")
+        if (str(link["beneficiary_vault_id"]) == vault_id and
+                link["wrapped_vault_key"] == _ZK_BENEFICIARY_V2_MARKER):
+            raise HTTPException(status_code=409, detail="zk_inheritance_clone_unavailable")
+        beneficiary_vault_key = verify_vault_pin(vault_id, payload.pin)
         if str(link["beneficiary_vault_id"]) != vault_id:
             raise HTTPException(status_code=403, detail="This inheritance does not belong to you.")
         if link["status"] != "transfer_pending":

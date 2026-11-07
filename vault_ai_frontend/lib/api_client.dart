@@ -2324,6 +2324,56 @@ class VaultAIClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> createZkBeneficiary({
+    required String passerLabelCiphertext,
+    required String zkProofToken,
+    required String authToken,
+  }) async {
+    final response = await _sessionHttp.post(
+      Uri.parse('$baseUrl/beneficiary/zk-create'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'passer_label_ciphertext': passerLabelCiphertext,
+        'zk_proof_token': zkProofToken,
+      }),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Create beneficiary failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> linkZkBeneficiary({
+    required String pairingCode,
+    required String zkProofToken,
+    required String authToken,
+  }) async {
+    final response = await _sessionHttp.post(
+      Uri.parse('$baseUrl/beneficiary/zk-link'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'pairing_code': pairingCode,
+        'zk_proof_token': zkProofToken,
+      }),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Link beneficiary failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> linkBeneficiary({
     required String vaultName,
     required String pin,

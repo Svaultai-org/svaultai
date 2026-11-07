@@ -934,6 +934,11 @@ const bool kEnableZkBeneficiaryProof = bool.fromEnvironment(
   defaultValue: false,
 );
 
+const bool kEnableZkBeneficiaryV2Pairing = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_BENEFICIARY_V2_PAIRING',
+  defaultValue: false,
+);
+
 const bool kEnableZkLegacyFileDeleteProof = bool.fromEnvironment(
   'VAULTAI_ENABLE_ZK_LEGACY_FILE_DELETE_PROOF',
   defaultValue: false,
@@ -1115,6 +1120,7 @@ const bool kZkPrivateOnlyClientReady = kEnableZkPrivateChat &&
     kEnableKeylessSavedItemRead &&
     kEnableKeylessSavedItemWrite &&
     kEnableZkBeneficiaryProof &&
+    kEnableZkBeneficiaryV2Pairing &&
     kEnableZkLegacyFileDeleteProof &&
     kEnableZkImportSessionActions;
 
@@ -4313,6 +4319,15 @@ String inferAssetTypeForUpload({
     }
   }
   return (detectedType: dt, detectedService: ds);
+}
+
+Future<String> encryptZkBeneficiaryLabelCiphertext(String label) async {
+  final mvk = zk_mvk_store.ZkActiveMvk.current();
+  if (mvk == null) throw StateError('Private vault key is unavailable.');
+  final hierarchy = vk_hier.VaultKeyHierarchy(mvk);
+  final metaKey = await hierarchy.metadataKey();
+  final ct = await vk_hier.aesGcmWrap(metaKey, utf8.encode(label));
+  return vk_hier.b64urlEncode(ct);
 }
 
 /// ZK client-finalize of a beneficiary label. Encrypts `label`
@@ -9989,19 +10004,45 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                   createErr = null;
                                 });
                                 try {
-                                  requireLegacyBeneficiaryPinActionAllowed(
-                                      vaultHandle: app.vaultHandle);
-                                  final pin =
-                                      await _VaultCrypto.currentPinOrThrow();
                                   final client =
                                       VaultAIClient(baseUrl: backendBaseUrl);
                                   final labelText = labelCtrl.text.trim();
-                                  final result = await client.createBeneficiary(
-                                    vaultName: app.vaultName!,
-                                    pin: pin,
-                                    label: labelText,
-                                    authToken: token,
-                                  );
+                                  final isZk = app.vaultHandle?.isNotEmpty == true;
+                                  late final Map<String, dynamic> result;
+                                  if (isZk && kPrivateOnlyUnlockEnabled) {
+                                    if (!kEnableZkBeneficiaryV2Pairing) {
+                                      throw StateError('Beneficiary pairing is not available in this build.');
+                                    }
+                                    final entered = await _promptForActionPin(
+                                      context, 'Verify beneficiary pairing',
+                                    );
+                                    if (entered == null) {
+                                      setLocal(() => creating = false);
+                                      return;
+                                    }
+                                    final proof = await _zkActionProof(app, token, entered);
+                                    final labelCiphertext =
+                                        await encryptZkBeneficiaryLabelCiphertext(labelText);
+                                    if (app.sessionToken != token) {
+                                      throw StateError('Vault access changed.');
+                                    }
+                                    result = await client.createZkBeneficiary(
+                                      passerLabelCiphertext: labelCiphertext,
+                                      zkProofToken: proof,
+                                      authToken: token,
+                                    );
+                                  } else {
+                                    requireLegacyBeneficiaryPinActionAllowed(
+                                        vaultHandle: app.vaultHandle);
+                                    final pin =
+                                        await _VaultCrypto.currentPinOrThrow();
+                                    result = await client.createBeneficiary(
+                                      vaultName: app.vaultName!,
+                                      pin: pin,
+                                      label: labelText,
+                                      authToken: token,
+                                    );
+                                  }
                                   // ZK client-finalize: for ZK vaults,
                                   // /beneficiary/create wrote
                                   // passer_label = NULL. Encrypt the
@@ -10015,8 +10056,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                   // an unlabelled row (the beneficiary
                                   // list would be unreadable). Show
                                   // the error and let the user retry.
-                                  if (zk_mvk_store.ZkActiveMvk.current() !=
-                                      null) {
+                                  if (!(isZk && kPrivateOnlyUnlockEnabled) &&
+                                      zk_mvk_store.ZkActiveMvk.current() != null) {
                                     final linkId =
                                         (result['link_id'] as num?)?.toInt();
                                     if (linkId == null) {
@@ -10189,18 +10230,42 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                   linkErr = null;
                                 });
                                 try {
-                                  requireLegacyBeneficiaryPinActionAllowed(
-                                      vaultHandle: app.vaultHandle);
-                                  final pin =
-                                      await _VaultCrypto.currentPinOrThrow();
                                   final client =
                                       VaultAIClient(baseUrl: backendBaseUrl);
-                                  final result = await client.linkBeneficiary(
-                                    vaultName: app.vaultName!,
-                                    pin: pin,
-                                    pairingCode: code,
-                                    authToken: token,
-                                  );
+                                  late final Map<String, dynamic> result;
+                                  if (app.vaultHandle?.isNotEmpty == true &&
+                                      kPrivateOnlyUnlockEnabled) {
+                                    if (!kEnableZkBeneficiaryV2Pairing) {
+                                      throw StateError('Beneficiary pairing is not available in this build.');
+                                    }
+                                    final entered = await _promptForActionPin(
+                                      context, 'Verify inheritance pairing',
+                                    );
+                                    if (entered == null) {
+                                      setLocal(() => linking = false);
+                                      return;
+                                    }
+                                    final proof = await _zkActionProof(app, token, entered);
+                                    if (app.sessionToken != token) {
+                                      throw StateError('Vault access changed.');
+                                    }
+                                    result = await client.linkZkBeneficiary(
+                                      pairingCode: code,
+                                      zkProofToken: proof,
+                                      authToken: token,
+                                    );
+                                  } else {
+                                    requireLegacyBeneficiaryPinActionAllowed(
+                                        vaultHandle: app.vaultHandle);
+                                    final pin =
+                                        await _VaultCrypto.currentPinOrThrow();
+                                    result = await client.linkBeneficiary(
+                                      vaultName: app.vaultName!,
+                                      pin: pin,
+                                      pairingCode: code,
+                                      authToken: token,
+                                    );
+                                  }
                                   setLocal(() {
                                     linkedLabel =
                                         result['passer_label']?.toString() ??
@@ -12451,7 +12516,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         // identity for either field.
                         final label = (i['passer_label'] ??
                                 i['owner_vault_name'] ??
-                                'Unknown')
+                                (i['zk_pairing_v2'] == true ? 'Private vault' : 'Unknown'))
                             .toString();
                         final status = (i['status'] ?? '').toString();
                         final id = (i['id'] as num?)?.toInt() ?? 0;
@@ -12487,6 +12552,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         final showReveal = pairingState == 'approved' ||
                             pairingState == 'released';
                         final showLegacyLinked = isLinked &&
+                            i['zk_pairing_v2'] != true &&
                             !credentialsSaved &&
                             pairingState == 'paired_no_credentials';
 
@@ -12635,6 +12701,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                       ),
                                     ),
                                   if (readyToClaim &&
+                                      i['zk_pairing_v2'] != true &&
                                       !credentialsSaved &&
                                       pairingState == 'paired_no_credentials')
                                     FilledButton.icon(
