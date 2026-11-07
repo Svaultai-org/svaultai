@@ -181,6 +181,7 @@ class CryptoWalletEngineAssetDetailPage extends StatefulWidget {
   final Future<bool> Function(String pin)? verifyPin;
   /// Optional, default-off private wallet receive client.
   final WalletV2ActiveClient? walletV2;
+  final bool walletV2SendEnabled;
   // 2026-07-13 network-scoped: the ETH Send from the asset-detail
   // page must resolve the SAME wallet the balance/receive path
   // resolves (which uses the network-scoped endpoint). See the
@@ -205,6 +206,7 @@ class CryptoWalletEngineAssetDetailPage extends StatefulWidget {
     this.decryptForVault,
     this.verifyPin,
     this.walletV2,
+    this.walletV2SendEnabled = false,
     this.loadFromAddress,
     this.network,
     this.features,

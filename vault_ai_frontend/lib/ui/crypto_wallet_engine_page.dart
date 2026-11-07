@@ -286,6 +286,7 @@ class CryptoWalletEnginePage extends StatefulWidget {
   final Future<bool> Function(String pin)? verifyPin;
   /// Optional, default-off private wallet receive client.
   final WalletV2ActiveClient? walletV2;
+  final bool walletV2SendEnabled;
 
   // 2026-07-13 network-scoped: production bug was that the ETH Send
   // path called a legacy /crypto/wallet/{asset}/receive endpoint which
@@ -311,6 +312,7 @@ class CryptoWalletEnginePage extends StatefulWidget {
     this.decryptForVault,
     this.verifyPin,
     this.walletV2,
+    this.walletV2SendEnabled = false,
     this.loadFromAddress,
     this.moneroWalletAdapter = const NullMoneroWalletAdapter(),
     this.moneroScannerAdapter = const NullMoneroScannerAdapter(),
@@ -517,6 +519,7 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
       decryptForVault: widget.decryptForVault,
       verifyPin: widget.verifyPin,
       walletV2: widget.walletV2,
+      walletV2SendEnabled: widget.walletV2SendEnabled,
       loadFromAddress: widget.loadFromAddress,
       effectiveNetwork: _effectiveNetwork,
       isMainnetActive: _isMainnetActive,
@@ -548,6 +551,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   final Future<String> Function(String ciphertext)? decryptForVault;
   final Future<bool> Function(String pin)? verifyPin;
   final WalletV2ActiveClient? walletV2;
+  final bool walletV2SendEnabled;
   // 2026-07-13: network-scoped signature — see notes on the public
   // widget's field of the same name.
   final Future<String?> Function(String network)? loadFromAddress;
@@ -576,6 +580,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     this.decryptForVault,
     this.verifyPin,
     this.walletV2,
+    this.walletV2SendEnabled = false,
     this.loadFromAddress,
     required this.effectiveNetwork,
     required this.isMainnetActive,
@@ -836,6 +841,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
           decryptForVault: decryptForVault,
           verifyPin: verifyPin,
           walletV2: walletV2,
+          walletV2SendEnabled: walletV2SendEnabled,
           loadFromAddress: loadFromAddress,
           network: networkForDetail,
           features: features,

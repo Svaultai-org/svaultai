@@ -48,6 +48,8 @@ import 'services/legacy_content_migration_stager.dart' as legacy_stage;
 import 'services/legacy_stage_pin_lease.dart';
 import 'services/zk_pin_gate_migration_handoff.dart';
 import 'services/file_v2_writer.dart';
+import 'services/wallet_v2_active_client.dart';
+import 'services/wallet_v2_migration.dart';
 import 'services/native_secure_store.dart';
 import 'services/session_persistence_lock.dart'
     if (dart.library.html) 'services/session_persistence_lock_web.dart' as session_store;
@@ -1161,6 +1163,20 @@ const bool kZkPrivateOnlyClientReady = kEnableZkPrivateChat &&
 // A private-only release must not start until every offered wallet action has
 // a verified client-held-key path and existing records have been read back.
 const bool kPrivateWalletFeatureParityReady = false;
+
+// Staged, opt-in Wallet V2 UI. No production build enables these flags yet.
+const bool kEnableWalletV2UiRead = bool.fromEnvironment(
+  'VAULTAI_ENABLE_WALLET_V2_UI_READ',
+  defaultValue: false,
+) && kPrivateOnlyUnlockEnabled;
+const bool kEnableWalletV2UiCreate = bool.fromEnvironment(
+  'VAULTAI_ENABLE_WALLET_V2_UI_CREATE',
+  defaultValue: false,
+) && kEnableWalletV2UiRead;
+const bool kEnableWalletV2UiSend = bool.fromEnvironment(
+  'VAULTAI_ENABLE_WALLET_V2_UI_SEND',
+  defaultValue: false,
+) && kEnableWalletV2UiRead;
 
 bool legacyAuthFallbackPermitted({
   required bool opaqueLookupMissed,
@@ -5499,6 +5515,50 @@ Future<Map<String, dynamic>> _zkHttpGet(
     return <String, dynamic>{};
   }
   return decoded;
+}
+
+/// Client-held wallet key access is bound to one unlocked OPAQUE session.
+/// The V2 service stages ciphertext, then verifies local readback before
+/// publishing a new wallet. A stale route cannot keep using the prior MVK.
+WalletV2ActiveClient? _walletV2ClientFor(AppState app) {
+  if (!kEnableWalletV2UiRead) return null;
+  final token = app.sessionToken;
+  final vaultId = app.vaultId;
+  final handle = app.vaultHandle;
+  final epoch = app._sessionEpoch;
+  final mvk = zk_mvk_store.ZkActiveMvk.current();
+  final deviceId = apiClientDeviceId();
+  if (!app.unlocked || token == null || vaultId == null ||
+      handle == null || handle.isEmpty || mvk == null ||
+      deviceId == null || deviceId.isEmpty ||
+      zk_mvk_store.ZkActiveMvk.currentVaultId() != vaultId ||
+      zk_mvk_store.ZkActiveMvk.currentVaultHandle() != handle) {
+    return null;
+  }
+  bool current() => app.unlocked && app._isCurrentSession(token, epoch) &&
+      app.vaultId == vaultId && app.vaultHandle == handle &&
+      apiClientDeviceId() == deviceId &&
+      identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
+      zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
+      zk_mvk_store.ZkActiveMvk.currentVaultHandle() == handle;
+  return WalletV2ActiveClient(
+    codec: WalletV2EnvelopeCodec(mvk),
+    accessIsCurrent: current,
+    creationEnabled: kEnableWalletV2UiCreate,
+    post: (path, body) async {
+      if (!current()) throw StateError('Wallet access changed');
+      final response = await _zkHttpPost(path, body, bearerToken: token);
+      if (!current()) throw StateError('Wallet access changed');
+      return response;
+    },
+    get: (path) async {
+      if (!current()) throw StateError('Wallet access changed');
+      final response = await _zkHttpGet(path, bearerToken: token)
+          .timeout(const Duration(seconds: 30));
+      if (!current()) throw StateError('Wallet access changed');
+      return response;
+    },
+  );
 }
 
 /// Fire-and-forget lazy metadata migration triggered after unlock.
@@ -22338,6 +22398,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   Widget _buildCryptoVaultEngineContent(AppState app, bool isMobile) {
     final authToken = app.sessionToken;
+    final walletV2 = _walletV2ClientFor(app);
     final hasVaultKey = app.vaultId != null &&
         app.vaultName != null &&
         _VaultCrypto.hasKeyFor(
@@ -22369,6 +22430,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           verifyPin: (pin) async {
             return verifyCurrentVaultPinForWallet(app, pin);
           },
+          walletV2: walletV2,
+          walletV2SendEnabled: kEnableWalletV2UiSend,
           // 2026-07-13 fix: was calling the legacy
           // /crypto/wallet/{asset}/receive endpoint which queries
           // service='ETH'. The mainnet ETH wallet is persisted with
@@ -22417,9 +22480,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           _VaultCrypto.hasKeyFor(
             vaultId: app.vaultId!, vaultName: app.vaultName!,
           );
+      bool walletAccessAvailable() =>
+          keyAvailable() || (walletV2?.accessIsCurrent() ?? false);
       final registeredAssetClient = VaultAIClient(
         baseUrl: backendBaseUrl,
-        walletResponseIsCurrent: keyAvailable,
+        walletResponseIsCurrent: walletAccessAvailable,
       );
       return AssetsPage(
         key: ValueKey('assets-${sessionContext?.generation}'),
@@ -22442,14 +22507,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           return plaintext;
         },
         verifyPin: (pin) async =>
-            keyAvailable() && await verifyCurrentVaultPinForWallet(app, pin),
+            walletAccessAvailable() &&
+            await verifyCurrentVaultPinForWallet(app, pin),
+        walletV2: walletV2,
+        walletV2SendEnabled: kEnableWalletV2UiSend,
         loadFromAddress: (network) async {
-          if (!keyAvailable()) return null;
+          if (!walletAccessAvailable()) return null;
           try {
             final body = await registeredAssetClient.getCryptoWalletReceiveNetwork(
               network: network, asset: 'ETH', authToken: authToken ?? '',
             );
-            if (!keyAvailable() || body['wallet_engine'] != 'receive_ready') {
+            if (!walletAccessAvailable() ||
+                body['wallet_engine'] != 'receive_ready') {
               return null;
             }
             final address = body['publicAddress'];

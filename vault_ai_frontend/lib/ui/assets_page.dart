@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api_client.dart';
 import '../services/asset_catalog.dart';
 import '../services/crypto_wallet_features.dart';
+import '../services/wallet_v2_active_client.dart';
 import 'crypto_wallet_engine_asset_detail_page.dart';
 import 'crypto_wallet_engine_design.dart';
 
@@ -22,6 +23,8 @@ class AssetsPage extends StatefulWidget {
     this.isVaultKeyAvailable,
     this.decryptForVault,
     this.verifyPin,
+    this.walletV2,
+    this.walletV2SendEnabled = false,
     this.loadFromAddress,
   });
 
@@ -34,7 +37,13 @@ class AssetsPage extends StatefulWidget {
   final bool Function()? isVaultKeyAvailable;
   final Future<String> Function(String ciphertext)? decryptForVault;
   final Future<bool> Function(String pin)? verifyPin;
+  final WalletV2ActiveClient? walletV2;
+  final bool walletV2SendEnabled;
   final Future<String?> Function(String network)? loadFromAddress;
+
+  bool get walletAccessAvailable =>
+      (isVaultKeyAvailable?.call() ?? true) ||
+      (walletV2?.accessIsCurrent() ?? false);
 
   @override
   State<AssetsPage> createState() => _AssetsPageState();
@@ -76,7 +85,7 @@ class _AssetsPageState extends State<AssetsPage> {
             mounted &&
             generation == _loadGeneration &&
             token == widget.authToken &&
-            (widget.isVaultKeyAvailable?.call() ?? true);
+            widget.walletAccessAvailable;
         final responses = await Future.wait([
           api.getCryptoWalletAssetCatalog(
               authToken: token, responseIsCurrent: current),
@@ -93,7 +102,7 @@ class _AssetsPageState extends State<AssetsPage> {
     if (!mounted ||
         generation != _loadGeneration ||
         token != widget.authToken ||
-        !(widget.isVaultKeyAvailable?.call() ?? true)) {
+        !widget.walletAccessAvailable) {
       return;
     }
     setState(() {
@@ -122,7 +131,7 @@ class _AssetsPageState extends State<AssetsPage> {
     final asset = _catalog.assetFor(category);
     if (asset != null &&
         _categoryAvailable(category) &&
-        (widget.isVaultKeyAvailable?.call() ?? true)) {
+        widget.walletAccessAvailable) {
       Navigator.of(context).push(MaterialPageRoute<void>(
         builder: (_) => CryptoWalletEngineAssetDetailPage(
           asset: asset.id,
@@ -134,6 +143,8 @@ class _AssetsPageState extends State<AssetsPage> {
           isVaultKeyAvailable: widget.isVaultKeyAvailable,
           decryptForVault: widget.decryptForVault,
           verifyPin: widget.verifyPin,
+          walletV2: widget.walletV2,
+          walletV2SendEnabled: widget.walletV2SendEnabled,
           loadFromAddress: widget.loadFromAddress,
           network: asset.network,
           features: _features,
