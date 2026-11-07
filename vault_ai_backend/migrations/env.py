@@ -47,6 +47,18 @@ _VERSION_NUM_WIDTH = 128
 _DEBUG = os.getenv("VAULTAI_ALEMBIC_DEBUG", "").strip() not in ("", "0", "false", "False")
 
 
+def _lock_timeout_ms() -> int:
+    """Bound a release migration's lock wait when the operator requests it."""
+    raw = os.getenv("VAULTAI_ALEMBIC_LOCK_TIMEOUT_MS", "0").strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError("Invalid Alembic lock timeout") from exc
+    if not 0 <= value <= 60_000:
+        raise RuntimeError("Alembic lock timeout must be 0..60000 ms")
+    return value
+
+
 def _log(label: str, **fields: object) -> None:
     if not _DEBUG:
         return
@@ -135,7 +147,12 @@ def run_migrations_online() -> None:
             raw.autocommit = True
             with raw.cursor() as _setc:
                 _setc.execute("SET statement_timeout = 0")
-                _setc.execute("SET lock_timeout = 0")
+                # Zero preserves the historical default. A staged production
+                # release sets a short bound so a busy vault table aborts the
+                # migration instead of waiting indefinitely for its lock.
+                _setc.execute(
+                    f"SET lock_timeout = '{_lock_timeout_ms()}ms'"
+                )
                 _setc.execute("SET idle_in_transaction_session_timeout = 0")
         finally:
             raw.autocommit = old_autocommit
