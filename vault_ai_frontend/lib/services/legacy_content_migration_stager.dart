@@ -338,11 +338,18 @@ class LegacyContentMigrationStager {
     _require200(readback);
     final body = _requireMap(readback);
     if (body['item_id'] != id ||
-        body['source_snapshot'] != expectedSnapshot ||
+        !_validSnapshot(body['source_snapshot']) ||
         body['item_type_ciphertext'] is! String ||
         body['service_ciphertext'] is! String ||
         body['payload_ciphertext'] is! String) {
       throw const FormatException('Invalid staged item readback');
+    }
+    // An older client can change the legacy row after its V2 copy was
+    // staged. The server returns the authoritative snapshot with this read;
+    // a well-formed mismatch is a stale sidecar eligible for one proof-bound
+    // reset, not an invalid response that permanently blocks later files.
+    if (body['source_snapshot'] != expectedSnapshot) {
+      throw const _StageConflict();
     }
     if (!await codec.verifyStagedItem(
       itemType: itemType,
@@ -791,13 +798,19 @@ LegacyStageReadbackEvidence? _readbackEvidence(
   final expiresAt = expires is String ? DateTime.tryParse(expires) : null;
   final expectedPrefix = isFile ? 'fr1' : 'ir1';
   final now = DateTime.now().toUtc();
+  // The server signs a ten-minute receipt using its own clock. A browser
+  // whose clock is even one second behind would reject a fresh receipt if we
+  // enforced that TTL against local time without a small skew allowance.
+  // The server verifies the signed expiry again before any retirement.
+  const clockSkewAllowance = Duration(minutes: 2);
   final valid = _validSnapshot(sourceSnapshot) &&
       parts.length == 4 && parts[0] == expectedPrefix &&
       RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(parts[2]) &&
       RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(parts[3]) &&
       expirySeconds != null && expiresAt != null &&
       expiresAt.isAfter(now) &&
-      expiresAt.difference(now) <= const Duration(minutes: 10) &&
+      expiresAt.difference(now) <=
+          const Duration(minutes: 10) + clockSkewAllowance &&
       (expiresAt.millisecondsSinceEpoch ~/ 1000 - expirySeconds).abs() <= 1;
   if (!valid) {
     if (requireEvidence) {

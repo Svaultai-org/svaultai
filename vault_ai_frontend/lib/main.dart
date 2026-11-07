@@ -14530,11 +14530,22 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // The owner dismissed the PIN dialog. No data was changed.
     } catch (error) {
       if (!mounted || app.handleApiException(error)) return;
-      _showSnack(kPrivateOnlyUnlockEnabled &&
-              kEnablePrivateLegacyRetireOnDemand
-          ? 'The upgrade paused. Your encrypted content remains saved. '
-              'You can retry later.'
-          : 'Could not prepare older content. You can retry later.');
+      // Staging may stop after a partial copy. A short snackbar can disappear
+      // before the owner sees it and look like a successful no-op. Keep a
+      // content-free outcome visible until the owner dismisses it.
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Older content preparation paused'),
+          content: const Text('The preparation did not finish. Your original '
+              'content remains available, and any encrypted copies already '
+              'made are preserved. You can try again later.'),
+          actions: [TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Done'),
+          )],
+        ),
+      );
     } finally {
       if (mounted) setState(() => _privateLegacyStageBusy = false);
     }

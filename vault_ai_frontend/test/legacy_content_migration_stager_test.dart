@@ -942,10 +942,10 @@ void main() {
 
   test('stages item, reads it back, and resumes without a second write',
       () async {
-    final receiptExpiry = DateTime.now().toUtc().add(
+    var receiptExpiry = DateTime.now().toUtc().add(
       const Duration(minutes: 5),
     );
-    final itemReceipt = 'ir1.${receiptExpiry.millisecondsSinceEpoch ~/ 1000}.'
+    var itemReceipt = 'ir1.${receiptExpiry.millisecondsSinceEpoch ~/ 1000}.'
         '$_snapshotA.$_snapshotB';
     final legacy = await _legacyEncrypt(utf8.encode(jsonEncode(
       <String, Object>{'username': 'synthetic-user', 'note': 'synthetic-note'},
@@ -1042,6 +1042,23 @@ void main() {
     expect(first.verifiedReadbacks.single.sourceSnapshot, _snapshotB);
     expect(first.verifiedReadbacks.single.readbackReceipt, itemReceipt);
     expect(first.verifiedReadbacks.single.isFile, isFalse);
+    // The server starts its ten-minute TTL from its clock. A browser clock
+    // 30 seconds behind must still accept a fresh signed receipt.
+    receiptExpiry = DateTime.now().toUtc().add(
+      const Duration(minutes: 10, seconds: 30),
+    );
+    itemReceipt = 'ir1.${receiptExpiry.millisecondsSinceEpoch ~/ 1000}.'
+        '$_snapshotA.$_snapshotB';
+    final skewed = await stager.stageAndVerify();
+    expect(skewed.itemsVerified, 1);
+    expect(skewed.verifiedReadbacks.single.readbackReceipt, itemReceipt);
+    // A much longer receipt is still rejected locally.
+    receiptExpiry = DateTime.now().toUtc().add(
+      const Duration(minutes: 13),
+    );
+    itemReceipt = 'ir1.${receiptExpiry.millisecondsSinceEpoch ~/ 1000}.'
+        '$_snapshotA.$_snapshotB';
+    await expectLater(stager.stageAndVerify(), throwsFormatException);
     omitReceipt = true;
     await expectLater(stager.stageAndVerify(), throwsFormatException);
     expect(stageWrites, 1);
@@ -1513,6 +1530,75 @@ void main() {
         reason: 'export, reset, and restage require fresh proofs');
     expect(calls.any((call) => call.contains('retire') ||
         call.startsWith('DELETE ')), isFalse);
+  });
+
+  test('authoritative item snapshot mismatch takes one proof-bound reset',
+      () async {
+    final legacy = await _legacyEncrypt(utf8.encode('{"value":"synthetic"}'));
+    final codec = LegacyCiphertextMigrationCodec(
+      legacyKey: _legacyKey, mvk: _mvk,
+    );
+    final existing = await codec.stageItem(
+      itemId: 9, itemType: 'note', service: 'Synthetic title',
+      legacyCiphertext: legacy,
+    );
+    final snapshots = <int, String>{9: _snapshotA};
+    final calls = <String>[];
+    Map<String, dynamic>? staged = existing.toStageBody();
+    var resets = 0;
+    var writes = 0;
+    final stager = LegacyContentMigrationStager(
+      enabled: true, recoveryEnabled: true,
+      export: _export(
+        itemRows: <Map<String, dynamic>>[{
+          'item_id': 9, 'ciphertext_chars': legacy.length,
+          'item_type': 'note', 'service': 'Synthetic title',
+        }],
+        fileRows: const [],
+        itemCiphertexts: {9: legacy},
+        fileCiphertexts: const {},
+        itemSnapshots: snapshots,
+        calls: calls,
+      ),
+      codec: codec,
+      request: (method, path, [body]) async {
+        calls.add('$method $path');
+        if (method == 'GET' && path.endsWith('/item-staged/9')) {
+          return staged == null
+              ? const MigrationReply(409, {'detail': 'item_not_staged'})
+              : MigrationReply(200, {
+                  'item_id': 9,
+                  ...staged!,
+                  'source_snapshot': writes == 0 ? _snapshotB : _snapshotA,
+                });
+        }
+        if (method == 'POST' && path.endsWith('/item-reset-stage')) {
+          resets++;
+          expect(body!['source_snapshot'], _snapshotA);
+          expect(body['zk_proof_token'], isNotEmpty);
+          staged = null;
+          snapshots[9] = _snapshotB;
+          return const MigrationReply(200,
+              {'item_id': 9, 'stage_reset': true});
+        }
+        if (method == 'POST' && path.endsWith('/item-stage')) {
+          writes++;
+          expect(body!['source_snapshot'], _snapshotB);
+          staged = Map<String, dynamic>.from(body);
+          snapshots[9] = _snapshotA;
+          return MigrationReply(200, {
+            'item_id': 9, 'staged': true, 'source_snapshot': _snapshotA,
+          });
+        }
+        fail('Unexpected item staging request $method $path');
+      },
+    );
+    final result = await stager.stageAndVerify();
+    expect(result.itemsVerified, 1);
+    expect(resets, 1);
+    expect(writes, 1);
+    expect(calls.where((call) => call.contains('item-reset-stage')), hasLength(1));
+    expect(calls.any((call) => call.contains('retire')), isFalse);
   });
 
   test('stale file stage resets once and verifies current bytes', () async {
