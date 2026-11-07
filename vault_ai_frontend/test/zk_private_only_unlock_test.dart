@@ -334,13 +334,13 @@ void main() {
     );
   });
 
-  test('legacy-only session can send its legacy PIN with private build flag',
+  test('strict build blocks legacy-only PIN before HTTP',
       () async {
     st.SessionTermination.instance.bindSession('legacy-only-session');
     expect(PrivateZkPinTransportSession.active, isFalse);
     expect(
       () => assertPrivateOnlyPinFreeBody({'pin': '123456'}),
-      returnsNormally,
+      throwsStateError,
     );
     final sent = <http.Request>[];
     final client = VaultAIClient(
@@ -350,12 +350,14 @@ void main() {
         return http.Response('{"session_token":"legacy-token"}', 200);
       }),
     );
-    await client.authLogin(vaultName: 'Legacy fixture', pin: '123456');
-    expect(sent, hasLength(1));
-    expect(sent.single.url.path, '/auth/login');
+    await expectLater(
+      client.authLogin(vaultName: 'Legacy fixture', pin: '123456'),
+      throwsStateError,
+    );
+    expect(sent, isEmpty);
   });
 
-  test('lost MVK cannot disable PIN guard until session switch', () async {
+  test('lost MVK or session switch cannot disable strict build PIN guard', () async {
     final app = AppState();
     try {
       await app.setSession(
@@ -386,7 +388,7 @@ void main() {
       );
       expect(PrivateZkPinTransportSession.active, isFalse);
       expect(() => assertPrivateOnlyPinFreeBody({'pin': '123456'}),
-          returnsNormally);
+          throwsStateError);
     } finally {
       await app.clearSession();
       app.dispose();

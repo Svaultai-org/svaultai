@@ -127,9 +127,9 @@ const bool kPrivateOnlyTransportRejectPin = bool.fromEnvironment(
   defaultValue: false,
 );
 
-// The build flag alone does not identify a ZK vault: legacy-only accounts
-// still need their migration path. Bind this marker only after OPAQUE has
-// installed a private vault. Its session epoch survives loss of the MVK.
+// This marker additionally scopes an OPAQUE session after unlock. The strict
+// build-wide transport fence below also rejects PIN requests before sign-in;
+// a legacy-only account needs a separate recovery path, not a raw-PIN escape.
 class PrivateZkPinTransportSession {
   static int? _sessionEpoch;
   static String? _sessionFingerprint;
@@ -212,24 +212,25 @@ bool _requestMetadataContainsPin(Uri uri, Map<String, String>? headers) {
   return headers?.keys.any(_isRawPinFieldName) ?? false;
 }
 
-/// Catch PIN requests from the active private ZK session before transport.
-/// A lost MVK cannot turn this guard off; logout or session rebinding does.
+/// Catch PIN requests throughout a strict build before transport, including
+/// before OPAQUE sign-in and after a vault session changes.
 void assertPrivateOnlyPinFreeBody(Object? body) {
-  if (!PrivateZkPinTransportSession.active || body == null) return;
+  if (!kPrivateOnlyTransportRejectPin || body == null) return;
   if (_requestBodyContainsPin(body)) {
     throw StateError('Raw PIN requests are unavailable in private mode.');
   }
 }
 
 /// One outbound boundary for ordinary, streamed and multipart API requests.
-/// The private-only fence is opt-in while legacy access is still supported.
+/// The private-only fence is opt-in at build time while the default build
+/// retains legacy access during migration.
 /// Signed offers additionally fence their own old routes in ordinary builds.
 void assertOutboundPinFreeRequest(
   Uri uri,
   Map<String, String>? headers, {
   Object? body,
 }) {
-  if (PrivateZkPinTransportSession.active &&
+  if (kPrivateOnlyTransportRejectPin &&
       (_requestMetadataContainsPin(uri, headers) ||
           _requestBodyContainsPin(body, headers: headers))) {
     throw StateError('Raw PIN requests are unavailable in private mode.');
@@ -246,7 +247,7 @@ void assertOutboundPinFreeBaseRequest(http.BaseRequest request) {
   } else if (request is http.MultipartRequest) {
     body = request.fields;
   } else {
-    if (PrivateZkPinTransportSession.active) {
+    if (kPrivateOnlyTransportRejectPin) {
       throw StateError('Uninspectable private request body.');
     }
     body = null;
@@ -1164,6 +1165,9 @@ class VaultAIClient {
     required String vaultName,
     required String pin,
   }) async {
+    if (kPrivateOnlyTransportRejectPin) {
+      throw StateError('Legacy PIN sign-in is unavailable in private mode.');
+    }
     final uri = Uri.parse('$baseUrl/auth/login');
     final headers = _defaultHeaders(json: true);
     final body = jsonEncode({
