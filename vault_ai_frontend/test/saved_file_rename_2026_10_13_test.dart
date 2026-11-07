@@ -19,6 +19,8 @@ import 'package:vault_ai_frontend/services/session_termination.dart'
 import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart'
     as hierarchy;
 import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
+import 'package:vault_ai_frontend/services/zk_active_sk_vault.dart';
+import 'package:vault_ai_frontend/services/zk_pin_free_file_session.dart';
 import 'package:vault_ai_frontend/ui/saved_file_rename_dialog.dart';
 import 'package:vault_ai_frontend/ui/chat/chat_message_list.dart';
 import 'package:vault_ai_frontend/ui/chat/chat_models.dart';
@@ -40,7 +42,7 @@ class _Fixture {
   bool failWrite = false;
   bool badAck = false;
 
-  Future<void> unlock() async {
+  Future<void> unlock({bool privateOnly = false}) async {
     app = _App()
       ..sessionToken = 'synthetic-file-token'
       ..vaultId = 'synthetic-file-vault'
@@ -51,23 +53,42 @@ class _Fixture {
       ..billingLoadState = BillingLoadState.loaded
       ..billingIncludedBytes = kVaultStorageLimitBytes
       ..billingEffectiveLimitBytes = kVaultStorageLimitBytes;
-    final previous = debugDefaultTargetPlatformOverride;
-    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-    try {
-      await deriveAndInstallCryptoContext(
-        vaultId: app.vaultId!,
-        vaultName: app.vaultName!,
-        pin: '123456',
-        pinSaltBase64: base64Encode(List<int>.filled(16, 31)),
-        iterations: 1,
-        source: 'isolated-file-rename-fixture',
-      );
-    } finally {
-      debugDefaultTargetPlatformOverride = previous;
+    if (!privateOnly) {
+      final previous = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        await deriveAndInstallCryptoContext(
+          vaultId: app.vaultId!,
+          vaultName: app.vaultName!,
+          pin: '123456',
+          pinSaltBase64: base64Encode(List<int>.filled(16, 31)),
+          iterations: 1,
+          source: 'isolated-file-rename-fixture',
+        );
+      } finally {
+        debugDefaultTargetPlatformOverride = previous;
+      }
     }
     ZkActiveMvk.set(
         mvk: mvk, vaultId: app.vaultId!, vaultHandle: app.vaultHandle!);
+    if (privateOnly) {
+      ZkActiveSkVault.set(
+        skVault: SecretKey(List<int>.filled(32, 41)),
+        vaultId: app.vaultId!,
+      );
+    }
     app.unlocked = true;
+    if (privateOnly) {
+      sessions.SessionTermination.instance.bindSession(app.sessionToken!);
+      PrivateZkPinTransportSession.bind(app.sessionToken!);
+      ZkPinFreeFileSession.instance.bind(
+        sessionToken: app.sessionToken!,
+        listOffered: true,
+        downloadOffered: true,
+      );
+      expect(VaultCryptoRegistry.current, isNull);
+      expect(app.unlocked, isTrue);
+    }
     setApiClientDeviceId('synthetic-file-device');
     final key = await hierarchy.VaultKeyHierarchy(mvk).metadataKey();
     Future<String> wrap(String value) async => hierarchy
@@ -104,6 +125,23 @@ class _Fixture {
         };
         await pendingFiles?.future;
         break;
+      case 'GET /vault/files/metadata':
+        response = {
+          'records': [
+            for (final row in rows)
+              {
+                'file_id': row['id'],
+                'file_name_ciphertext': row['file_name_ciphertext'],
+                'saved_name_ciphertext': row['saved_name_ciphertext'],
+                'content_type_ciphertext': row['content_type_ciphertext'],
+                'file_size': row['file_size'],
+                'needs_naming': row['needs_naming'],
+                'relative_path': row['relative_path'],
+              },
+          ],
+          'has_more': false,
+        };
+        break;
       case 'GET /folders':
         response = {
           'path': '',
@@ -117,6 +155,9 @@ class _Fixture {
         break;
       case 'GET /vault/ciphertext/vault-items':
         response = [];
+        break;
+      case 'GET /vault/items/metadata':
+        response = {'records': [], 'has_more': false};
         break;
       case 'GET /vault/ciphertext/vault-ai-memory':
         response = [];
@@ -163,6 +204,9 @@ class _Fixture {
     app.unlocked = false;
     app.dispose();
     ZkActiveMvk.clear();
+    ZkActiveSkVault.clear();
+    ZkPinFreeFileSession.instance.clear();
+    PrivateZkPinTransportSession.clear();
     VaultCryptoRegistry.clear(reason: 'file-rename-fixture-cleanup');
     setApiClientDeviceId('');
   }
@@ -376,6 +420,74 @@ void main() {
       f.dispose();
     }
   });
+
+  testWidgets('private Files renames an older file without a PIN cache',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    final f = _Fixture();
+    await tester.runAsync(() => f.unlock(privateOnly: true));
+    try {
+      await f.run(() async {
+        await tester.pumpWidget(_dashboard(f.app));
+        await tester.pumpAndSettle();
+        await _section(tester, 'files');
+        expect(f.app.unlocked, isTrue);
+        expect(f.app.sessionVerificationBlocked, isFalse);
+        expect(PrivateZkPinTransportSession.active, isTrue);
+        expect(VaultCryptoRegistry.current, isNull);
+        expect(identical(ZkActiveMvk.current(), f.mvk), isTrue);
+        await tester.tap(find.byKey(const ValueKey('files_file_rename_file-a')));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('saved_file_rename_name')), findsOneWidget,
+            reason: tester.widgetList<Text>(find.byType(Text))
+                .map((widget) => widget.data)
+                .whereType<String>()
+                .join(' | '));
+        await tester.enterText(
+            find.byKey(const Key('saved_file_rename_name')),
+            'Private renamed title');
+        await tester.tap(find.byKey(const Key('saved_file_rename_save')));
+        await tester.pumpAndSettle();
+        expect(await f.savedName(0), 'Private renamed title');
+        expect(f.writes, hasLength(1));
+        expect(f.requests.any((request) =>
+            request.url.path == '/name-file' ||
+            request.body.contains('"pin"')), isFalse);
+      });
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      f.dispose();
+      await tester.binding.setSurfaceSize(null);
+    }
+  }, skip: !(kPrivateOnlyUnlockEnabled && kEnableZkLegacyFileRename &&
+      kEnableFileV2UiRead));
+
+  testWidgets('private Files permits proof-gated older file delete confirmation',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    final f = _Fixture();
+    await tester.runAsync(() => f.unlock(privateOnly: true));
+    try {
+      await f.run(() async {
+        await tester.pumpWidget(_dashboard(f.app));
+        await tester.pumpAndSettle();
+        await _section(tester, 'files');
+        expect(f.app.unlocked, isTrue);
+        await tester.tap(find.byKey(const ValueKey('files_file_delete_file-a')));
+        await tester.pumpAndSettle();
+        expect(find.textContaining('Permanently delete the "QA duplicate.txt"'),
+            findsWidgets);
+        expect(f.requests.any((request) =>
+            request.url.path == '/manage/file/delete'), isFalse);
+      });
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      f.dispose();
+      await tester.binding.setSurfaceSize(null);
+    }
+  }, skip: !(kPrivateOnlyUnlockEnabled &&
+      kEnableZkLegacyFileDeleteProof && kEnableFileV2UiRead &&
+      kEnableKeylessSavedItemRead));
 
   testWidgets(
       'duplicate original filename lookup stays local and leaves both files intact',
