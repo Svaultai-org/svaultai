@@ -857,7 +857,9 @@ const bool kEnableLegacyContentStage = bool.fromEnvironment(
 );
 
 // An explicit owner action can stage and verify older ciphertext with a
-// one-time OPAQUE proof and a local key. It never retires the original rows.
+// one-time OPAQUE proof and a local key in a normal, access-preserving build.
+// It never retires the original rows unless the separate private-only
+// completion switch is also enabled.
 const bool kEnablePrivateLegacyStageOnDemand = bool.fromEnvironment(
   'VAULTAI_ENABLE_PRIVATE_LEGACY_STAGE_ON_DEMAND',
   defaultValue: false,
@@ -5919,10 +5921,11 @@ Future<({
   required Future<String?> Function() promptPin,
   required bool finishUpgrade,
 }) async {
-  if (!kPrivateOnlyUnlockEnabled || !kEnablePrivateLegacyStageOnDemand) {
+  if (!kEnablePrivateLegacyStageOnDemand) {
     throw StateError('Private content preparation is unavailable');
   }
-  if (finishUpgrade && !kEnablePrivateLegacyRetireOnDemand) {
+  if (finishUpgrade &&
+      (!kPrivateOnlyUnlockEnabled || !kEnablePrivateLegacyRetireOnDemand)) {
     throw StateError('Private content completion is unavailable');
   }
   LegacyStagePinLease? pinLease;
@@ -14083,8 +14086,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 ),
                 const SizedBox(height: 12),
 
-                if (kPrivateOnlyUnlockEnabled &&
-                    kEnablePrivateLegacyStageOnDemand &&
+                if (kEnablePrivateLegacyStageOnDemand &&
                     app.vaultHandle?.isNotEmpty == true) ...[
                   InkWell(
                     key: const Key('settings_prepare_older_content'),
@@ -14105,13 +14107,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         const Expanded(child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(kEnablePrivateLegacyRetireOnDemand
+                            Text(kPrivateOnlyUnlockEnabled &&
+                                    kEnablePrivateLegacyRetireOnDemand
                                 ? 'Complete older vault upgrade'
                                 : 'Prepare older vault content',
                               style: TextStyle(fontSize: 16,
                                   fontWeight: FontWeight.w700)),
                             SizedBox(height: 2),
-                            Text(kEnablePrivateLegacyRetireOnDemand
+                            Text(kPrivateOnlyUnlockEnabled &&
+                                    kEnablePrivateLegacyRetireOnDemand
                                 ? 'Verify older items and files, then switch '
                                     'them to private access. You can resume later.'
                                 : 'Verify encrypted copies of older saved '
@@ -14442,7 +14446,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       Future<String?> ownerPrompt() => _promptForActionPin(
         context, 'Verify older vault content',
       );
-      final completion = kEnablePrivateLegacyRetireOnDemand
+      final completion = kPrivateOnlyUnlockEnabled &&
+              kEnablePrivateLegacyRetireOnDemand
           ? await finishPrivateLegacyContentOnDemand(
               app, promptPin: ownerPrompt,
             )
@@ -14470,7 +14475,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       await showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: Text(kEnablePrivateLegacyRetireOnDemand
+          title: Text(kPrivateOnlyUnlockEnabled &&
+                  kEnablePrivateLegacyRetireOnDemand
               ? 'Older content upgrade' : 'Older content preparation'),
           content: Text(deferred == 0
               ? '$summary $completionText'
@@ -14486,7 +14492,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // The owner dismissed the PIN dialog. No data was changed.
     } catch (error) {
       if (!mounted || app.handleApiException(error)) return;
-      _showSnack(kEnablePrivateLegacyRetireOnDemand
+      _showSnack(kPrivateOnlyUnlockEnabled &&
+              kEnablePrivateLegacyRetireOnDemand
           ? 'The upgrade paused. Your encrypted content remains saved. '
               'You can retry later.'
           : 'Could not prepare older content. You can retry later.');
