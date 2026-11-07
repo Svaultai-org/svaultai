@@ -37,6 +37,7 @@ import 'chunked_aead.dart';
 import 'services/inheritance_credentials.dart' as inh_cred;
 import 'services/inheritance_mvk_v2.dart' as inh_mvk;
 import 'services/inheritance_v2_item_import.dart' as inh_import;
+import 'services/beneficiary_pending_upgrade.dart';
 import 'services/legacy_adoption.dart' as legacy_adopt;
 import 'services/metadata_migration_client.dart' as mmc;
 import 'services/legacy_ciphertext_export_client.dart' as legacy_export;
@@ -976,6 +977,14 @@ const bool kEnableZkBeneficiaryV2Pairing = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// Explicit owner-side bridge for unpaired, empty legacy invitations. This
+// uses only OPAQUE proof and remains off in normal releases.
+const bool kEnableZkPendingBeneficiaryUpgrade = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_PENDING_BENEFICIARY_UPGRADE',
+  defaultValue: false,
+) && kEnableZkBeneficiaryProof && kEnableZkBeneficiaryV2Pairing &&
+    kSignedBeneficiaryClientEnabled;
+
 const bool kEnableZkLegacyFileDeleteProof = bool.fromEnvironment(
   'VAULTAI_ENABLE_ZK_LEGACY_FILE_DELETE_PROOF',
   defaultValue: false,
@@ -1076,7 +1085,9 @@ Future<String> _zkActionProof(
 
 bool _privateBeneficiarySession(AppState app, String token) =>
     app.vaultHandle?.isNotEmpty == true &&
-    (kPrivateOnlyUnlockEnabled || hasSignedBeneficiaryOffer(token));
+    (kPrivateOnlyUnlockEnabled ||
+        kEnableZkPendingBeneficiaryUpgrade ||
+        hasSignedBeneficiaryOffer(token));
 
 bool _privateLegacyInheritanceUnavailable(String token) =>
     kPrivateOnlyUnlockEnabled ||
@@ -1086,7 +1097,8 @@ bool _privateLegacyInheritanceUnavailable(String token) =>
 void _requireAvailableBeneficiaryOffer(AppState app, String token) {
   if (kSignedBeneficiaryClientEnabled &&
       app.vaultHandle?.isNotEmpty == true &&
-      !hasSignedBeneficiaryOffer(token)) {
+      !hasSignedBeneficiaryOffer(token) &&
+      !kEnableZkPendingBeneficiaryUpgrade) {
     throw StateError('Private inheritance access is unavailable for this vault.');
   }
 }
@@ -10471,6 +10483,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   List<Map<String, dynamic>> beneficiaries = [];
   List<Map<String, dynamic>> inheritances = [];
+  final Set<int> _upgradingPendingBeneficiaryIds = <int>{};
   bool loadingBeneficiaries = false;
   bool loadingInheritances = false;
   bool _inheritanceLoadedOnce = false;
@@ -10642,6 +10655,100 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _showSnack('Could not load inheritances: $e');
     } finally {
       if (mounted) setState(() => loadingInheritances = false);
+    }
+  }
+
+  Future<void> _upgradePendingBeneficiary(int oldLinkId, String label) async {
+    if (!kEnableZkPendingBeneficiaryUpgrade ||
+        _upgradingPendingBeneficiaryIds.contains(oldLinkId)) return;
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultId = app.vaultId;
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (token == null || vaultId == null || mvk == null ||
+        zk_mvk_store.ZkActiveMvk.currentVaultId() != vaultId ||
+        app.vaultHandle?.isNotEmpty != true) {
+      _showSnack('Unlock your private vault to upgrade this invitation.');
+      return;
+    }
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: VaultColors.surfaceElevated,
+        title: const Text('Upgrade invitation'),
+        content: Text('Replace the unused invitation for $label with a '
+            'private pairing code. The existing invitation stays saved '
+            'until the new one is checked.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogCtx, false),
+              child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogCtx, true),
+              child: const Text('Upgrade')),
+        ],
+      ),
+    );
+    if (approved != true || !mounted) return;
+    bool current() => mounted && app.unlocked &&
+        app.sessionToken == token && app.vaultId == vaultId &&
+        identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId;
+    setState(() => _upgradingPendingBeneficiaryIds.add(oldLinkId));
+    try {
+      final upgraded = await PendingBeneficiaryUpgradeClient(
+        post: (path, body) => _zkHttpPost(path, body, bearerToken: token),
+        get: (path) => _zkHttpGet(path, bearerToken: token),
+        encryptLabel: encryptZkBeneficiaryLabelCiphertext,
+        proofProvider: () async {
+          if (!current()) throw StateError('Vault access changed');
+          final entered = await _promptForActionPin(
+              context, 'Verify invitation upgrade');
+          if (entered == null) throw const _ZkActionPromptCancelled();
+          return _zkActionProof(app, token, entered);
+        },
+        accessIsCurrent: current,
+      ).replaceUnpaired(oldLinkId: oldLinkId, ownerVisibleLabel: label);
+      if (!current()) return;
+      setState(() {
+        beneficiaries = beneficiaries
+            .where((row) => (row['id'] as num?)?.toInt() != oldLinkId)
+            .toList();
+      });
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogCtx) => AlertDialog(
+          backgroundColor: VaultColors.surfaceElevated,
+          title: const Text('Private pairing code'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Share this code with your beneficiary. It works '
+                  'once and expires in 60 minutes.'),
+              const SizedBox(height: 12),
+              SelectableText(upgraded.pairingCode),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Clipboard.setData(
+                  ClipboardData(text: upgraded.pairingCode)),
+              child: const Text('Copy code'),
+            ),
+            FilledButton(onPressed: () => Navigator.pop(dialogCtx),
+                child: const Text('Done')),
+          ],
+        ),
+      );
+    } on _ZkActionPromptCancelled {
+      // The original invitation remains while an owner action is cancelled.
+    } catch (_) {
+      if (mounted) _showSnack('Could not confirm the invitation upgrade. '
+          'Refresh the list before retrying.');
+    } finally {
+      if (mounted) {
+        setState(() => _upgradingPendingBeneficiaryIds.remove(oldLinkId));
+      }
     }
   }
 
@@ -13275,6 +13382,28 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                   ),
                                 ],
                               ),
+                              if (kEnableZkPendingBeneficiaryUpgrade &&
+                                  !isZkV2 && !isLinked && !credentialsSaved &&
+                                  status == 'pairing_pending' &&
+                                  b['label'] is String &&
+                                  (b['label'] as String).trim().isNotEmpty &&
+                                  label.length <= 60) ...[
+                                const SizedBox(height: 8),
+                                OutlinedButton.icon(
+                                  key: Key('upgrade_pending_beneficiary_$id'),
+                                  onPressed: _upgradingPendingBeneficiaryIds
+                                          .contains(id)
+                                      ? null
+                                      : () => _upgradePendingBeneficiary(
+                                          id, label),
+                                  icon: const Icon(Icons.security_rounded,
+                                      size: 16),
+                                  label: Text(_upgradingPendingBeneficiaryIds
+                                          .contains(id)
+                                      ? 'Upgrading…'
+                                      : 'Upgrade invitation'),
+                                ),
+                              ],
                               if (isLinked) ...[
                                 const SizedBox(height: 10),
                                 Container(

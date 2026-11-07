@@ -77,6 +77,9 @@ from routes.file_v2_new_upload_routes import router as file_v2_new_upload_router
 from routes.credential_v2_routes import router as credential_v2_router
 from routes.wallet_backup_v2_routes import router as wallet_backup_v2_router
 from routes.wallet_v2_routes import router as wallet_v2_router
+from routes.beneficiary_pending_upgrade_routes import (
+    router as beneficiary_pending_upgrade_router,
+)
 from routes.zk_verifier_retirement_routes import (
     router as zk_verifier_retirement_router,
 )
@@ -463,6 +466,7 @@ app.include_router(vault_ciphertext_write_router)
 app.include_router(credential_v2_router)
 app.include_router(wallet_backup_v2_router)
 app.include_router(wallet_v2_router)
+app.include_router(beneficiary_pending_upgrade_router)
 app.include_router(login_router)
 app.include_router(vault_manage_router, prefix="/manage")
 
