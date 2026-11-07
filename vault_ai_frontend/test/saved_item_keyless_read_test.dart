@@ -190,4 +190,60 @@ void main() {
     expect(paths, isNot(contains('/update-secure-item')));
     expect(paths, isNot(contains('/delete-secure-item')));
   }, skip: !kEnableKeylessSavedItemRead);
+
+  test('legacy edit uses the local replacement adapter without sending a PIN',
+      () async {
+    final paths = <String>[];
+    var edits = 0;
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        paths.add(request.url.path);
+        expect(request.body, isNot(contains('synthetic-pin-marker')));
+        if (request.url.path == '/vault/ciphertext/vault-items') {
+          return http.Response('[]', 200);
+        }
+        if (request.url.path == '/vault/items/metadata') {
+          return http.Response(jsonEncode(<String, dynamic>{
+            'records': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'item_id': 42,
+                'item_type': 'login',
+                'service': 'Synthetic account',
+                'is_legacy': true,
+                'has_v2_payload': false,
+              },
+            ],
+            'has_more': false,
+            'next_after_item_id': 42,
+          }), 200);
+        }
+        fail('Unexpected route ${request.url.path}');
+      }),
+      legacyZkItemUpdater: ({required itemId, required itemType,
+          required oldService, newService, fields}) async {
+        edits++;
+        expect(itemId, 42);
+        expect(itemType, 'login');
+        expect(oldService, 'Synthetic account');
+        expect(newService, 'Updated account');
+        expect(fields, <String, dynamic>{'username': 'changed'});
+        return <String, dynamic>{
+          'id': 42, 'item_id': 42, 'item_type': 'login',
+          'service': 'Updated account', 'updated': true,
+        };
+      },
+    );
+    final response = await client.updateVaultSecureItem(
+      vaultName: '', oldService: 'Synthetic account', itemType: 'login',
+      itemId: '42', newService: 'Updated account',
+      fields: <String, dynamic>{'username': 'changed'},
+      pin: 'synthetic-pin-marker', authToken: 'synthetic-session',
+    );
+    expect(response['updated'], true);
+    expect(edits, 1);
+    expect(paths, <String>[
+      '/vault/ciphertext/vault-items', '/vault/items/metadata',
+    ]);
+  }, skip: !kEnableKeylessLegacySavedItemEdit);
 }

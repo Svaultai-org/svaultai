@@ -42,6 +42,7 @@ import 'services/metadata_migration_client.dart' as mmc;
 import 'services/legacy_ciphertext_export_client.dart' as legacy_export;
 import 'services/legacy_saved_item_read_session.dart' as legacy_item_read;
 import 'services/legacy_ciphertext_migration_codec.dart' as legacy_codec;
+import 'services/legacy_saved_item_replacement.dart' as legacy_item_replace;
 import 'services/legacy_content_migration_stager.dart' as legacy_stage;
 import 'services/legacy_stage_pin_lease.dart';
 import 'services/zk_pin_gate_migration_handoff.dart';
@@ -5437,6 +5438,10 @@ Future<Map<String, dynamic>> _zkHttpGet(
   if (bearerToken != null && bearerToken.isNotEmpty) {
     headers['Authorization'] = 'Bearer $bearerToken';
   }
+  final deviceId = apiClientDeviceId();
+  if (deviceId != null && deviceId.isNotEmpty) {
+    headers['X-Device-Id'] = deviceId;
+  }
   final response = await http.get(uri, headers: headers);
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw Exception(
@@ -5806,6 +5811,14 @@ VaultAIClient _savedItemClient(AppState app) => VaultAIClient(
                       .activeForToken(app.sessionToken!)))
           ? (itemId) => _readLegacyZkSavedItem(app, itemId)
           : null,
+      legacyZkItemUpdater: kEnableKeylessLegacySavedItemEdit
+          ? ({required itemId, required itemType, required oldService,
+              newService, fields}) => _replaceLegacyZkSavedItem(
+                app, itemId: itemId, itemType: itemType,
+                oldService: oldService, newService: newService,
+                fields: fields,
+              )
+          : null,
     );
 
 bool _privateZkSavedItemSession(AppState app) =>
@@ -5909,6 +5922,135 @@ Future<Map<String, dynamic>> _readLegacyZkSavedItem(
       'storage_engine': 'legacy_compatibility',
     };
   });
+}
+
+Future<Map<String, dynamic>> _replaceLegacyZkSavedItem(
+  AppState app, {
+  required int itemId,
+  required String itemType,
+  required String oldService,
+  String? newService,
+  Map<String, dynamic>? fields,
+}) async {
+  final token = app.sessionToken;
+  final vaultId = app.vaultId;
+  final vaultName = app.vaultName;
+  final handle = app.vaultHandle;
+  final mvk = zk_mvk_store.ZkActiveMvk.current();
+  if (token == null || vaultId == null || vaultName == null ||
+      handle == null || mvk == null || itemId <= 0) {
+    throw StateError('Private saved-item editor is unavailable');
+  }
+  final legacyKey = _VaultCrypto._keyCache[
+    _VaultCrypto._ck(vaultId, vaultName)
+  ];
+  if (legacyKey == null) {
+    throw StateError('Private saved-item editor is unavailable');
+  }
+  final pin = await _VaultCrypto.currentPinOrThrow();
+  final generation = st.SessionTermination.instance.generation;
+  void checkSession() {
+    if (!app.unlocked || app.sessionToken != token ||
+        app.vaultId != vaultId || app.vaultName != vaultName ||
+        app.vaultHandle != handle ||
+        !identical(zk_mvk_store.ZkActiveMvk.current(), mvk) ||
+        st.SessionTermination.instance.generation != generation ||
+        st.SessionTermination.instance.isTerminated) {
+      throw StateError('Vault session changed during saved-item edit');
+    }
+  }
+  Future<String> proof() async {
+    checkSession();
+    final result = await ZkAuthService(_zkHttpPost).verifyPinProof(
+      vaultHandle: handle, pin: pin, sessionToken: token,
+    );
+    checkSession();
+    return result.token;
+  }
+  final export = legacy_export.LegacyCiphertextExportClient(
+    proofProvider: proof,
+    post: (path, body) async {
+      checkSession();
+      final result = await _zkHttpPost(path, body, bearerToken: token);
+      checkSession();
+      return result;
+    },
+  );
+  final metadataKey = await vk_hier.VaultKeyHierarchy(mvk).metadataKey();
+  checkSession();
+  Future<String> label(Map<String, dynamic> row,
+      String plainField, String cipherField) async {
+    final encrypted = row[cipherField];
+    if (encrypted is String && encrypted.isNotEmpty) {
+      return utf8.decode(await vk_hier.aesGcmUnwrap(
+        metadataKey, vk_hier.b64urlDecode(encrypted),
+      ));
+    }
+    final plain = row[plainField];
+    if (plain is String && plain.isNotEmpty) return plain;
+    throw const FormatException('Saved-item label is unavailable');
+  }
+  try {
+    return await legacy_item_replace.LegacySavedItemReplacement(
+      legacyKey: legacyKey,
+      mvk: mvk,
+      requireCurrentSession: checkSession,
+      proofProvider: proof,
+      sourceReader: (id) async {
+        checkSession();
+        final records = await export.listItems();
+        checkSession();
+        final matches = records.where((row) => row['item_id'] == id).toList();
+        if (matches.length != 1) {
+          throw StateError('Saved item is unavailable');
+        }
+        final row = matches.single;
+        final chars = row['ciphertext_chars'];
+        if (chars is! int || chars <= 0 ||
+            chars > legacy_item_replace.LegacySavedItemReplacement
+                .maxCiphertextChars) {
+          throw const FormatException('Saved item is too large');
+        }
+        final source = await export.readItemSource(
+          itemId: id, ciphertextChars: chars,
+        );
+        checkSession();
+        final type = await label(source.sourceMetadata,
+            'item_type', 'item_type_ciphertext');
+        final service = await label(source.sourceMetadata,
+            'service', 'service_ciphertext');
+        checkSession();
+        if (type != itemType || service != oldService ||
+            await label(row, 'item_type', 'item_type_ciphertext') != type ||
+            await label(row, 'service', 'service_ciphertext') != service) {
+          throw const FormatException('Saved-item identity changed');
+        }
+        checkSession();
+        return legacy_item_replace.LegacySavedItemSource(
+          itemId: id, itemType: type, service: service,
+          sourceSnapshot: source.sourceSnapshot,
+          ciphertext: source.ciphertext,
+        );
+      },
+      post: (path, body) async {
+        checkSession();
+        final response = await _zkHttpPost(path, body, bearerToken: token);
+        checkSession();
+        return response;
+      },
+      get: (path) async {
+        checkSession();
+        final response = await _zkHttpGet(path, bearerToken: token);
+        checkSession();
+        return response;
+      },
+    ).replace(
+      itemId: itemId, itemType: itemType, oldService: oldService,
+      newService: newService, fields: fields,
+    );
+  } finally {
+    export.clearGrant();
+  }
 }
 
 /// Best-effort transparent adoption after successful legacy unlock.
@@ -8979,11 +9121,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             identical(zk_mvk_store.ZkActiveMvk.current(), dialogMvk));
 
     Map<String, String> resolved = initialFields ?? const {};
+    bool legacyKeylessEdit = false;
     // A create dialog has no existing item to fetch. Calling the read endpoint
     // with an empty service produced a misleading "Could not load" banner on
     // both web and iOS before the user had entered anything.
     if (!createMode &&
-        (resolved.isEmpty || (keylessZkWrite && itemId == null))) {
+        (resolved.isEmpty || (keylessZkWrite && itemId == null) ||
+            (keylessZkWrite && kEnableKeylessLegacySavedItemEdit))) {
       final token = app.sessionToken;
       if (token != null && app.vaultName != null) {
         try {
@@ -9008,7 +9152,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   pin: pin,
                   authToken: token,
                 );
-          if (keylessZkWrite &&
+          legacyKeylessEdit = keylessZkWrite &&
+              kEnableKeylessLegacySavedItemEdit &&
+              fetched['storage_engine'] == 'legacy_compatibility';
+          if (keylessZkWrite && !legacyKeylessEdit &&
               fetched['storage_engine'] != 'ciphertext') {
             _showSnack('This saved item needs migration before editing.');
             return;
@@ -9054,10 +9201,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           final pin = keylessZkWrite
               ? '' : await _VaultCrypto.currentPinOrThrow();
           if (!dialogIsCurrent()) return false;
-          final client = VaultAIClient(baseUrl: backendBaseUrl);
+          final client = _savedItemClient(app);
           final oldServiceForRequest =
               oldTitle.trim().isEmpty ? newTitle : oldTitle;
-          if (keylessZkWrite) {
+          if (keylessZkWrite && !legacyKeylessEdit) {
             await client.saveZkVaultSecureItem(
               authToken: token,
               itemType: itemType,
@@ -9086,7 +9233,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               ? (isLogin ? 'Login saved' : 'Saved item')
               : (isLogin ? 'Updated login' : 'Updated saved item'));
           await _reloadVaultLoginsAfterMutation();
-          if (!keylessZkWrite) unawaited(app.refreshVaultStats());
+          if (!keylessZkWrite || legacyKeylessEdit) {
+            unawaited(app.refreshVaultStats());
+          }
           if (createMode && isLogin) {
             setState(() => selectedSection = _DashboardSection.logins);
           }

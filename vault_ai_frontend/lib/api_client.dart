@@ -81,6 +81,13 @@ const bool kEnableKeylessSavedItemRead = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// Requires a staged, locally verified legacy ciphertext replacement route.
+// The old source remains active until a fresh OPAQUE proof promotes it.
+const bool kEnableKeylessLegacySavedItemEdit = bool.fromEnvironment(
+  'VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_EDIT',
+  defaultValue: false,
+) && kEnableKeylessSavedItemRead;
+
 // A narrow ZK index cutover. Legacy item details still use their existing
 // reader, while list/search preflights can use the trusted metadata inventory.
 // Coordinate with VAULTAI_ZK_METADATA_INVENTORY_ENABLED on the API.
@@ -1036,6 +1043,13 @@ class VaultAIClient {
   final String baseUrl;
   final http.Client? _httpClient;
   final Future<Map<String, dynamic>> Function(int itemId)? legacyZkItemReader;
+  final Future<Map<String, dynamic>> Function({
+    required int itemId,
+    required String itemType,
+    required String oldService,
+    String? newService,
+    Map<String, dynamic>? fields,
+  })? legacyZkItemUpdater;
 
   /// Captured key/session lease used only by the new registered-asset client.
   /// Existing clients omit this and retain their normal request behavior.
@@ -1049,6 +1063,7 @@ class VaultAIClient {
     this.walletResponseIsCurrent,
     this.authMeTimeout = const Duration(seconds: 12),
     this.legacyZkItemReader,
+    this.legacyZkItemUpdater,
     http.Client? httpClient,
   }) : _httpClient = httpClient;
 
@@ -5544,6 +5559,22 @@ class VaultAIClient {
         // The MVK vanished during the request. Never send the supplied PIN to
         // the legacy route as a fallback from a ZK operation.
         throw StateError('Vault encryption key changed. Unlock and try again.');
+      }
+      if (kEnableKeylessLegacySavedItemEdit &&
+          existing['storage_engine'] == 'legacy_compatibility') {
+        final exactId = int.tryParse(itemId ?? '');
+        final updater = legacyZkItemUpdater;
+        if (exactId == null || exactId <= 0 || updater == null ||
+            existing['service'] != oldService) {
+          throw StateError('Private saved-item editor is unavailable');
+        }
+        return updater(
+          itemId: exactId,
+          itemType: itemType,
+          oldService: oldService,
+          newService: newService,
+          fields: fields,
+        );
       }
       throw StateError(
           'Legacy saved-item editing is unavailable until migration.');

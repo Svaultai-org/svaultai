@@ -337,6 +337,18 @@ class LegacyCiphertextMigrationCodec {
   Future<Map<String, dynamic>> decodeLegacyItem(String encoded) =>
       _legacyItemFields(encoded);
 
+  /// Preserve the legacy wire format so older clients can still read an edit.
+  /// The plaintext and legacy key remain on this device.
+  Future<String> encodeLegacyItem(Map<String, dynamic> record) async {
+    final nonce = _legacyAesGcm.newNonce();
+    final box = await _legacyAesGcm.encrypt(
+      utf8.encode(jsonEncode(record)),
+      secretKey: legacyKey,
+      nonce: nonce,
+    );
+    return base64.encode(<int>[...nonce, ...box.cipherText, ...box.mac.bytes]);
+  }
+
   Map<String, dynamic> _visibleLegacyFields(Map<String, dynamic> record) {
     const markers = <String>{'category', 'title', 'fields', 'item_id'};
     if (!markers.any(record.containsKey)) return record;
