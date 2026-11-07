@@ -131,10 +131,15 @@ class PrivateZkPinTransportSession {
       !st.SessionTermination.instance.isTerminated;
 }
 
+bool _isRawPinFieldName(Object? name) {
+  final normalized = name.toString().toLowerCase().replaceAll('-', '_');
+  return normalized == 'pin' || normalized.endsWith('_pin');
+}
+
 bool _containsRawPinField(Object? value) {
   if (value is Map) {
     for (final entry in value.entries) {
-      if (entry.key.toString().toLowerCase() == 'pin' ||
+      if (_isRawPinFieldName(entry.key) ||
           _containsRawPinField(entry.value)) {
         return true;
       }
@@ -147,16 +152,38 @@ bool _containsRawPinField(Object? value) {
   return false;
 }
 
-bool _requestBodyContainsPin(Object? body) {
+bool _requestBodyContainsPin(Object? body, {Map<String, String>? headers}) {
   Object? parsed = body;
-  if (body is String) {
+  if (body is List<int>) {
+    final contentType = (headers?['Content-Type'] ??
+            headers?['content-type'] ??
+            '')
+        .toLowerCase();
+    if (!contentType.contains('json') &&
+        !contentType.contains('x-www-form-urlencoded')) {
+      return false;
+    }
+    parsed = utf8.decode(body, allowMalformed: true);
+  }
+  final textBody = parsed;
+  if (textBody is String) {
     try {
-      parsed = jsonDecode(body);
+      parsed = jsonDecode(textBody);
     } on FormatException {
-      return RegExp(r'(^|[?&])pin=', caseSensitive: false).hasMatch(body);
+      try {
+        return Uri.splitQueryString(textBody).keys.any(_isRawPinFieldName);
+      } on FormatException {
+        return RegExp(r'(^|[?&])pin=', caseSensitive: false)
+            .hasMatch(textBody);
+      }
     }
   }
   return _containsRawPinField(parsed);
+}
+
+bool _requestMetadataContainsPin(Uri uri, Map<String, String>? headers) {
+  if (uri.queryParametersAll.keys.any(_isRawPinFieldName)) return true;
+  return headers?.keys.any(_isRawPinFieldName) ?? false;
 }
 
 /// Catch PIN requests from the active private ZK session before transport.
@@ -166,6 +193,47 @@ void assertPrivateOnlyPinFreeBody(Object? body) {
   if (_requestBodyContainsPin(body)) {
     throw StateError('Raw PIN requests are unavailable in private mode.');
   }
+}
+
+/// One outbound boundary for ordinary, streamed and multipart API requests.
+/// The private-only fence is opt-in while legacy access is still supported.
+/// Signed offers additionally fence their own old routes in ordinary builds.
+void assertOutboundPinFreeRequest(
+  Uri uri,
+  Map<String, String>? headers, {
+  Object? body,
+}) {
+  if (PrivateZkPinTransportSession.active &&
+      (_requestMetadataContainsPin(uri, headers) ||
+          _requestBodyContainsPin(body, headers: headers))) {
+    throw StateError('Raw PIN requests are unavailable in private mode.');
+  }
+  assertOfferedReadPinFreeRequest(uri, headers, body: body);
+}
+
+/// Unknown streamed request bodies cannot be inspected before transmission.
+/// Files in multipart requests are user content; inspect fields, not bytes.
+void assertOutboundPinFreeBaseRequest(http.BaseRequest request) {
+  final Object? body;
+  if (request is http.Request) {
+    body = request.body;
+  } else if (request is http.MultipartRequest) {
+    body = request.fields;
+  } else {
+    if (PrivateZkPinTransportSession.active) {
+      throw StateError('Uninspectable private request body.');
+    }
+    body = null;
+  }
+  assertOutboundPinFreeRequest(request.url, request.headers, body: body);
+}
+
+Future<http.StreamedResponse> _sendCheckedBaseRequest(
+  http.BaseRequest request,
+  http.Client? client,
+) {
+  assertOutboundPinFreeBaseRequest(request);
+  return client?.send(request) ?? request.send();
 }
 
 int _signedOfferBits(String token) {
@@ -228,8 +296,8 @@ void assertOfferedReadPinFreeRequest(
     _ => false,
   };
   if (!offered) return;
-  if (_requestBodyContainsPin(body) ||
-      uri.queryParametersAll.keys.any((key) => key.toLowerCase() == 'pin')) {
+  if (_requestBodyContainsPin(body, headers: headers) ||
+      _requestMetadataContainsPin(uri, headers)) {
     throw StateError('This read uses the private vault route.');
   }
 }
@@ -660,8 +728,7 @@ class _SessionBoundHttp {
 
   Future<http.Response> _send(Uri url, Map<String, String>? headers,
       Future<http.Response> Function() send, {Object? body}) async {
-    assertPrivateOnlyPinFreeBody(body);
-    assertOfferedReadPinFreeRequest(url, headers, body: body);
+    assertOutboundPinFreeRequest(url, headers, body: body);
     final scope = _requestScopeFor(headers);
     _assertCurrentRequest(scope);
     final response = await send();
@@ -1224,6 +1291,7 @@ class VaultAIClient {
     // request directly to its fixed logout route with the captured token.
     // No other endpoint can use this unbound path.
     final headers = _defaultHeaders()..['Authorization'] = 'Bearer $authToken';
+    assertOutboundPinFreeRequest(uri, headers);
     final response = await _runWithNetLog(
       'auth.logout',
       uri,
@@ -1976,10 +2044,8 @@ class VaultAIClient {
       kdfIterationsUsed: kdfIterationsUsed,
     ));
 
-    assertPrivateOnlyPinFreeBody(request.body);
-    assertOfferedReadPinFreeRequest(uri, headers, body: request.body);
     _assertCurrentRequest(requestScope);
-    final response = await (_httpClient?.send(request) ?? request.send());
+    final response = await _sendCheckedBaseRequest(request, _httpClient);
     _assertCurrentRequest(requestScope);
     _vlog('chat.response', {
       'status': response.statusCode,
@@ -3896,12 +3962,8 @@ class VaultAIClient {
       ),
     );
 
-    assertPrivateOnlyPinFreeBody(request.fields);
-    assertOfferedReadPinFreeRequest(
-      request.url, request.headers, body: request.fields,
-    );
     _assertCurrentRequest(requestScope);
-    final response = await (_httpClient?.send(request) ?? request.send());
+    final response = await _sendCheckedBaseRequest(request, _httpClient);
     _assertCurrentRequest(requestScope);
     final responseBody = await response.stream.bytesToString();
     _checkSessionResponse(response.statusCode, responseBody, requestScope);
@@ -4264,9 +4326,8 @@ class VaultAIClient {
     request.fields['saved_name'] = savedName;
     request.fields['pin'] = pin;
 
-    assertPrivateOnlyPinFreeBody(request.fields);
     _assertCurrentRequest(requestScope);
-    final response = await (_httpClient?.send(request) ?? request.send());
+    final response = await _sendCheckedBaseRequest(request, _httpClient);
     _assertCurrentRequest(requestScope);
     final responseBody = await response.stream.bytesToString();
     checkAccess();
@@ -5125,9 +5186,8 @@ class VaultAIClient {
       filename: 'chunk_$chunkIndex.bin',
     ));
 
-    assertPrivateOnlyPinFreeBody(request.fields);
     _assertCurrentRequest(requestScope);
-    final response = await (_httpClient?.send(request) ?? request.send());
+    final response = await _sendCheckedBaseRequest(request, _httpClient);
     _assertCurrentRequest(requestScope);
     final responseBody = await response.stream.bytesToString();
     _checkSessionResponse(response.statusCode, responseBody, requestScope);
