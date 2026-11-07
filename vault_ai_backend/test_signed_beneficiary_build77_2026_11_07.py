@@ -69,6 +69,17 @@ def test_v3_v4_bits_keep_password_and_chat_distinct():
             file_download=True, file_create=False, password_analysis=True,
             beneficiary=True, private_chat=(version == 4),
         ) == token
+    for bits, version in ((7 | 16 | 32 | 64, 3),
+                          (519 | 16 | 32 | 64, 4)):
+        token = auth_local.sign_opaque_read_offer_token(original, bits)
+        assert auth_local._parse_token_claims(token) == (bytes(range(16)), bits)
+        assert auth_local._b64url_decode(token)[0] == version
+        assert auth_zk_routes._signed_offer_token(
+            original, signed_reads=True, item_read=True, file_list=True,
+            file_download=True, file_create=False, file_mutation=True,
+            password_analysis=True, beneficiary=True,
+            private_chat=(version == 4),
+        ) == token
     with pytest.raises(ValueError, match="negotiated"):
         auth_zk_routes._signed_offer_token(
             original, signed_reads=False, item_read=False, file_list=False,

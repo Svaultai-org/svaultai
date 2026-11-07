@@ -88,6 +88,26 @@ void main() {
         ),
         isFalse);
     expect(hasSignedBeneficiaryOffer(_signedToken(519 | 16)), isFalse);
+    for (final bits in [7 | 16 | 32 | 64, 519 | 16 | 32 | 64]) {
+      final combined = _response(
+        _signedToken(bits),
+        chat: (bits & 512) != 0,
+        passwordAnalysis: true,
+      );
+      combined['pin_free_file_mutation_signed'] = true;
+      expect(hasSignedBeneficiaryOffer(combined['session_token'] as String),
+          isTrue);
+      expect(
+        signedOfferTokenMatches(
+          combined,
+          requireFileMutationOffer: true,
+          requirePrivateChatOffer: (bits & 512) != 0,
+          requirePasswordAnalysisOffer: true,
+          requireBeneficiaryOffer: true,
+        ),
+        isTrue,
+      );
+    }
     expect(
         signedOfferTokenMatches(
           _response(_signedToken(7 | 16),
