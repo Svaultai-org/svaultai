@@ -89,6 +89,41 @@ def test_zk_delete_consumes_proof_before_destructive_action(delete_harness):
     destroy.assert_called_once()
 
 
+def test_strict_proof_route_rejects_pin_and_requires_current_zk_proof(delete_harness):
+    delete, client, is_zk, bill, consume, verify_pin, destroy = delete_harness
+    path = "/vault/delete/confirm-proof"
+    for body in (
+        _body(delete, pin="123456", zk_proof_token="synthetic-proof"),
+        _body(delete),
+    ):
+        response = client.post(path, json=body)
+        assert response.status_code == 422, response.text
+    consume.assert_not_called()
+    verify_pin.assert_not_called()
+    destroy.assert_not_called()
+
+    response = client.post(path, json=_body(
+        delete, zk_proof_token="synthetic-one-time-proof",
+    ))
+    assert response.status_code == 204, response.text
+    consume.assert_called_once_with("synthetic-one-time-proof", PRINCIPAL)
+    verify_pin.assert_not_called()
+    bill.assert_called_once_with(VAULT_ID)
+    destroy.assert_called_once()
+
+
+def test_strict_proof_route_does_not_allow_legacy_vault(delete_harness):
+    delete, client, is_zk, bill, consume, verify_pin, destroy = delete_harness
+    is_zk.return_value = False
+    response = client.post("/vault/delete/confirm-proof", json=_body(
+        delete, zk_proof_token="synthetic-one-time-proof",
+    ))
+    assert response.status_code == 404
+    consume.assert_not_called()
+    verify_pin.assert_not_called()
+    destroy.assert_not_called()
+
+
 def test_failed_proof_cannot_reach_deletion_service(delete_harness):
     delete, client, is_zk, bill, consume, verify_pin, destroy = delete_harness
     consume.side_effect = HTTPException(status_code=401, detail="invalid proof")

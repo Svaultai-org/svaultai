@@ -41,7 +41,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from psycopg2.extras import RealDictCursor
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from auth_local import (
     SessionPrincipal,
@@ -96,6 +96,15 @@ class DeleteConfirmRequest(BaseModel):
     pin:                  Optional[str] = Field(default=None, min_length=1, max_length=64)
     zk_proof_token:       Optional[str] = Field(default=None, min_length=1, max_length=128)
     confirmation_phrase:  str = Field(..., min_length=1, max_length=64)
+
+
+class DeleteConfirmProofRequest(BaseModel):
+    """PIN-free request shape for the strict private client."""
+
+    model_config = ConfigDict(extra="forbid")
+    request_token: str = Field(..., min_length=1)
+    zk_proof_token: str = Field(..., min_length=1, max_length=128)
+    confirmation_phrase: str = Field(..., min_length=1, max_length=64)
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -581,6 +590,33 @@ def confirm_delete(
         pass
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/vault/delete/confirm-proof",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+def confirm_delete_proof(
+    payload: DeleteConfirmProofRequest,
+    request: Request,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> Response:
+    """Keep the proof form usable after the mixed PIN/PIN-free path is fenced."""
+
+    if not _zk_delete_proof_enabled() or not _vault_has_zk_registration(
+        principal["vault_id"]
+    ):
+        raise HTTPException(status_code=404, detail="not_found")
+    return confirm_delete(
+        DeleteConfirmRequest(
+            request_token=payload.request_token,
+            zk_proof_token=payload.zk_proof_token,
+            confirmation_phrase=payload.confirmation_phrase,
+        ),
+        request,
+        principal,
+    )
 
 
 __all__ = ["router"]
