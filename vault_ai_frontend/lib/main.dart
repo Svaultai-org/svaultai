@@ -78,6 +78,7 @@ import 'services/saved_file_rename.dart';
 import 'services/zk_action_proof_prompt.dart';
 import 'services/vault_local_content_command.dart';
 import 'services/memory_title_identity.dart';
+import 'services/zk_private_memory_recall.dart' as zk_memory_recall;
 import 'services/monero_scanner.dart';
 import 'services/monero_wallet.dart';
 import 'services/vault_chat_stream_parser.dart' as vcs_parser;
@@ -18599,6 +18600,42 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return;
     }
     final client = VaultAIClient(baseUrl: backendBaseUrl);
+    final memorySessionEpoch = app._sessionEpoch;
+    final memoryForegroundEpoch = app._sessionProbeEpoch;
+    final memoryTerminationGeneration =
+        st.SessionTermination.instance.generation;
+    bool memoryAccessIsCurrent() =>
+        currentAccess() &&
+        app._sessionEpoch == memorySessionEpoch &&
+        app._sessionProbeEpoch == memoryForegroundEpoch &&
+        app._sessionForeground &&
+        !app.sessionVerificationBlocked &&
+        st.SessionTermination.instance.generation ==
+            memoryTerminationGeneration &&
+        !st.SessionTermination.instance.isTerminated;
+    try {
+      final memoryReply = await zk_memory_recall.tryZkPrivateMemoryRecall(
+        prompt: text,
+        readMemories: () => client.listZkMemories(
+          authToken: token,
+          limit: 0,
+        ),
+        accessIsCurrent: memoryAccessIsCurrent,
+      );
+      if (!memoryAccessIsCurrent()) return;
+      if (memoryReply != null) {
+        _zkPrivateChatFlow?.clear();
+        _appendLocalVaultReply(text, memoryReply);
+        return;
+      }
+    } catch (_) {
+      if (!memoryAccessIsCurrent()) return;
+      _appendLocalVaultReply(
+        text,
+        'Private memory search is unavailable. Please try again later.',
+      );
+      return;
+    }
     if (_zkPrivateChatFlow == null ||
         _zkPrivateChatToken != token ||
         _zkPrivateChatVaultId != vaultId ||
