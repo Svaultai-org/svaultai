@@ -69,6 +69,10 @@ const bool kSignedPrivateChatClientEnabled = bool.fromEnvironment(
   'VAULTAI_ENABLE_SIGNED_PRIVATE_CHAT',
   defaultValue: false,
 );
+const bool kSignedPasswordAnalysisClientEnabled = bool.fromEnvironment(
+  'VAULTAI_ENABLE_SIGNED_PASSWORD_ANALYSIS',
+  defaultValue: false,
+);
 // Build 77 has no complete older-chat/media reader. A later integration must
 // prove those readers before a client may request the irreversible offer.
 const bool kSignedPrivateChatLocalReadersReady = false;
@@ -78,6 +82,7 @@ bool signedOfferTokenMatches(
   Map<String, dynamic> response, {
   bool requireFileCreateOffer = false,
   bool requirePrivateChatOffer = false,
+  bool requirePasswordAnalysisOffer = false,
 }) {
   if (response['pin_free_read_offers_signed'] != true) return false;
   if (requireFileCreateOffer &&
@@ -95,6 +100,14 @@ bool signedOfferTokenMatches(
       response['pin_free_private_chat_signed'] == true) {
     return false;
   }
+  if (requirePasswordAnalysisOffer &&
+      response['pin_free_password_analysis_signed'] != true) {
+    return false;
+  }
+  if (!requirePasswordAnalysisOffer &&
+      response['pin_free_password_analysis_signed'] == true) {
+    return false;
+  }
   final token = response['session_token'];
   if (token is! String || token.isEmpty) return false;
   try {
@@ -103,6 +116,7 @@ bool signedOfferTokenMatches(
         (response['pin_free_legacy_file_list'] == true ? 2 : 0) |
         (response['pin_free_legacy_file_download'] == true ? 4 : 0) |
         (requireFileCreateOffer ? 8 : 0) |
+        (requirePasswordAnalysisOffer ? 16 : 0) |
         (requirePrivateChatOffer ? 512 : 0);
     if ((expected & 4) != 0 && (expected & 2) == 0) return false;
     if (requirePrivateChatOffer) {
@@ -967,11 +981,13 @@ class ZkAuthService {
       },
     );
     if ((kSignedReadOffersClientEnabled || kSignedFileCreateClientEnabled ||
-            kSignedPrivateChatClientEnabled) &&
+            kSignedPrivateChatClientEnabled ||
+            kSignedPasswordAnalysisClientEnabled) &&
         !signedOfferTokenMatches(
           finalizeResponse,
           requireFileCreateOffer: kSignedFileCreateClientEnabled,
           requirePrivateChatOffer: kSignedPrivateChatClientEnabled,
+          requirePasswordAnalysisOffer: kSignedPasswordAnalysisClientEnabled,
         )) {
       throw OpaqueUnavailable('Authenticated session offer unavailable');
     }

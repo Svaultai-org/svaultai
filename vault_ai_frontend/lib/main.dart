@@ -5309,6 +5309,14 @@ Future<Map<String, dynamic>> _zkHttpPost(
     }
     headers['X-SVaultAI-Pin-Free-Private-Chat'] = '1';
   }
+  if (path == '/auth/zk-login-finalize' &&
+      kSignedPasswordAnalysisClientEnabled) {
+    if (!kSignedReadOffersClientEnabled || !kEnableFileV2UiRead) {
+      throw OpaqueUnavailable(
+          'Signed password analysis needs the local reader.');
+    }
+    headers['X-SVaultAI-Pin-Free-Password-Analysis'] = '1';
+  }
   final deviceId = apiClientDeviceId();
   if (deviceId != null && deviceId.isNotEmpty) {
     headers['X-Device-Id'] = deviceId;
