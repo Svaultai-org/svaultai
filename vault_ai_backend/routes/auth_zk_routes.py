@@ -1374,7 +1374,8 @@ def _zk_login_finalize_sync(
             device_trust_complete
             and vault_row["vault_handle"] is not None
             and vault_row["wrapped_mvk"] is not None
-            and bool(vault_row.get("pin_verifier"))
+            # A verifier-free registration or a retired verifier must still
+            # receive private route offers after a successful OPAQUE login.
             and os.getenv("VAULTAI_ZK_METADATA_INVENTORY_ENABLED", "false")
             .strip().lower() == "true"
             and os.getenv("VAULTAI_ZK_LEGACY_EXPORT_ENABLED", "false")

@@ -77,6 +77,9 @@ from routes.file_v2_new_upload_routes import router as file_v2_new_upload_router
 from routes.credential_v2_routes import router as credential_v2_router
 from routes.wallet_backup_v2_routes import router as wallet_backup_v2_router
 from routes.wallet_v2_routes import router as wallet_v2_router
+from routes.zk_verifier_retirement_routes import (
+    router as zk_verifier_retirement_router,
+)
 from vault_chat_memory import (
     get_memory,
     remember_service,
@@ -512,6 +515,7 @@ from routes.provider_billing_routes import router as provider_billing_router
 app.include_router(provider_billing_router)
 app.include_router(file_v2_router)
 app.include_router(file_v2_new_upload_router)
+app.include_router(zk_verifier_retirement_router)
 
                                                                       
                                                                        
@@ -1037,7 +1041,7 @@ def get_my_vault(
                                                                        
         cursor.execute(
             """
-            SELECT vault_id, pin_salt, pin_verifier,
+            SELECT vault_id, pin_salt, pin_verifier, vault_handle,
                    must_reset, locked_until, inherited_from_label, created_at
             FROM vaults
             WHERE vault_id = %s
@@ -1054,14 +1058,17 @@ def get_my_vault(
             "private_name_server_visible=false",
             (vault_id or "")[-8:],
             row is not None,
-            bool(row["pin_verifier"]) if row else False,
+            bool(row["pin_verifier"] or row.get("vault_handle")) if row else False,
         )
 
         if row:
             return {
                 "has_vault": True,
                 "vault_name": None,
-                "has_pin": bool(row["pin_verifier"]),
+                # This field means the vault has a usable sign-in credential.
+                # OPAQUE remains usable after the obsolete server verifier is
+                # retired, so do not tell a private client its PIN vanished.
+                "has_pin": bool(row["pin_verifier"] or row.get("vault_handle")),
                 "must_reset": bool(row.get("must_reset")),
                 "locked_until": row["locked_until"].isoformat() if row.get("locked_until") else None,
                 "is_orphaned": False,
