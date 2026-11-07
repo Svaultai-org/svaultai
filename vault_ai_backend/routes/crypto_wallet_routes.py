@@ -912,6 +912,7 @@ def _load_wallet_account_record(
              WHERE vault_id = %s
                AND item_type = %s
                AND LOWER(service) = LOWER(%s)
+               AND encrypted_data IS NOT NULL
              ORDER BY created_at DESC
              LIMIT 1
             """,
@@ -6788,6 +6789,73 @@ def _tron_dev_log(
         pass
 
 
+def _tron_native_fee_balance(
+    address: Optional[str], principal: dict[str, Any],
+) -> dict[str, Any]:
+    """Read exact TRX sun for the USDT-TRC20 fee gate only.
+
+    TRX remains unsupported for wallet creation, receive, and send.
+    """
+    from vault_config import tron_api_base_url, tron_api_key, tron_enabled
+    from tron_rpc import (
+        TronRpcError, is_valid_tron_address, sun_to_trx_string,
+        tron_get_trx_balance_sun_at_url,
+    )
+
+    if not tron_enabled():
+        return _tron_disabled_envelope("TRX", "balance")
+
+    resolved_address = (address or "").strip()
+    if not resolved_address:
+        record = _load_wallet_account_record_network(
+            principal["vault_id"], _TRON_ASSET_USDT_TRC20,
+            NETWORK_TRON_MAINNET,
+        )
+        if record is not None:
+            resolved_address = (record.get("publicAddress") or "").strip()
+
+    def unavailable(reason: str) -> dict[str, Any]:
+        return {
+            "schema": SCHEMA_CRYPTO_WALLET_BALANCE_V1,
+            "asset": "TRX",
+            "network": _TRON_NETWORK_LABEL,
+            "publicAddress": resolved_address,
+            "balanceStatus": WALLET_BALANCE_STATUS_UNAVAILABLE,
+            "availableAmount": None,
+            "unit": "TRX",
+            "updatedAt": None,
+            "reason": reason,
+        }
+
+    if not resolved_address:
+        return unavailable("no_wallet_yet")
+    if not is_valid_tron_address(resolved_address):
+        return unavailable("invalid_address")
+    base_url = tron_api_base_url()
+    if not base_url:
+        return unavailable("tron_api_not_configured")
+    try:
+        sun = tron_get_trx_balance_sun_at_url(
+            base_url, tron_api_key(), resolved_address,
+        )
+    except TronRpcError as exc:
+        return unavailable(exc.code)
+
+    return {
+        "schema": SCHEMA_CRYPTO_WALLET_BALANCE_V1,
+        "asset": "TRX",
+        "network": _TRON_NETWORK_LABEL,
+        "publicAddress": resolved_address,
+        "balanceStatus": WALLET_BALANCE_STATUS_AVAILABLE,
+        "availableAmount": sun_to_trx_string(sun),
+        "unit": "TRX",
+        "updatedAt": None,
+        "trxBalanceSun": str(sun),
+        "baseUnits": str(sun),
+        "availableBaseUnits": str(sun),
+    }
+
+
 def _tron_balance(
     asset: str, address: Optional[str], principal: dict[str, Any],
 ) -> dict[str, Any]:
@@ -6802,6 +6870,8 @@ def _tron_balance(
         USDT_TRC20_UNIT,
     )
     norm = _normalize_asset(asset)
+    if norm == "TRX":
+        return _tron_native_fee_balance(address, principal)
     if not _tron_supported_asset(norm):
         return _network_not_enabled_envelope(
             network_id=NETWORK_TRON_MAINNET, asset=norm,

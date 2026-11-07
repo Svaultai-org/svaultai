@@ -155,6 +155,9 @@ def test_exact_readback_then_retire_preserves_old_until_confirmed(setup):
     assert db.legacy is None
     assert db.wallet["migration_state"] == "v2_verified"
     assert db.proofs == [("synthetic-opaque-proof", SESSION)]
+    published = route.read_wallet_v2(WALLET_ID, PRINCIPAL)
+    assert published["migration_state"] == "v2_verified"
+    assert published["payload_ciphertext"] == staged.payload_ciphertext
 
 
 def test_changed_source_blocks_retire_without_consuming_proof(setup):
@@ -301,6 +304,8 @@ def test_legacy_wallet_read_falls_back_only_to_verified_matching_v2(monkeypatch)
     class Cursor:
         def execute(self, sql, _args):
             self.legacy_query = "FROM vault_items" in sql
+            if self.legacy_query:
+                assert "encrypted_data IS NOT NULL" in sql
 
         def fetchone(self):
             return None

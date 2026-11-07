@@ -569,7 +569,7 @@ DashboardAssetActionCapability dashboardAssetActionCapability({
         final sendOn = f.solanaSendEnabled && !f.solanaSendPaused;
         return DashboardAssetActionCapability(
           receive: receive,
-          send: receive && sendOn,
+          send: receive && hasSendWiring && sendOn,
           transactions: receive && f.solanaActivityConnected,
           sendUnavailableReason: sendOn
               ? null

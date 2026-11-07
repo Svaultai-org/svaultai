@@ -4,11 +4,14 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:cryptography/cryptography.dart';
 
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 
 import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/services/evm_networks.dart';
+import 'package:vault_ai_frontend/services/wallet_v2_active_client.dart';
+import 'package:vault_ai_frontend/services/wallet_v2_migration.dart';
 import 'package:vault_ai_frontend/ui/crypto_wallet_engine_send_panel.dart';
 
 class _FakeSendClient extends VaultAIClient {
@@ -204,6 +207,7 @@ Future<void> _pumpPanel(
   WidgetTester tester, {
   required _FakeSendClient client,
   Future<String> Function(String)? decryptForVault,
+  WalletV2ActiveClient? walletV2,
   bool keyAvailable = true,
   Future<bool> Function(String)? verifyPin,
   String network = kEvmNetworkEthereumSepolia,
@@ -221,8 +225,10 @@ Future<void> _pumpPanel(
         authToken: 'tok',
         fromAddress: _kFromAddress,
         client: client,
-        decryptForVault:
-            decryptForVault ?? ((ciphertext) async => _kPlaintextPk),
+        decryptForVault: walletV2 == null
+            ? (decryptForVault ?? ((ciphertext) async => _kPlaintextPk))
+            : null,
+        walletV2: walletV2,
         isVaultKeyAvailable: () => keyAvailable,
         verifyPin: verifyPin,
         network: network,
@@ -449,6 +455,70 @@ void main() {
       );
       expect(find.text(kEthSendSuccessHeading), findsOneWidget);
       expect(find.textContaining('0x1234567890abcdef'), findsOneWidget);
+    });
+
+    testWidgets('V2 send signs locally without requesting legacy ciphertext',
+        (tester) async {
+      const recordId = 'synthetic-send-wallet-record-1';
+      final codec = WalletV2EnvelopeCodec(SecretKey(List<int>.filled(32, 5)));
+      const identity = WalletV2Identity(
+        recordId: recordId, chain: 'evm', network: 'ethereum_sepolia',
+        asset: 'ETH', publicAddress: _kFromAddress, label: 'Synthetic wallet',
+      );
+      final ciphertext = await codec.wrap(identity, _kPlaintextPk);
+      var detailReads = 0;
+      final walletV2 = WalletV2ActiveClient(
+        codec: codec,
+        accessIsCurrent: () => true,
+        post: (_, __) async => throw StateError('Unexpected wallet write'),
+        get: (path) async {
+          if (path == '/vault/wallet-v2') return {'wallets': [
+            {
+              'wallet_record_id': recordId, 'chain': 'evm',
+              'network': 'ethereum_sepolia', 'asset': 'ETH',
+              'public_address': _kFromAddress, 'wallet_label': 'Synthetic wallet',
+              'migration_state': 'v2_verified',
+            },
+          ]};
+          detailReads++;
+          return {
+            'wallet_record_id': recordId, 'chain': 'evm',
+            'network': 'ethereum_sepolia', 'asset': 'ETH',
+            'public_address': _kFromAddress, 'wallet_label': 'Synthetic wallet',
+            'migration_state': 'v2_verified', 'envelope_version': 'v2',
+            'payload_ciphertext': ciphertext,
+          };
+        },
+      );
+      final api = _FakeSendClient(
+        draftResponse: _draftReady(),
+        encryptedSecretResponse: const {'status': 'legacy_should_not_be_read'},
+        broadcastResponse: const {'status': 'submitted', 'txHash':
+          '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'},
+      );
+      await _pumpPanel(tester, client: api, walletV2: walletV2,
+          verifyPin: (pin) async => pin == '123456');
+      await tester.enterText(
+        find.byKey(const Key('eth_send_panel_destination_input')),
+        _kDestAddress,
+      );
+      await tester.enterText(
+        find.byKey(const Key('eth_send_panel_amount_input')), '0.01',
+      );
+      await tester.tap(find.byKey(const Key('eth_send_panel_review_btn')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('eth_send_panel_confirm_btn')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('eth_send_panel_pin_input')), '123456',
+      );
+      await tester.tap(find.byKey(const Key('eth_send_panel_pin_confirm')));
+      await tester.pumpAndSettle();
+      expect(detailReads, 1);
+      expect(api.encryptedSecretCallCount, 0);
+      expect(api.broadcastCallCount, 1);
+      expect(api.lastBroadcastBody!['signedTransaction'],
+          isNot(contains(_kPlaintextPk)));
     });
 
     testWidgets('SP7: wrong PIN → no broadcast, no signing', (tester) async {

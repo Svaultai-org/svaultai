@@ -15,6 +15,7 @@ import '../services/zk_active_mvk.dart' as zk_mvk_store;
 import '../services/zk_outgoing_history_helper.dart' as zk_history_helper;
 import '../services/zk_send_draft_helper.dart' as zk_draft_helper;
 import '../services/evm_networks.dart';
+import '../services/wallet_v2_active_client.dart';
 import '../services/local_outgoing_tx_store.dart';
 import '../services/recipient_qr_parser.dart';
 import 'crypto_wallet_engine_design.dart';
@@ -528,7 +529,11 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
   final String fromAddress;
   final VaultAIClient client;
 
-  final Future<String> Function(String ciphertext) decryptForVault;
+  final Future<String> Function(String ciphertext)? decryptForVault;
+
+  /// Present only on the explicit private-wallet rollout. A V2 send never
+  /// asks the legacy wallet endpoint for PIN-key ciphertext.
+  final WalletV2ActiveClient? walletV2;
 
   final bool Function() isVaultKeyAvailable;
 
@@ -637,7 +642,8 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
     required this.authToken,
     required this.fromAddress,
     required this.client,
-    required this.decryptForVault,
+    this.decryptForVault,
+    this.walletV2,
     required this.isVaultKeyAvailable,
     this.verifyPin,
     this.asset = 'ETH',
@@ -2146,10 +2152,10 @@ class _CryptoWalletEngineSendPanelState
     await _onConfirmAndPin();
   }
 
-  // Only the newly registered asset path uses this additional session fence;
-  // existing Cryptocurrency behavior is intentionally unchanged.
+  // V2 and registered assets must stop signing when their captured access
+  // expires. Legacy Cryptocurrency keeps its original behavior.
   bool _registeredAssetAccessExpired() {
-    if (widget.registeredAsset == null) return false;
+    if (widget.registeredAsset == null && widget.walletV2 == null) return false;
     if (mounted && widget.isVaultKeyAvailable()) return false;
     _broadcastInFlight = false;
     _clearApprovalEnvelope();
@@ -2175,6 +2181,10 @@ class _CryptoWalletEngineSendPanelState
     }
     if (!widget.isVaultKeyAvailable()) {
       setState(() => _error = kEthSendErrorSigningKeyUnavailable);
+      return;
+    }
+    if (widget.walletV2 != null && widget.verifyPin == null) {
+      setState(() => _error = kEthSendErrorPinVerificationFailed);
       return;
     }
 
@@ -2287,53 +2297,71 @@ class _CryptoWalletEngineSendPanelState
 
     if (_registeredAssetAccessExpired()) return;
     String? encryptedSecret;
-    try {
-      final Map<String, dynamic> body = widget.isMainnet
-          ? await widget.client.getCryptoWalletEncryptedSecretNetwork(
-              network: widget.network,
-              asset: widget.asset,
-              authToken: widget.authToken,
-            )
-          : await widget.client.getCryptoWalletEncryptedSecret(
-              asset: widget.asset,
-              authToken: widget.authToken,
-            );
-      if (_registeredAssetAccessExpired()) return;
-      final status = (body['status'] ?? '').toString();
-      if (status != 'encrypted_secret_ready') {
+    String? privateKeyHex;
+    final walletV2 = widget.walletV2;
+    if (walletV2 != null) {
+      try {
+        privateKeyHex = await walletV2.readSigningSecretForAddress(
+          WalletV2AccountSlot('evm', widget.network, 'ETH'),
+          widget.fromAddress,
+        );
+      } catch (_) {
+        if (_registeredAssetAccessExpired()) return;
         _broadcastInFlight = false;
         setState(() {
           _stage = _Stage.review;
-          _error = kEthSendErrorEncryptedSecretMissing;
+          _error = kEthSendErrorSigningKeyUnavailable;
         });
         return;
       }
-      encryptedSecret = body['encryptedWalletSecret'].toString();
-    } catch (e) {
-      if (_registeredAssetAccessExpired()) return;
-      _broadcastInFlight = false;
-      setState(() {
-        _stage = _Stage.review;
-        _error = kEthSendErrorSigningKeyUnavailable;
-      });
-      return;
-    }
-
-    String? privateKeyHex;
-    try {
-      privateKeyHex = await widget.decryptForVault(encryptedSecret);
-      if (_registeredAssetAccessExpired()) {
-        privateKeyHex = null;
-        encryptedSecret = null;
+    } else {
+      try {
+        final Map<String, dynamic> body = widget.isMainnet
+            ? await widget.client.getCryptoWalletEncryptedSecretNetwork(
+                network: widget.network,
+                asset: widget.asset,
+                authToken: widget.authToken,
+              )
+            : await widget.client.getCryptoWalletEncryptedSecret(
+                asset: widget.asset,
+                authToken: widget.authToken,
+              );
+        if (_registeredAssetAccessExpired()) return;
+        if (body['status'] != 'encrypted_secret_ready') {
+          _broadcastInFlight = false;
+          setState(() {
+            _stage = _Stage.review;
+            _error = kEthSendErrorEncryptedSecretMissing;
+          });
+          return;
+        }
+        encryptedSecret = body['encryptedWalletSecret'].toString();
+      } catch (_) {
+        if (_registeredAssetAccessExpired()) return;
+        _broadcastInFlight = false;
+        setState(() {
+          _stage = _Stage.review;
+          _error = kEthSendErrorSigningKeyUnavailable;
+        });
         return;
       }
-    } catch (e) {
-      if (_registeredAssetAccessExpired()) return;
-      _broadcastInFlight = false;
-      setState(() {
-        _stage = _Stage.review;
-        _error = kEthSendErrorWalletKeyDecryptFailed;
-      });
+      try {
+        final decrypt = widget.decryptForVault;
+        if (decrypt == null) throw StateError('Legacy wallet key unavailable');
+        privateKeyHex = await decrypt(encryptedSecret);
+      } catch (_) {
+        if (_registeredAssetAccessExpired()) return;
+        _broadcastInFlight = false;
+        setState(() {
+          _stage = _Stage.review;
+          _error = kEthSendErrorWalletKeyDecryptFailed;
+        });
+        return;
+      }
+    }
+    if (_registeredAssetAccessExpired()) {
+      privateKeyHex = null;
+      encryptedSecret = null;
       return;
     }
 
@@ -2382,11 +2410,16 @@ class _CryptoWalletEngineSendPanelState
     final tokenAtDispatch = widget.authToken;
     final clientAtDispatch = widget.client;
     final mvkAtDispatch = zk_mvk_store.ZkActiveMvk.current();
-    bool responseIsCurrent() => !registeredAtDispatch ||
+    final walletV2AtDispatch = widget.walletV2;
+    bool responseIsCurrent() =>
+        (walletV2AtDispatch == null ||
+         (mounted && identical(widget.walletV2, walletV2AtDispatch) &&
+          walletV2AtDispatch.accessIsCurrent())) &&
+        (!registeredAtDispatch ||
         (mounted && widget.isVaultKeyAvailable() &&
             widget.authToken == tokenAtDispatch &&
             identical(widget.client, clientAtDispatch) &&
-            identical(zk_mvk_store.ZkActiveMvk.current(), mvkAtDispatch));
+            identical(zk_mvk_store.ZkActiveMvk.current(), mvkAtDispatch)));
 
     try {
       final Map<String, dynamic> body = widget.isMainnet

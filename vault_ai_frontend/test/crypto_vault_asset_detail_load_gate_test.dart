@@ -39,7 +39,7 @@ void main() {
 
       final start = src.indexOf('Future<void> _loadAddressAndBalance');
       expect(start, greaterThan(0));
-      final scope = src.substring(start, start + 3500);
+      final scope = src.substring(start, start + 4000);
 
 
 

@@ -21,7 +21,9 @@ import 'crypto_wallet_engine_security_page.dart';
 import 'crypto_wallet_engine_send_panel.dart';
 import 'crypto_wallet_engine_sheet_chrome.dart';
 import 'crypto_wallet_engine_solana_receive_panel.dart';
+import 'crypto_wallet_engine_solana_send_panel.dart';
 import 'crypto_wallet_engine_tron_receive_panel.dart';
+import 'crypto_wallet_engine_tron_send_panel.dart';
 import 'crypto_wallet_engine_monero_receive_panel.dart';
 
 const String kCryptoWalletEngineMainnetNotReadyKey =
@@ -611,8 +613,17 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   bool asset_moneroLive() => features?.xmrEnabled ?? false;
 
   bool get _hasSendWiring =>
-      walletV2 == null && _hasReceiveWiring &&
-      decryptForVault != null && loadFromAddress != null;
+      _hasReceiveWiring && loadFromAddress != null &&
+      (walletV2 != null
+          ? walletV2SendEnabled && verifyPin != null &&
+              walletV2!.accessIsCurrent()
+          : decryptForVault != null && isVaultKeyAvailable != null);
+
+  bool get _hasChainSendWiring =>
+      _hasReceiveWiring && verifyPin != null &&
+      (walletV2 != null
+          ? walletV2SendEnabled && walletV2!.accessIsCurrent()
+          : decryptForVault != null && isVaultKeyAvailable != null);
 
   void _openReceivePanel(BuildContext ctx, String assetForPanel) {
     if (!_hasReceiveWiring) {
@@ -716,7 +727,12 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     BuildContext ctx,
     String assetForPanel,
   ) async {
-    if (walletV2 != null) {
+    if (assetForPanel == 'SOL' || assetForPanel == 'USDT_TRC20') {
+      await _openChainSendPanel(ctx, assetForPanel);
+      return;
+    }
+    if (!const {'ETH', 'USDT_ERC20', 'USDC_ERC20'}
+        .contains(assetForPanel)) {
       _showNotReadyBanner(ctx, kCryptoWalletEngineSendNotReadyBanner);
       return;
     }
@@ -745,7 +761,24 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     // endpoint that queries service='ETH' — but the mainnet ETH
     // wallet is persisted with service='ETH:ethereum_mainnet', so an
     // existing wallet with a live balance was reported as missing.
+    final useV2 = walletV2SendEnabled && walletV2 != null;
     final fromAddress = await loadFromAddress!(effectiveNetwork);
+    if (useV2) {
+      try {
+        final identity = await walletV2!.findVerified(
+          WalletV2AccountSlot('evm', effectiveNetwork, 'ETH'),
+        );
+        if (identity == null ||
+            identity.publicAddress.toLowerCase() !=
+                (fromAddress ?? '').toLowerCase()) {
+          _showNotReadyBanner(ctx, kCryptoWalletEngineSendNotReadyBanner);
+          return;
+        }
+      } catch (_) {
+        _showNotReadyBanner(ctx, kCryptoWalletEngineSendNotReadyBanner);
+        return;
+      }
+    }
     if (fromAddress == null || fromAddress.isEmpty) {
       _showNotReadyBanner(
         ctx,
@@ -783,8 +816,11 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
         authToken: authToken!,
         fromAddress: fromAddress,
         client: apiClient!,
-        decryptForVault: decryptForVault!,
-        isVaultKeyAvailable: isVaultKeyAvailable!,
+        decryptForVault: useV2 ? null : decryptForVault,
+        walletV2: useV2 ? walletV2 : null,
+        isVaultKeyAvailable: useV2
+            ? walletV2!.accessIsCurrent
+            : isVaultKeyAvailable!,
         verifyPin: verifyPin,
         asset: assetForPanel,
         network: effectiveNetwork,
@@ -798,6 +834,153 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
             isToken ? () async => parseBaseUnits(ethState) : null,
       ),
     ).whenComplete(mainnetApprovalSession.clear);
+  }
+
+  Future<BigInt?> _readChainBalanceBaseUnits({
+    required String network,
+    required String asset,
+    required String address,
+  }) async {
+    final accessCurrent = walletV2?.accessIsCurrent ?? isVaultKeyAvailable;
+    if (accessCurrent?.call() != true) return null;
+    try {
+      final body = await apiClient!.getCryptoWalletBalanceNetwork(
+        network: network,
+        asset: asset,
+        authToken: authToken!,
+        address: address,
+      );
+      if (accessCurrent?.call() != true ||
+          body['balanceStatus'] != 'available' ||
+          body['asset'] != asset ||
+          body['network'] != network ||
+          body['publicAddress'] != address) {
+        return null;
+      }
+      final raw = asset == 'SOL'
+          ? body['lamports'] ?? body['availableBaseUnits']
+          : asset == 'TRX'
+              ? body['trxBalanceSun']
+              : body['baseUnits'] ?? body['availableBaseUnits'];
+      final value = raw == null ? null : BigInt.tryParse(raw.toString());
+      return value != null && value >= BigInt.zero ? value : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _openChainSendPanel(
+    BuildContext ctx,
+    String asset,
+  ) async {
+    final solana = asset == 'SOL';
+    final tron = asset == 'USDT_TRC20';
+    if (!solana && !tron) return;
+    final enabled = solana
+        ? (features?.solanaEnabled == true &&
+            features?.solanaSendEnabled == true &&
+            features?.solanaSendPaused != true)
+        : (features?.tronEnabled == true &&
+            features?.tronSendEnabled == true &&
+            features?.tronSendPaused != true &&
+            features?.tronBalanceEnabled == true &&
+            features?.tronUsdtContractConfigured == true);
+    if (!enabled || !_hasChainSendWiring) {
+      _showNotReadyBanner(ctx, kCryptoWalletEngineSendNotReadyBanner);
+      return;
+    }
+    final network = solana ? 'solana_mainnet' : 'tron_mainnet';
+    final walletV2Client = walletV2;
+    final accessCurrent = walletV2Client?.accessIsCurrent ?? isVaultKeyAvailable;
+    if (accessCurrent?.call() != true) {
+      _showNotReadyBanner(ctx, kCryptoWalletEngineSendNotReadyBanner);
+      return;
+    }
+    try {
+      final body = await apiClient!.getCryptoWalletReceiveNetwork(
+        network: network,
+        asset: asset,
+        authToken: authToken!,
+      );
+      if (!ctx.mounted || accessCurrent?.call() != true) return;
+      final address = body['publicAddress'];
+      if (body['wallet_engine'] != 'receive_ready' ||
+          address is! String || address.isEmpty) {
+        _showNotReadyBanner(ctx, 'Create this wallet before sending.');
+        return;
+      }
+      if (walletV2Client != null) {
+        final slot = solana
+            ? const WalletV2AccountSlot('solana', 'solana_mainnet', 'SOL')
+            : const WalletV2AccountSlot('tron', 'tron_mainnet', 'USDT_TRC20');
+        final identity = await walletV2Client.findVerified(slot);
+        if (!ctx.mounted || !walletV2Client.accessIsCurrent()) return;
+        final recordId = body['walletRecordId'];
+        if (identity == null || identity.publicAddress != address ||
+            (recordId != null && recordId != identity.recordId)) {
+          _showNotReadyBanner(ctx, kCryptoWalletEngineSendNotReadyBanner);
+          return;
+        }
+      }
+      if (!ctx.mounted || accessCurrent?.call() != true) return;
+      showCryptoWalletSheet<void>(
+        context: ctx,
+        title: solana ? 'Send SOL' : 'Send USDT (TRC20)',
+        sheetKey: solana
+            ? 'crypto_wallet_engine_solana_send_sheet'
+            : 'crypto_wallet_engine_tron_send_sheet',
+        bodyOwnsLayout: true,
+        child: solana
+            ? CryptoWalletEngineSolanaSendPanel(
+                key: const Key('crypto_wallet_engine_solana_send_panel'),
+                authToken: authToken!,
+                fromAddress: address,
+                client: apiClient!,
+                decryptForVault:
+                    walletV2Client == null ? decryptForVault : null,
+                walletV2: walletV2Client,
+                isVaultKeyAvailable: accessCurrent!,
+                verifyPin: verifyPin,
+                features: features,
+                fetchAvailableLamports: () => _readChainBalanceBaseUnits(
+                  network: network, asset: 'SOL', address: address,
+                ),
+                onViewActivity: () {
+                  if (ctx.mounted) {
+                    Navigator.of(ctx).maybePop();
+                  }
+                },
+              )
+            : CryptoWalletEngineTronSendPanel(
+                key: const Key('crypto_wallet_engine_tron_send_panel'),
+                authToken: authToken!,
+                fromAddress: address,
+                client: apiClient!,
+                decryptForVault:
+                    walletV2Client == null ? decryptForVault : null,
+                walletV2: walletV2Client,
+                isVaultKeyAvailable: accessCurrent!,
+                verifyPin: verifyPin,
+                features: features,
+                fetchAvailableTokenBaseUnits: () =>
+                    _readChainBalanceBaseUnits(
+                  network: network, asset: 'USDT_TRC20', address: address,
+                ),
+                fetchTrxBalanceSun: () => _readChainBalanceBaseUnits(
+                  network: network, asset: 'TRX', address: address,
+                ),
+                onViewActivity: () {
+                  if (ctx.mounted) {
+                    Navigator.of(ctx).maybePop();
+                  }
+                },
+              ),
+      ).whenComplete(() => onAssetLiveRefreshRequested?.call(asset));
+    } catch (_) {
+      if (ctx.mounted) {
+        _showNotReadyBanner(ctx, kCryptoWalletEngineSendNotReadyBanner);
+      }
+    }
   }
 
   void _showNotReadyBanner(BuildContext ctx, String message) {
@@ -1394,7 +1577,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
                     asset: asset,
                     features: features,
                     hasReceiveWiring: _hasReceiveWiring,
-                    hasSendWiring: _hasSendWiring,
+                    hasSendWiring: asset == 'SOL' || asset == 'USDT_TRC20'
+                        ? _hasChainSendWiring : _hasSendWiring,
                   );
                   final reason = dashboardAssetBalanceReason(
                     asset: asset,

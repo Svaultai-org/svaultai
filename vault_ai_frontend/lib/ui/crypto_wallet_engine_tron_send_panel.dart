@@ -18,6 +18,7 @@ import '../services/zk_send_draft_helper.dart' as zk_draft_helper;
 import '../services/recipient_qr_parser.dart';
 import '../services/tron_transaction.dart';
 import '../services/tron_wallet.dart';
+import '../services/wallet_v2_active_client.dart';
 import 'crypto_wallet_engine_design.dart';
 import 'crypto_wallet_engine_send_layout.dart';
 import 'scan_recipient_qr_sheet.dart';
@@ -187,9 +188,10 @@ class CryptoWalletEngineTronSendPanel extends StatefulWidget {
   final String authToken;
   final String fromAddress;
   final VaultAIClient client;
-  final Future<String> Function(String ciphertext) decryptForVault;
+  final Future<String> Function(String ciphertext)? decryptForVault;
   final bool Function() isVaultKeyAvailable;
   final Future<bool> Function(String pin)? verifyPin;
+  final WalletV2ActiveClient? walletV2;
   final CryptoWalletFeatures? features;
   final String? prefilledDestination;
   final String? prefilledAmount;
@@ -230,9 +232,10 @@ class CryptoWalletEngineTronSendPanel extends StatefulWidget {
     required this.authToken,
     required this.fromAddress,
     required this.client,
-    required this.decryptForVault,
+    this.decryptForVault,
     required this.isVaultKeyAvailable,
     this.verifyPin,
+    this.walletV2,
     this.features,
     this.prefilledDestination,
     this.prefilledAmount,
@@ -430,6 +433,10 @@ class _CryptoWalletEngineTronSendPanelState
       });
       return;
     }
+    if (widget.walletV2 != null && widget.verifyPin == null) {
+      setState(() => _error = 'PIN verification is unavailable.');
+      return;
+    }
     if (widget.verifyPin != null) {
       final ok = await _promptPin();
       if (!ok) return;
@@ -486,31 +493,35 @@ class _CryptoWalletEngineTronSendPanelState
 
     String? plaintextPrivateKeyHex;
     try {
-      final secretResp = await widget.client
-          .getCryptoWalletEncryptedSecretNetwork(
-        network: kTronNetworkId,
-        asset: kTronAssetTicker,
-        authToken: widget.authToken,
-      );
-      final status = (secretResp['wallet_engine'] ?? '').toString();
-      if (status != 'encrypted_secret_ready') {
-        setState(() {
-          _broadcastInFlight = false;
-          _stage = _TronSendStage.input;
-          _error = 'Wallet secret not available for signing.';
-        });
-        return;
+      final walletV2 = widget.walletV2;
+      late final String decrypted;
+      if (walletV2 != null) {
+        decrypted = await walletV2.readSigningSecretForAddress(
+          const WalletV2AccountSlot('tron', 'tron_mainnet', 'USDT_TRC20'),
+          widget.fromAddress,
+        );
+      } else {
+        final decrypt = widget.decryptForVault;
+        if (decrypt == null) {
+          throw StateError('Wallet decryption is unavailable');
+        }
+        final secretResp = await widget.client
+            .getCryptoWalletEncryptedSecretNetwork(
+          network: kTronNetworkId,
+          asset: kTronAssetTicker,
+          authToken: widget.authToken,
+        );
+        final status = (secretResp['wallet_engine'] ?? '').toString();
+        if (status != 'encrypted_secret_ready') {
+          throw StateError('Wallet secret not available for signing');
+        }
+        final ct = (secretResp['encryptedWalletSecret'] ?? '').toString();
+        if (ct.isEmpty) throw StateError('Missing wallet ciphertext');
+        decrypted = await decrypt(ct);
       }
-      final ct = (secretResp['encryptedWalletSecret'] ?? '').toString();
-      if (ct.isEmpty) {
-        setState(() {
-          _broadcastInFlight = false;
-          _stage = _TronSendStage.input;
-          _error = 'Missing ciphertext.';
-        });
-        return;
+      if (walletV2 != null && !walletV2.accessIsCurrent()) {
+        throw StateError('Wallet access changed');
       }
-      final decrypted = await widget.decryptForVault(ct);
       final parsed = jsonDecode(decrypted);
       if (parsed is! Map<String, dynamic>) {
         setState(() {
@@ -567,6 +578,11 @@ class _CryptoWalletEngineTronSendPanelState
           _error = preBroadcastExpiry;
         });
         return;
+      }
+      if (walletV2 != null &&
+          (!mounted || !identical(widget.walletV2, walletV2) ||
+              !walletV2.accessIsCurrent())) {
+        throw StateError('Wallet access changed');
       }
 
       // 2026-07-14 (Round 7 hardening): draftId echoed so the state

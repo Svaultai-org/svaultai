@@ -227,9 +227,12 @@ class _CryptoWalletEngineAssetDetailPageState
   bool _registeredAccessRevoked = false;
   int _registeredAccessGeneration = 0;
 
-  bool get _registeredAccessCurrent => widget.registeredAsset == null ||
-      (mounted && !_registeredAccessRevoked &&
-       (widget.isVaultKeyAvailable?.call() ?? false));
+  bool get _registeredAccessCurrent =>
+      (widget.walletV2?.accessIsCurrent() ?? true) &&
+      (widget.registeredAsset == null ||
+          (mounted && !_registeredAccessRevoked &&
+              ((widget.isVaultKeyAvailable?.call() ?? false) ||
+                  (widget.walletV2?.accessIsCurrent() ?? false))));
 
   bool _registeredOperationCurrent(int generation) => mounted &&
       _registeredAccessCurrent &&
@@ -380,10 +383,12 @@ class _CryptoWalletEngineAssetDetailPageState
         widget.isVaultKeyAvailable != null) || widget.walletV2 != null);
 
   bool get _hasSendWiring =>
-      widget.walletV2 == null &&
-      _hasReceiveWiring &&
-      widget.decryptForVault != null &&
-      widget.loadFromAddress != null;
+      _hasReceiveWiring && widget.loadFromAddress != null &&
+      (widget.walletV2 != null
+          ? widget.walletV2SendEnabled && widget.verifyPin != null &&
+              widget.walletV2!.accessIsCurrent()
+          : widget.decryptForVault != null &&
+              widget.isVaultKeyAvailable != null);
 
   Future<bool> _verifyV2BackupForAddress(String? address) async {
     final walletV2 = widget.walletV2;
@@ -858,6 +863,58 @@ class _CryptoWalletEngineAssetDetailPageState
     }
   }
 
+  Future<BigInt?> _readFreshChainBalanceForSend({
+    required String address,
+    required String asset,
+  }) async {
+    if (!const {'SOL', 'USDT_TRC20', 'TRX'}.contains(asset)) return null;
+    final network = asset == 'SOL' ? 'solana_mainnet' : 'tron_mainnet';
+    if (widget.effectiveNetwork != network ||
+        (asset != widget.asset &&
+            !(asset == 'TRX' && widget.asset == 'USDT_TRC20'))) {
+      return null;
+    }
+    final accessCurrent =
+        widget.walletV2?.accessIsCurrent ?? widget.isVaultKeyAvailable;
+    final api = widget.apiClient;
+    final token = widget.authToken;
+    if (!mounted || accessCurrent?.call() != true ||
+        api == null || token == null) {
+      return null;
+    }
+    try {
+      final body = await api.getCryptoWalletBalanceNetwork(
+        network: network,
+        asset: asset,
+        authToken: token,
+        address: address,
+      ).timeout(kAssetDetailBalanceTimeout);
+      if (!mounted || accessCurrent?.call() != true ||
+          widget.apiClient != api || widget.authToken != token ||
+          widget.effectiveNetwork != network ||
+          (asset != widget.asset &&
+              !(asset == 'TRX' && widget.asset == 'USDT_TRC20')) ||
+          body['balanceStatus'] != 'available' ||
+          body['asset'] != asset ||
+          body['network'] != network ||
+          body['publicAddress'] != address) {
+        return null;
+      }
+      final raw = asset == 'SOL'
+          ? body['lamports']
+          : asset == 'TRX'
+              ? body['trxBalanceSun']
+              : body['baseUnits'];
+      if (raw is! String ||
+          !RegExp(r'^(0|[1-9][0-9]*)$').hasMatch(raw)) {
+        return null;
+      }
+      return BigInt.tryParse(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Registered-token sends authorize against fresh verified integer balances,
   /// not the balance that happened to be displayed before Review was opened.
   /// No last-known balance is returned on failure or after the vault changes.
@@ -1126,7 +1183,7 @@ class _CryptoWalletEngineAssetDetailPageState
 
   Future<void> _openSendPanel() async {
     if (!_registeredAccessCurrent) return;
-    if (widget.walletV2 != null) {
+    if (widget.walletV2 != null && !widget.walletV2SendEnabled) {
       _showSnackBar(kAssetDetailSendNotReadyBanner);
       return;
     }
@@ -1145,9 +1202,11 @@ class _CryptoWalletEngineAssetDetailPageState
         _showSnackBar(kAssetDetailTronSendDisabledMessage);
         return;
       }
-      if (widget.authToken == null || widget.apiClient == null
-          || widget.decryptForVault == null
-          || widget.isVaultKeyAvailable == null) {
+      final useV2 = widget.walletV2 != null && widget.walletV2SendEnabled;
+      if (widget.authToken == null || widget.apiClient == null ||
+          (useV2 && widget.verifyPin == null) ||
+          (!useV2 && (widget.decryptForVault == null ||
+              widget.isVaultKeyAvailable == null))) {
         _showSnackBar(kAssetDetailSendNotReadyBanner);
         return;
       }
@@ -1159,6 +1218,11 @@ class _CryptoWalletEngineAssetDetailPageState
         );
         return;
       }
+      if (useV2 && !await _verifyV2BackupForAddress(fromAddress)) {
+        _showSnackBar(kAssetDetailSendNotReadyBanner);
+        return;
+      }
+      if (!_registeredOperationCurrent(accessGeneration)) return;
       if (!mounted) return;
       // 2026-07-14 (Round 7 hardening): wire the TRON send panel
       // with balance hooks + optimistic pending debit + post-Send
@@ -1176,12 +1240,18 @@ class _CryptoWalletEngineAssetDetailPageState
           authToken: widget.authToken!,
           fromAddress: fromAddress,
           client: widget.apiClient!,
-          decryptForVault: widget.decryptForVault!,
-          isVaultKeyAvailable: widget.isVaultKeyAvailable!,
+          decryptForVault: useV2 ? null : widget.decryptForVault,
+          walletV2: useV2 ? widget.walletV2 : null,
+          isVaultKeyAvailable: useV2
+              ? widget.walletV2!.accessIsCurrent
+              : widget.isVaultKeyAvailable!,
           verifyPin: widget.verifyPin,
           features: widget.features,
-          fetchAvailableTokenBaseUnits: () async => _balanceBaseUnits,
-          fetchTrxBalanceSun: () async => _ethBalanceWei,
+          fetchAvailableTokenBaseUnits: () =>
+              _readFreshChainBalanceForSend(
+                address: fromAddress, asset: 'USDT_TRC20'),
+          fetchTrxBalanceSun: () => _readFreshChainBalanceForSend(
+            address: fromAddress, asset: 'TRX'),
           onSuccessfulBroadcast: (
               {required String txHash,
                required BigInt tokenBaseUnitsDebit,
@@ -1209,9 +1279,11 @@ class _CryptoWalletEngineAssetDetailPageState
         _showSnackBar(kAssetDetailSolanaSendDisabledMessage);
         return;
       }
-      if (widget.authToken == null || widget.apiClient == null
-          || widget.decryptForVault == null
-          || widget.isVaultKeyAvailable == null) {
+      final useV2 = widget.walletV2 != null && widget.walletV2SendEnabled;
+      if (widget.authToken == null || widget.apiClient == null ||
+          (useV2 && widget.verifyPin == null) ||
+          (!useV2 && (widget.decryptForVault == null ||
+              widget.isVaultKeyAvailable == null))) {
         _showSnackBar(kAssetDetailSendNotReadyBanner);
         return;
       }
@@ -1223,6 +1295,11 @@ class _CryptoWalletEngineAssetDetailPageState
         );
         return;
       }
+      if (useV2 && !await _verifyV2BackupForAddress(fromAddress)) {
+        _showSnackBar(kAssetDetailSendNotReadyBanner);
+        return;
+      }
+      if (!_registeredOperationCurrent(accessGeneration)) return;
       if (!mounted) return;
       // 2026-07-14 (Round 7 hardening): wire the SOL send panel with
       // the same shape as ETH — balance hook (lamports), onSuccessful-
@@ -1241,11 +1318,15 @@ class _CryptoWalletEngineAssetDetailPageState
           authToken: widget.authToken!,
           fromAddress: fromAddress,
           client: widget.apiClient!,
-          decryptForVault: widget.decryptForVault!,
-          isVaultKeyAvailable: widget.isVaultKeyAvailable!,
+          decryptForVault: useV2 ? null : widget.decryptForVault,
+          walletV2: useV2 ? widget.walletV2 : null,
+          isVaultKeyAvailable: useV2
+              ? widget.walletV2!.accessIsCurrent
+              : widget.isVaultKeyAvailable!,
           verifyPin: widget.verifyPin,
           features: widget.features,
-          fetchAvailableLamports: () async => _balanceBaseUnits,
+          fetchAvailableLamports: () => _readFreshChainBalanceForSend(
+            address: fromAddress, asset: 'SOL'),
           onSuccessfulBroadcast: (
               {required String signature,
                required BigInt debitLamports}) {
@@ -1292,6 +1373,12 @@ class _CryptoWalletEngineAssetDetailPageState
       );
       return;
     }
+    final useV2 = widget.walletV2 != null && widget.walletV2SendEnabled;
+    if (useV2 && !await _verifyV2BackupForAddress(fromAddress)) {
+      _showSnackBar(kAssetDetailSendNotReadyBanner);
+      return;
+    }
+    if (!_registeredOperationCurrent(accessGeneration)) return;
     if (!mounted) return;
     // 2026-07-13 (Round 5 hardening): thread the last-known live
     // balances into the Send panel so BOTH the pre-draft coarse
@@ -1319,8 +1406,11 @@ class _CryptoWalletEngineAssetDetailPageState
         authToken: widget.authToken!,
         fromAddress: fromAddress,
         client: widget.apiClient!,
-        decryptForVault: widget.decryptForVault!,
-        isVaultKeyAvailable: widget.isVaultKeyAvailable!,
+        decryptForVault: useV2 ? null : widget.decryptForVault,
+        walletV2: useV2 ? widget.walletV2 : null,
+        isVaultKeyAvailable: useV2
+            ? widget.walletV2!.accessIsCurrent
+            : widget.isVaultKeyAvailable!,
         verifyPin: widget.verifyPin,
         asset: widget.asset,
         registeredAsset: widget.registeredAsset,
@@ -1561,6 +1651,9 @@ class _CryptoWalletEngineAssetDetailPageState
   List<Widget> _buildSupportedAssetSections() {
     final addr = widget.walletV2 != null && !_v2BackupVerified
         ? null : _address;
+    final unverifiedV2Address = widget.walletV2 != null &&
+        _address != null && _address!.isNotEmpty &&
+        (!_v2BackupVerified || !widget.walletV2!.accessIsCurrent());
     final balText = _balance != null
         ? '${_balance!}${_balanceUnit != null ? ' $_balanceUnit' : ''}'
         : null;
@@ -1652,6 +1745,14 @@ class _CryptoWalletEngineAssetDetailPageState
                   style: kWalletMonoStyle,
                 ),
               )
+            else if (unverifiedV2Address)
+              const Text(
+                kAssetDetailPrivateBackupUnverified,
+                key: Key('crypto_wallet_engine_asset_detail_address_unverified'),
+                style: TextStyle(
+                  color: kWalletAccentWarning, fontSize: 13,
+                ),
+              )
             else
               const Text(
                 kAssetDetailNoWalletAddressCopy,
@@ -1697,7 +1798,8 @@ class _CryptoWalletEngineAssetDetailPageState
               key: const Key(
                 'crypto_wallet_engine_asset_detail_send_btn',
               ),
-              onPressed: widget.walletV2 == null && _registeredSendEnabled
+              onPressed: _registeredSendEnabled &&
+                      (widget.walletV2 == null || widget.walletV2SendEnabled)
                   ? _openSendPanel : null,
               icon: const Icon(Icons.north_rounded, size: 18),
               label: const Text(kAssetDetailSendLabel),
