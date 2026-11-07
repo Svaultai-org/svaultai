@@ -173,6 +173,7 @@ class ZkPrivateChatIndexLoader {
         final manifest = await reader.readManifest(row['file_id'] as String);
         _checkAccess();
         var content = '';
+        var fullTextRead = false;
         final isText = _isTextFile(manifest.contentType, manifest.displayName);
         if (isText &&
             manifest.totalBytes <= maxTextFileBytes &&
@@ -181,10 +182,26 @@ class ZkPrivateChatIndexLoader {
           final download = await reader.download(manifest.fileId);
           _checkAccess();
           content = utf8.decode(download.bytes);
+          fullTextRead = true;
           textFiles++;
           textBytes += manifest.totalBytes;
         } else if (isText) {
           incomplete = true;
+        }
+        // A retired legacy file may carry its old OCR, document text, or
+        // transcript inside the client-encrypted V2 manifest. Search that
+        // text only on this device when full text was not already read.
+        final extracted = manifest.extractedText;
+        if (!fullTextRead && extracted != null && extracted.isNotEmpty) {
+          final extractedBytes = utf8.encode(extracted).length;
+          if (textFiles < maxTextFiles &&
+              textBytes + extractedBytes <= maxTotalTextBytes) {
+            content = extracted;
+            textFiles++;
+            textBytes += extractedBytes;
+          } else {
+            incomplete = true;
+          }
         }
         files.add(ZkLocalChatRecord(
           kind: ZkLocalChatKind.file,

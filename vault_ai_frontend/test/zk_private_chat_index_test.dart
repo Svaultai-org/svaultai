@@ -16,6 +16,7 @@ Future<Map<String, dynamic>> _fileManifest({
   required String name,
   required String mime,
   required int size,
+  String? extractedText,
 }) async {
   final key = await VaultKeyHierarchy(_mvk).metadataKey();
   final metadata = <String, String>{
@@ -23,18 +24,26 @@ Future<Map<String, dynamic>> _fileManifest({
     'content_type_ciphertext': await _wrap(key, mime),
   };
   final body = <String, dynamic>{
-    'schema': 'vaultai.file.migrated.v1',
+    'schema': extractedText == null
+        ? 'vaultai.file.migrated.v1'
+        : 'vaultai.file.migrated.v2',
     'file_id': id,
     'file_size': size,
     'content_type': mime,
     'chunk_size': size == 0 ? 1 : size,
     'chunk_count': size == 0 ? 0 : 1,
     'encrypted_metadata': metadata,
+    if (extractedText != null)
+      'legacy_extra': {
+        'relative_path': null,
+        'extracted_text': extractedText,
+      },
   };
   return <String, dynamic>{
     'file_id': id,
     'crypto_version': 'client_mvk_v2',
     'manifest_ciphertext': await _wrap(key, jsonEncode(body)),
+    if (extractedText != null) 'migration_metadata_version': 2,
     'total_bytes': size,
     'chunk_size': body['chunk_size'],
     'chunk_count': body['chunk_count'],
@@ -185,6 +194,82 @@ void main() {
       previousSelection: audio.selection,
     );
     expect(followUp.selection?.id, 'audio-1');
+  });
+
+  test('retired V2 extras support local content lookup across media', () async {
+    final files = <String, Map<String, dynamic>>{
+      'photo-1': await _fileManifest(
+        id: 'photo-1',
+        name: 'image.jpg',
+        mime: 'image/jpeg',
+        size: 0,
+        extractedText: 'red cloth and black shoes',
+      ),
+      'video-1': await _fileManifest(
+        id: 'video-1',
+        name: 'clip.mp4',
+        mime: 'video/mp4',
+        size: 0,
+        extractedText: 'standing at the beach at sunset',
+      ),
+      'audio-1': await _fileManifest(
+        id: 'audio-1',
+        name: 'voice.m4a',
+        mime: 'audio/mp4',
+        size: 0,
+        extractedText: 'launch complete at noon',
+      ),
+      'document-1': await _fileManifest(
+        id: 'document-1',
+        name: 'notes.pdf',
+        mime: 'application/pdf',
+        size: 0,
+        extractedText: 'rainforest butterflies',
+      ),
+    };
+    final requested = <String>[];
+    final loader = ZkPrivateChatIndexLoader(
+      mvk: _mvk,
+      accessIsCurrent: () => true,
+      get: (path) async {
+        requested.add(path);
+        if (path == '/vault/ciphertext/vault-items') return [];
+        if (path == '/vault/file-v2') {
+          return {
+            'files': [
+              for (final id in files.keys)
+                {
+                  'file_id': id,
+                  'verification_state': 'client_verified',
+                  'lifecycle_state': 'legacy_migration_retired',
+                },
+            ],
+          };
+        }
+        if (path.endsWith('/manifest')) {
+          return files[path.split('/')[3]];
+        }
+        fail('Unexpected private GET: $path');
+      },
+    );
+    final index = await loader.load();
+    expect(index.incomplete, isFalse);
+    expect(requested.every((path) => !path.contains('/chunk/')), isTrue);
+    expect(requested.join(' '), isNot(contains('red cloth')));
+    for (final (prompt, id) in [
+      ('Find my photo wearing red cloth and black shoes', 'photo-1'),
+      ('Find my video standing at the beach', 'video-1'),
+      ('Find my recording saying launch complete', 'audio-1'),
+      ('Find my document about rainforest butterflies', 'document-1'),
+    ]) {
+      final result = ZkLocalChatRouter.resolve(
+        prompt: prompt,
+        savedItems: index.savedItems,
+        files: index.files,
+      );
+      expect(result.selection?.id, id, reason: prompt);
+      expect(result.maySendToGeneralAi, isFalse);
+    }
   });
 
   test('private search stops if the vault locks during a fetch', () async {
