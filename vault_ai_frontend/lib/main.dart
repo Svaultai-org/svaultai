@@ -5458,7 +5458,8 @@ Future<Map<String, dynamic>> _zkHttpPost(
   if (path == '/auth/zk-login-finalize') {
     headers.addAll(strictPinFreeClientHeaders(
       privateOnlyBuild: kPrivateOnlyUnlockEnabled,
-      clientReady: kZkPrivateOnlyClientReady,
+      clientReady:
+          kZkPrivateOnlyClientReady && kPrivateWalletFeatureParityReady,
     ));
   }
   final deviceId = apiClientDeviceId();
