@@ -213,5 +213,37 @@ void main() {
       expect(body['pin'], '123456');
       expect(body.containsKey('zk_proof_token'), isFalse);
     }
-  });
+  }, skip: kPrivateOnlyTransportRejectPin);
+
+  test('strict build blocks direct legacy actions before HTTP', () async {
+    final requests = <http.Request>[];
+    final client = clientFor(requests);
+    await expectLater(
+      client.deleteBeneficiary(
+        linkId: 1,
+        vaultName: 'synthetic',
+        pin: '123456',
+        authToken: _token,
+      ),
+      throwsStateError,
+    );
+    await expectLater(
+      client.deleteVaultFile(
+        vaultName: 'synthetic',
+        fileId: 'synthetic-file',
+        pin: '123456',
+        authToken: _token,
+      ),
+      throwsStateError,
+    );
+    await expectLater(
+      client.startImport(
+        vaultName: 'synthetic',
+        pin: '123456',
+        authToken: _token,
+      ),
+      throwsStateError,
+    );
+    expect(requests, isEmpty);
+  }, skip: !kPrivateOnlyTransportRejectPin);
 }
