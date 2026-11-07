@@ -9,7 +9,9 @@ import 'api_client.dart';
 import 'l10n/app_localizations.dart';
 import 'services/app_release_controller.dart' as release;
 import 'ui/responsive.dart';
-import 'main.dart' show AppState, backendBaseUrl;
+import 'main.dart' show AppState, backendBaseUrl,
+    createLocalLegacyPasswordSourceForActiveVault,
+    promptForLocalSecurityCheckPin;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/zk_local_password_analysis.dart';
 
@@ -20,6 +22,13 @@ const bool kEnableZkSecurityLocalAnalyze = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// OPAQUE vaults analyze passwords locally. Older ciphertext is exported under
+// a one-use proof and decrypted on the owner device.
+bool useLocalZkPasswordAnalysis({
+  required bool hasZkHandle,
+  required bool hasMvk,
+}) =>
+    hasZkHandle || (kEnableZkSecurityLocalAnalyze && hasMvk);
 
 class SecurityCenterPage extends StatefulWidget {
   const SecurityCenterPage({super.key});
@@ -42,10 +51,10 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
   
   bool _analyzing = false;
 
-  bool get _useLocalZkAnalysis =>
-      kEnableZkSecurityLocalAnalyze &&
-      (context.read<AppState>().vaultHandle?.isNotEmpty == true ||
-          zk_mvk_store.ZkActiveMvk.current() != null);
+  bool get _useLocalZkAnalysis => useLocalZkPasswordAnalysis(
+        hasZkHandle: context.read<AppState>().vaultHandle?.isNotEmpty == true,
+        hasMvk: zk_mvk_store.ZkActiveMvk.current() != null,
+      );
 
   @override
   void initState() {
@@ -489,11 +498,32 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
       _localAnalysisVaultId = vaultId;
     });
     try {
-      final result = await loadAndAnalyzeZkPasswords(
-        fetchMetadata: () => _client.listZkItemMetadataRaw(authToken: token),
-        fetchV2Items: () => _client.listZkVaultItemsOnly(authToken: token),
-        stillCurrent: stillCurrent,
-      );
+      final mixed = app.vaultHandle?.isNotEmpty == true;
+      final result = !mixed
+          ? await loadAndAnalyzeZkPasswords(
+              fetchMetadata: () =>
+                  _client.listZkItemMetadataRaw(authToken: token),
+              fetchV2Items: () =>
+                  _client.listZkVaultItemsOnly(authToken: token),
+              stillCurrent: stillCurrent,
+            )
+          : await loadAndAnalyzeMixedZkPasswords(
+              fetchMetadata: () =>
+                  _client.listZkItemMetadataRaw(authToken: token),
+              fetchV2Items: () =>
+                  _client.listZkVaultItemsOnly(authToken: token),
+              createLegacySource: () {
+                final source = createLocalLegacyPasswordSourceForActiveVault(
+                  app,
+                  promptPin: () => promptForLocalSecurityCheckPin(context),
+                );
+                if (!source.stillCurrent()) {
+                  throw StateError('Vault session changed');
+                }
+                return (export: source.export, codec: source.codec);
+              },
+              stillCurrent: stillCurrent,
+            );
       if (!stillCurrent()) return;
       setState(() {
         _localPasswordAnalysis = result;

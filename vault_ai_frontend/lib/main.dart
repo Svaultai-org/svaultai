@@ -943,6 +943,10 @@ Future<String?> _promptForActionPin(BuildContext context, String title) async {
   );
 }
 
+/// Reuse the existing PIN-only action dialog for a local security check.
+Future<String?> promptForLocalSecurityCheckPin(BuildContext context) =>
+    _promptForActionPin(context, 'Verify local password check');
+
 class ZkActionPinDialog extends StatefulWidget {
   const ZkActionPinDialog({super.key, required this.title});
 
@@ -5402,6 +5406,81 @@ void _scheduleMetadataMigration({required AppState app}) {
     post: _zkHttpPost,
     get: _zkHttpGet,
   ));
+}
+
+({
+  legacy_export.LegacyCiphertextExportClient export,
+  legacy_codec.LegacyCiphertextMigrationCodec codec,
+  bool Function() stillCurrent,
+}) createLocalLegacyPasswordSourceForActiveVault(
+  AppState app, {
+  required Future<String?> Function() promptPin,
+}) {
+  final token = app.sessionToken;
+  final vaultId = app.vaultId;
+  final vaultName = app.vaultName;
+  final handle = app.vaultHandle;
+  final mvk = zk_mvk_store.ZkActiveMvk.current();
+  if (token == null || vaultId == null || vaultName == null ||
+      handle == null || handle.isEmpty || mvk == null ||
+      !app.authed || !app.unlocked || !app._sessionForeground ||
+      app.sessionVerificationBlocked) {
+    throw StateError('Unlock this vault before checking older passwords');
+  }
+  final legacyKey = _VaultCrypto._keyCache[
+    _VaultCrypto._ck(vaultId, vaultName)
+  ];
+  if (legacyKey == null) {
+    throw StateError('Older vault key is unavailable');
+  }
+  final sessionEpoch = app._sessionEpoch;
+  final foregroundEpoch = app._sessionProbeEpoch;
+  final terminationGeneration = st.SessionTermination.instance.generation;
+  bool current() => app.authed && app.unlocked &&
+      app._sessionForeground && !app.sessionVerificationBlocked &&
+      app.sessionToken == token && app.vaultId == vaultId &&
+      app.vaultName == vaultName && app.vaultHandle == handle &&
+      app._sessionEpoch == sessionEpoch &&
+      app._sessionProbeEpoch == foregroundEpoch &&
+      st.SessionTermination.instance.generation == terminationGeneration &&
+      !st.SessionTermination.instance.isTerminated &&
+      identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
+      identical(_VaultCrypto._keyCache[_VaultCrypto._ck(vaultId, vaultName)],
+          legacyKey);
+  void requireCurrent() {
+    if (!current()) throw StateError('Vault session changed');
+  }
+  final export = legacy_export.LegacyCiphertextExportClient(
+    proofProvider: () async {
+      requireCurrent();
+      final entered = await promptPin();
+      requireCurrent();
+      if (entered == null || entered.isEmpty) {
+        throw StateError('Local password check canceled');
+      }
+      final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
+        vaultHandle: handle,
+        pin: entered,
+        sessionToken: token,
+      );
+      requireCurrent();
+      return proof.token;
+    },
+    post: (path, body) async {
+      requireCurrent();
+      assertPrivateOnlyPinFreeBody(body);
+      final reply = await _zkHttpPost(path, body, bearerToken: token);
+      requireCurrent();
+      return reply;
+    },
+  );
+  return (
+    export: export,
+    codec: legacy_codec.LegacyCiphertextMigrationCodec(
+      legacyKey: legacyKey, mvk: mvk,
+    ),
+    stillCurrent: current,
+  );
 }
 
 void _scheduleLegacyContentStage({

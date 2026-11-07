@@ -62,6 +62,16 @@ class LegacyCiphertextExportClient {
     idKey: 'item_id',
   );
 
+  Future<List<Map<String, dynamic>>> listItemsBounded({
+    required int maxRecords,
+  }) => _list(
+    mode: 'list_items',
+    afterKey: 'after_item_id',
+    nextKey: 'next_after_item_id',
+    idKey: 'item_id',
+    maxRecords: maxRecords,
+  );
+
   Future<List<Map<String, dynamic>>> listFiles() => _list(
     mode: 'list_files',
     afterKey: 'after_file_id',
@@ -239,8 +249,12 @@ class LegacyCiphertextExportClient {
     required String afterKey,
     required String nextKey,
     required String idKey,
+    int maxRecords = 50000,
   }) async {
     try {
+      if (maxRecords <= 0 || maxRecords > 50000) {
+        throw const FormatException('Invalid export inventory limit');
+      }
       final result = <Map<String, dynamic>>[];
       Object? after;
       for (var pages = 0; pages < 1000; pages++) {
@@ -259,6 +273,9 @@ class LegacyCiphertextExportClient {
             throw const FormatException('Invalid export record');
           }
           result.add(row);
+          if (result.length > maxRecords) {
+            throw const FormatException('Export inventory exceeded limit');
+          }
         }
         if (!hasMore) return result;
         final next = response[nextKey];
