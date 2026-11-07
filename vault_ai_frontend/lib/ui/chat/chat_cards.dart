@@ -371,6 +371,7 @@ class VaultFileListCard extends StatefulWidget {
     final assetType = (raw['asset_type'] as String?)?.trim();
     final size = raw['size_bytes'];
     final payload = <String, dynamic>{
+      if (raw['zk_private_chat_v2'] == true) 'zk_private_chat_v2': true,
       if (relativePath != null && relativePath.isNotEmpty)
         'relative_path': relativePath,
       if (savedName != null && savedName.isNotEmpty) 'saved_name': savedName,

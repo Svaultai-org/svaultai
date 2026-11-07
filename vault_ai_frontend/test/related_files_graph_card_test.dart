@@ -271,6 +271,31 @@ void main() {
   });
 
   group('RelatedFilesGraphCard — tap to open', () {
+    testWidgets('private related file keeps V2-only open marker',
+        (tester) async {
+      ChatMessage? captured;
+      final related = _relationship(
+        fileId: 'private-2', fileName: 'passport-back.jpg',
+        relationshipType: 'similar_saved_name',
+        confidenceLabel: 'weak',
+        reasons: const ['Similar saved name'],
+      );
+      related['file'] = <String, dynamic>{
+        ...((related['file'] as Map).cast<String, dynamic>()),
+        'zk_private_chat_v2': true,
+      };
+      await _pump(
+        tester,
+        msg: _msg(anchor: _anchor(fileName: 'passport-front.jpg'),
+            relationships: [related]),
+        onOpen: (message) => captured = message,
+      );
+      await tester.tap(find.text('passport-back.jpg'));
+      await tester.pumpAndSettle();
+      expect(captured?.fileId, 'private-2');
+      expect(captured?.payload?['zk_private_chat_v2'], true);
+    });
+
     testWidgets(
         'tapping a row fires onOpen with the related file_id (not anchor)',
         (tester) async {

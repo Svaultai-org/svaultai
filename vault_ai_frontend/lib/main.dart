@@ -18145,8 +18145,53 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     if (private_content_guard.blocksZkLegacyContentRoute(
         vaultHandle: app.vaultHandle)) {
-      throw const private_content_guard.PrivateContentSearchUnavailable(
-        private_content_guard.relatedFilesPrivateMessage,
+      if (!kEnableZkPrivateChat && !signedPrivateChatOfferedForToken(token)) {
+        throw const private_content_guard.PrivateContentSearchUnavailable(
+          private_content_guard.relatedFilesPrivateMessage,
+        );
+      }
+      final mvk = zk_mvk_store.ZkActiveMvk.current();
+      final vaultId = app.vaultId;
+      final epoch = app._sessionEpoch;
+      final foregroundEpoch = app._sessionProbeEpoch;
+      final termination = st.SessionTermination.instance.generation;
+      bool currentAccess() => mounted && app.unlocked &&
+          app.sessionToken == token && app.vaultId == vaultId &&
+          app._sessionEpoch == epoch &&
+          app._sessionProbeEpoch == foregroundEpoch &&
+          app._sessionForeground && !app.sessionVerificationBlocked &&
+          vaultId != null && mvk != null &&
+          identical(mvk, zk_mvk_store.ZkActiveMvk.current()) &&
+          zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
+          st.SessionTermination.instance.generation == termination &&
+          !st.SessionTermination.instance.isTerminated;
+      if (!currentAccess()) throw StateError('Vault access changed');
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final index = await zk_chat_index.ZkPrivateChatIndexLoader(
+        mvk: mvk!,
+        accessIsCurrent: currentAccess,
+        get: (path) => client.zkPrivateChatCiphertextGet(
+          authToken: token,
+          path: path,
+          accessGuard: () {
+            if (!currentAccess()) throw StateError('Vault access changed');
+          },
+        ),
+      ).load();
+      if (!currentAccess()) throw StateError('Vault access changed');
+      final anchors = index.files.where((file) => file.id == fileId).toList();
+      if (anchors.length != 1) {
+        throw const private_content_guard.PrivateContentSearchUnavailable(
+          'This file is not available in the private search index.',
+        );
+      }
+      final anchor = anchors.single;
+      return zk_private_chat.ZkLocalFileRelations.envelope(
+        anchor: anchor,
+        matches: zk_private_chat.ZkLocalFileRelations.related(
+          anchor, index.files,
+        ),
+        incomplete: index.incomplete,
       );
     }
     final pin = await _VaultCrypto.currentPinOrThrow();
@@ -18176,21 +18221,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
     _scrollToBottom();
 
-    if (private_content_guard.blocksZkLegacyContentRoute(
-        vaultHandle: app.vaultHandle)) {
-      _appendAssistantMessage(private_content_guard.relatedFilesPrivateMessage);
-      return;
-    }
-
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
-      final client = VaultAIClient(baseUrl: backendBaseUrl);
-      final envelope = await client.fetchRelatedFiles(
-        fileId: fileId,
-        pin: pin,
-        authToken: token,
-        vaultHandle: app.vaultHandle,
-      );
+      final envelope = await _fetchRelatedFilesEnvelope(fileId);
+      if (envelope == null) return;
 
       if (!mounted) return;
 
@@ -20680,6 +20713,26 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             'assistant',
             'I found several matches: $names. Please describe the one you want.',
           );
+        case zk_private_chat.ZkLocalChatDisposition.related:
+          if (selected == null) {
+            answer = _Msg('assistant', 'Select a file first.');
+          } else {
+            final envelope = zk_private_chat.ZkLocalFileRelations.envelope(
+              anchor: selected,
+              matches: local.matches,
+              incomplete: turn.indexIncomplete,
+            );
+            answer = _Msg(
+              'assistant',
+              envelope['message'] as String,
+              kind: ChatMessage.kRelatedFilesGraph,
+              payload: <String, dynamic>{
+                'anchor': envelope['anchor'],
+                'relationships': envelope['relationships'],
+                'count': local.matches.length,
+              },
+            );
+          }
         case zk_private_chat.ZkLocalChatDisposition.needsPrivateIndex:
           answer = _Msg(
             'assistant',

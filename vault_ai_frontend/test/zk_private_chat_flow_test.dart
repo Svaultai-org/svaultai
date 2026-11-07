@@ -6,30 +6,42 @@ import 'package:vault_ai_frontend/services/zk_private_chat_index.dart';
 
 void main() {
   test('flagged ZK chat routes by MVK before any legacy key requirement', () {
-    expect(resolveZkChatEntryRoute(
-      privateChatEnabled: true,
-      hasZkHandle: true,
-      hasMvk: true,
-      mvkMatchesVault: true,
-    ), ZkChatEntryRoute.privateChat);
-    expect(resolveZkChatEntryRoute(
-      privateChatEnabled: true,
-      hasZkHandle: true,
-      hasMvk: false,
-      mvkMatchesVault: false,
-    ), ZkChatEntryRoute.unavailable);
-    expect(resolveZkChatEntryRoute(
-      privateChatEnabled: true,
-      hasZkHandle: true,
-      hasMvk: true,
-      mvkMatchesVault: false,
-    ), ZkChatEntryRoute.unavailable);
-    expect(resolveZkChatEntryRoute(
-      privateChatEnabled: false,
-      hasZkHandle: true,
-      hasMvk: false,
-      mvkMatchesVault: false,
-    ), ZkChatEntryRoute.legacy);
+    expect(
+      resolveZkChatEntryRoute(
+        privateChatEnabled: true,
+        hasZkHandle: true,
+        hasMvk: true,
+        mvkMatchesVault: true,
+      ),
+      ZkChatEntryRoute.privateChat,
+    );
+    expect(
+      resolveZkChatEntryRoute(
+        privateChatEnabled: true,
+        hasZkHandle: true,
+        hasMvk: false,
+        mvkMatchesVault: false,
+      ),
+      ZkChatEntryRoute.unavailable,
+    );
+    expect(
+      resolveZkChatEntryRoute(
+        privateChatEnabled: true,
+        hasZkHandle: true,
+        hasMvk: true,
+        mvkMatchesVault: false,
+      ),
+      ZkChatEntryRoute.unavailable,
+    );
+    expect(
+      resolveZkChatEntryRoute(
+        privateChatEnabled: false,
+        hasZkHandle: true,
+        hasMvk: false,
+        mvkMatchesVault: false,
+      ),
+      ZkChatEntryRoute.legacy,
+    );
   });
 
   test('private chat UI dispatch stays off in an ordinary build', () {
@@ -79,12 +91,14 @@ void main() {
       accessIsCurrent: () => true,
       loadIndex: () async => const ZkPrivateChatIndex(
         savedItems: [],
-        files: [ZkLocalChatRecord(
-          kind: ZkLocalChatKind.file,
-          id: 'text-1',
-          title: 'journal.txt',
-          searchText: 'beach afternoon',
-        )],
+        files: [
+          ZkLocalChatRecord(
+            kind: ZkLocalChatKind.file,
+            id: 'text-1',
+            title: 'journal.txt',
+            searchText: 'beach afternoon',
+          ),
+        ],
         incomplete: false,
       ),
       sendGeneral: (_, __) async {
@@ -99,35 +113,133 @@ void main() {
     expect(generalCalls, 0);
   });
 
-  test('contextual follow-up after private lookup cannot reach general AI',
-      () async {
-    var generalCalls = 0;
-    final flow = ZkPrivateChatFlow(
-      accessIsCurrent: () => true,
-      loadIndex: () async => const ZkPrivateChatIndex(
-        savedItems: [],
-        files: [ZkLocalChatRecord(
-          kind: ZkLocalChatKind.file,
-          id: 'photo-red',
-          title: 'red coat photo.jpg',
-          mediaKind: ZkLocalMediaKind.photo,
-        )],
+  test(
+    'contextual follow-up after private lookup cannot reach general AI',
+    () async {
+      var generalCalls = 0;
+      final flow = ZkPrivateChatFlow(
+        accessIsCurrent: () => true,
+        loadIndex: () async => const ZkPrivateChatIndex(
+          savedItems: [],
+          files: [
+            ZkLocalChatRecord(
+              kind: ZkLocalChatKind.file,
+              id: 'photo-red',
+              title: 'red coat photo.jpg',
+              mediaKind: ZkLocalMediaKind.photo,
+            ),
+          ],
+          incomplete: false,
+        ),
+        sendGeneral: (_, __) async {
+          generalCalls++;
+          return 'unexpected general reply';
+        },
+      );
+      final found = await flow.run('Find my red coat photo');
+      expect(found.local.selection?.id, 'photo-red');
+      final followUp = await flow.run('What about that one?');
+      expect(followUp.local.disposition, isNot(ZkLocalChatDisposition.general));
+      expect(generalCalls, 0);
+      final unrelated = await flow.run('What is encryption?');
+      expect(unrelated.local.disposition, ZkLocalChatDisposition.general);
+      expect(generalCalls, 1);
+    },
+  );
+
+  test(
+    'ambiguous second-result follow-up stays local and selects exact ID',
+    () async {
+      var generalCalls = 0;
+      final flow = ZkPrivateChatFlow(
+        accessIsCurrent: () => true,
+        loadIndex: () async => const ZkPrivateChatIndex(
+          savedItems: [],
+          files: [
+            ZkLocalChatRecord(
+              kind: ZkLocalChatKind.file,
+              id: 'one',
+              title: 'beach sunrise.jpg',
+              mediaKind: ZkLocalMediaKind.photo,
+            ),
+            ZkLocalChatRecord(
+              kind: ZkLocalChatKind.file,
+              id: 'two',
+              title: 'beach sunset.jpg',
+              mediaKind: ZkLocalMediaKind.photo,
+            ),
+          ],
+          incomplete: false,
+        ),
+        sendGeneral: (_, __) async {
+          generalCalls++;
+          return 'should not be called';
+        },
+      );
+      final initial = await flow.run('Find my beach photo');
+      expect(initial.local.disposition, ZkLocalChatDisposition.ambiguous);
+      final selected = await flow.run('show the second one');
+      expect(selected.local.selection?.id, 'two');
+      expect(generalCalls, 0);
+      flow.clear();
+      final stale = await flow.run('show the second one');
+      expect(stale.local.disposition, ZkLocalChatDisposition.notFound);
+      expect(generalCalls, 0);
+    },
+  );
+
+  test(
+    'related-file follow-up uses selected local file, never general AI',
+    () async {
+      var generalCalls = 0;
+      final flow = ZkPrivateChatFlow(
+        accessIsCurrent: () => true,
+        loadIndex: () async => const ZkPrivateChatIndex(
+          savedItems: [],
+          files: [
+            ZkLocalChatRecord(
+              kind: ZkLocalChatKind.file,
+              id: 'front',
+              title: 'passport front.jpg',
+              searchText: 'PRIVATE SENTINEL',
+              mediaKind: ZkLocalMediaKind.photo,
+            ),
+            ZkLocalChatRecord(
+              kind: ZkLocalChatKind.file,
+              id: 'back',
+              title: 'passport back.jpg',
+              mediaKind: ZkLocalMediaKind.photo,
+            ),
+            ZkLocalChatRecord(
+              kind: ZkLocalChatKind.file,
+              id: 'other',
+              title: 'beach.jpg',
+              mediaKind: ZkLocalMediaKind.photo,
+            ),
+          ],
+          incomplete: false,
+        ),
+        sendGeneral: (_, __) async {
+          generalCalls++;
+          return 'should not be called';
+        },
+      );
+      final selected = await flow.run('Find my passport front photo');
+      expect(selected.local.selection?.id, 'front');
+      final related = await flow.run('show related files');
+      expect(related.local.disposition, ZkLocalChatDisposition.related);
+      expect(related.local.selection?.id, 'front');
+      expect(related.local.matches.map((e) => e.id), ['back']);
+      final envelope = ZkLocalFileRelations.envelope(
+        anchor: related.local.selection!,
+        matches: related.local.matches,
         incomplete: false,
-      ),
-      sendGeneral: (_, __) async {
-        generalCalls++;
-        return 'unexpected general reply';
-      },
-    );
-    final found = await flow.run('Find my red coat photo');
-    expect(found.local.selection?.id, 'photo-red');
-    final followUp = await flow.run('What about that one?');
-    expect(followUp.local.disposition, isNot(ZkLocalChatDisposition.general));
-    expect(generalCalls, 0);
-    final unrelated = await flow.run('What is encryption?');
-    expect(unrelated.local.disposition, ZkLocalChatDisposition.general);
-    expect(generalCalls, 1);
-  });
+      );
+      expect(envelope.toString(), isNot(contains('PRIVATE SENTINEL')));
+      expect(envelope['is_complete'], true);
+      expect(generalCalls, 0);
+    },
+  );
 
   test('general AI history excludes every private turn', () async {
     final received = <List<ZkGeneralChatTurn>>[];
@@ -148,8 +260,10 @@ void main() {
     await flow.run('How does encryption work?');
     expect(received, hasLength(2));
     expect(received.first, isEmpty);
-    expect(received.last.map((turn) => turn.content).toList(),
-        ['What is encryption?', 'Answer about What is encryption?']);
+    expect(received.last.map((turn) => turn.content).toList(), [
+      'What is encryption?',
+      'Answer about What is encryption?',
+    ]);
   });
 
   test('mutation stops before index and network requests', () async {

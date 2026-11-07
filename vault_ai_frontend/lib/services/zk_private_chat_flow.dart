@@ -41,6 +41,7 @@ class ZkPrivateChatFlow {
   final bool Function() accessIsCurrent;
   final List<ZkGeneralChatTurn> _generalHistory = [];
   ZkLocalChatRecord? _selection;
+  List<ZkLocalChatRecord> _previousMatches = const [];
   bool _lastTurnWasPrivate = false;
 
   ZkPrivateChatFlow({
@@ -51,6 +52,7 @@ class ZkPrivateChatFlow {
 
   void clear() {
     _selection = null;
+    _previousMatches = const [];
     _lastTurnWasPrivate = false;
     _generalHistory.clear();
   }
@@ -61,9 +63,13 @@ class ZkPrivateChatFlow {
     }
   }
 
-  Future<ZkPrivateChatTurn> run(String prompt, {bool forcePrivate = false}) async {
+  Future<ZkPrivateChatTurn> run(
+    String prompt, {
+    bool forcePrivate = false,
+  }) async {
     _checkAccess();
-    final keepPrivateContext = _lastTurnWasPrivate &&
+    final keepPrivateContext =
+        _lastTurnWasPrivate &&
         ZkLocalChatRouter.referencesPreviousPrivateResult(prompt);
     final effectiveForcePrivate = forcePrivate || keepPrivateContext;
     final preliminary = ZkLocalChatRouter.resolve(
@@ -71,6 +77,7 @@ class ZkPrivateChatFlow {
       savedItems: const [],
       files: const [],
       previousSelection: _selection,
+      previousMatches: _previousMatches,
       forcePrivate: effectiveForcePrivate,
     );
     if (preliminary.disposition == ZkLocalChatDisposition.unsupportedAction) {
@@ -85,6 +92,8 @@ class ZkPrivateChatFlow {
       _generalHistory.add(ZkGeneralChatTurn(role: 'user', content: prompt));
       _generalHistory.add(ZkGeneralChatTurn(role: 'assistant', content: reply));
       _lastTurnWasPrivate = false;
+      _selection = null;
+      _previousMatches = const [];
       while (_generalHistory.length > 10) {
         _generalHistory.removeAt(0);
       }
@@ -98,15 +107,18 @@ class ZkPrivateChatFlow {
       savedItems: index.savedItems,
       files: index.files,
       previousSelection: _selection,
+      previousMatches: _previousMatches,
       forcePrivate: effectiveForcePrivate,
     );
     _lastTurnWasPrivate = true;
-    _selection = result.disposition == ZkLocalChatDisposition.found
+    _selection =
+        result.disposition == ZkLocalChatDisposition.found ||
+            result.disposition == ZkLocalChatDisposition.related
         ? result.selection
         : null;
-    return ZkPrivateChatTurn(
-      local: result,
-      indexIncomplete: index.incomplete,
-    );
+    _previousMatches = result.disposition == ZkLocalChatDisposition.ambiguous
+        ? List<ZkLocalChatRecord>.unmodifiable(result.matches)
+        : const [];
+    return ZkPrivateChatTurn(local: result, indexIncomplete: index.incomplete);
   }
 }
