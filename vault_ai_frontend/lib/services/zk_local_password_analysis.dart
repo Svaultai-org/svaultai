@@ -259,23 +259,28 @@ ZkLocalPasswordAnalysis analyzeZkPasswords({
 Future<ZkLocalPasswordAnalysis> loadAndAnalyzeMixedZkPasswords({
   required Future<List<Map<String, dynamic>>> Function() fetchMetadata,
   required Future<Map<String, dynamic>> Function() fetchV2Items,
-  required ({
+  required Future<({
     LegacyCiphertextExportClient export,
     LegacyCiphertextMigrationCodec codec,
-  }) Function() createLegacySource,
+    bool Function() stillCurrent,
+    void Function() close,
+  })> Function() createLegacySource,
   required bool Function() stillCurrent,
 }) async {
   if (!stillCurrent()) throw StateError('Vault session changed');
   ({
     LegacyCiphertextExportClient export,
     LegacyCiphertextMigrationCodec codec,
+    bool Function() stillCurrent,
+    void Function() close,
   })? source;
+  bool current() => stillCurrent() && (source?.stillCurrent() ?? true);
   try {
     final metadata = await fetchMetadata();
-    if (!stillCurrent()) throw StateError('Vault session changed');
+    if (!current()) throw StateError('Vault session changed');
     if (metadata.length > 1000) throw const ZkPasswordAnalysisIncomplete();
     final v2Response = await fetchV2Items();
-    if (!stillCurrent()) throw StateError('Vault session changed');
+    if (!current()) throw StateError('Vault session changed');
     final rawV2 = v2Response['items'];
     if (rawV2 is! List) throw const ZkPasswordAnalysisIncomplete();
     final v2Items = rawV2.map<Map<String, dynamic>>((value) {
@@ -297,11 +302,12 @@ Future<ZkLocalPasswordAnalysis> loadAndAnalyzeMixedZkPasswords({
     // legacy source even if an unready V2 envelope is visible to the API.
     v2Items.removeWhere((row) => needsLegacy.contains(_itemId(row)));
     if (needsLegacy.isNotEmpty) {
-      source = createLegacySource();
+      source = await createLegacySource();
+      if (!current()) throw StateError('Vault session changed');
       final export = source.export;
       final codec = source.codec;
       final inventory = await export.listItemsBounded(maxRecords: 1000);
-      if (!stillCurrent()) throw StateError('Vault session changed');
+      if (!current()) throw StateError('Vault session changed');
       final listed = <int, Map<String, dynamic>>{};
       for (final item in inventory) {
         final id = _itemId(item);
@@ -329,7 +335,7 @@ Future<ZkLocalPasswordAnalysis> loadAndAnalyzeMixedZkPasswords({
           itemId: id,
           ciphertextChars: chars,
         );
-        if (!stillCurrent()) throw StateError('Vault session changed');
+        if (!current()) throw StateError('Vault session changed');
         if (source.ciphertext.length != chars ||
             source.sourceMetadata['item_type'] != row['item_type'] ||
             source.sourceMetadata['service'] != row['service'] ||
@@ -337,7 +343,7 @@ Future<ZkLocalPasswordAnalysis> loadAndAnalyzeMixedZkPasswords({
           throw const ZkPasswordAnalysisIncomplete();
         }
         final record = await codec.decodeLegacyItem(source.ciphertext);
-        if (!stillCurrent()) throw StateError('Vault session changed');
+        if (!current()) throw StateError('Vault session changed');
         const envelopeKeys = <String>{'category', 'title', 'fields', 'item_id'};
         final envelope = envelopeKeys.any(record.containsKey);
         final fields = envelope ? record['fields'] : record;
@@ -364,10 +370,10 @@ Future<ZkLocalPasswordAnalysis> loadAndAnalyzeMixedZkPasswords({
       decryptedItems: v2Items,
       allowVerifiedLegacyLocal: true,
     );
-    if (!stillCurrent()) throw StateError('Vault session changed');
+    if (!current()) throw StateError('Vault session changed');
     return result;
   } finally {
-    source?.export.clearGrant();
+    source?.close();
   }
 }
 

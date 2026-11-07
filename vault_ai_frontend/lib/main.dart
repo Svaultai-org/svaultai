@@ -5449,14 +5449,15 @@ void _scheduleMetadataMigration({required AppState app}) {
   ));
 }
 
-({
+Future<({
   legacy_export.LegacyCiphertextExportClient export,
   legacy_codec.LegacyCiphertextMigrationCodec codec,
   bool Function() stillCurrent,
-}) createLocalLegacyPasswordSourceForActiveVault(
+  void Function() close,
+})> createLocalLegacyPasswordSourceForActiveVault(
   AppState app, {
   required Future<String?> Function() promptPin,
-}) {
+}) async {
   final token = app.sessionToken;
   final vaultId = app.vaultId;
   final vaultName = app.vaultName;
@@ -5467,12 +5468,6 @@ void _scheduleMetadataMigration({required AppState app}) {
       !app.authed || !app.unlocked || !app._sessionForeground ||
       app.sessionVerificationBlocked) {
     throw StateError('Unlock this vault before checking older passwords');
-  }
-  final legacyKey = _VaultCrypto._keyCache[
-    _VaultCrypto._ck(vaultId, vaultName)
-  ];
-  if (legacyKey == null) {
-    throw StateError('Older vault key is unavailable');
   }
   final sessionEpoch = app._sessionEpoch;
   final foregroundEpoch = app._sessionProbeEpoch;
@@ -5485,43 +5480,55 @@ void _scheduleMetadataMigration({required AppState app}) {
       app._sessionProbeEpoch == foregroundEpoch &&
       st.SessionTermination.instance.generation == terminationGeneration &&
       !st.SessionTermination.instance.isTerminated &&
-      identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
-      identical(_VaultCrypto._keyCache[_VaultCrypto._ck(vaultId, vaultName)],
-          legacyKey);
+      zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
+      identical(zk_mvk_store.ZkActiveMvk.current(), mvk);
   void requireCurrent() {
     if (!current()) throw StateError('Vault session changed');
   }
-  final export = legacy_export.LegacyCiphertextExportClient(
-    proofProvider: () async {
+  final action = ephemeral_file.EphemeralLegacyFileAction(
+    promptPin: promptPin,
+    verifyPin: (pin) {
       requireCurrent();
-      final entered = await promptPin();
-      requireCurrent();
-      if (entered == null || entered.isEmpty) {
-        throw StateError('Local password check canceled');
-      }
-      final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
-        vaultHandle: handle,
-        pin: entered,
-        sessionToken: token,
-      );
-      requireCurrent();
-      return proof.token;
+      return _zkActionProof(app, token, pin);
     },
-    post: (path, body) async {
-      requireCurrent();
-      assertPrivateOnlyPinFreeBody(body);
-      final reply = await _zkHttpPost(path, body, bearerToken: token);
-      requireCurrent();
-      return reply;
-    },
-  );
-  return (
-    export: export,
-    codec: legacy_codec.LegacyCiphertextMigrationCodec(
-      legacyKey: legacyKey, mvk: mvk,
+    deriveKey: (pin) => _ephemeralLegacyContentKey(
+      app: app, token: token, vaultId: vaultId, pin: pin,
+      accessIsCurrent: current,
     ),
-    stillCurrent: current,
+    accessIsCurrent: current,
   );
+  try {
+    final legacyKey = await action.open();
+    requireCurrent();
+    final export = legacy_export.LegacyCiphertextExportClient(
+      proofProvider: action.proof,
+      post: (path, body) async {
+        if (path != '/vault/legacy-ciphertext/export/start' &&
+            path != '/vault/legacy-ciphertext/export/page') {
+          throw StateError('Unsupported older password export route');
+        }
+        requireCurrent();
+        assertPrivateOnlyPinFreeBody(body);
+        final reply = await _zkHttpPost(path, body, bearerToken: token);
+        requireCurrent();
+        return reply;
+      },
+    );
+    return (
+      export: export,
+      codec: legacy_codec.LegacyCiphertextMigrationCodec(
+        legacyKey: legacyKey, mvk: mvk,
+      ),
+      stillCurrent: current,
+      close: () {
+        export.clearGrant();
+        action.close();
+      },
+    );
+  } catch (_) {
+    action.close();
+    rethrow;
+  }
 }
 
 void _scheduleLegacyContentStage({

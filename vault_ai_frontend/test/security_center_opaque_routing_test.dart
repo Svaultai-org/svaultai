@@ -13,6 +13,12 @@ void main() {
       useLocalZkPasswordAnalysis(hasZkHandle: true, hasMvk: false),
       isTrue,
     );
+    // A private key without a recovered handle must also stay out of the
+    // server analyzer. The local path can report that the vault is locked.
+    expect(
+      useLocalZkPasswordAnalysis(hasZkHandle: false, hasMvk: true),
+      isTrue,
+    );
   });
 
   test('older vault without OPAQUE keeps its current compatibility path', () {

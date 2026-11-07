@@ -97,6 +97,18 @@ void main() {
     ];
   });
 
+  Future<({
+    LegacyCiphertextExportClient export,
+    LegacyCiphertextMigrationCodec codec,
+    bool Function() stillCurrent,
+    void Function() close,
+  })> createSource() async => (
+        export: export,
+        codec: codec,
+        stillCurrent: () => true,
+        close: export.clearGrant,
+      );
+
   test(
     'analyzes an older password locally, including a staged V2 copy',
     () async {
@@ -107,7 +119,7 @@ void main() {
             <String, dynamic>{'id': 7, 'storage_engine': 'ciphertext'},
           ],
         },
-      createLegacySource: () => (export: export, codec: codec),
+      createLegacySource: createSource,
         stillCurrent: () => true,
       );
       expect(result.analyzedCount, 1);
@@ -125,7 +137,7 @@ void main() {
       loadAndAnalyzeMixedZkPasswords(
         fetchMetadata: () async => metadata,
         fetchV2Items: () async => <String, dynamic>{'items': []},
-        createLegacySource: () => (export: export, codec: codec),
+        createLegacySource: createSource,
         stillCurrent: () => true,
       ),
       throwsA(isA<ZkPasswordAnalysisIncomplete>()),
@@ -139,7 +151,7 @@ void main() {
       loadAndAnalyzeMixedZkPasswords(
         fetchMetadata: () async => metadata,
         fetchV2Items: () async => <String, dynamic>{'items': []},
-        createLegacySource: () => (export: export, codec: codec),
+        createLegacySource: createSource,
         stillCurrent: () => true,
       ),
       throwsA(isA<ZkPasswordAnalysisIncomplete>()),
@@ -154,8 +166,28 @@ void main() {
       loadAndAnalyzeMixedZkPasswords(
         fetchMetadata: () async => metadata,
         fetchV2Items: () async => <String, dynamic>{'items': []},
-        createLegacySource: () => (export: export, codec: codec),
+        createLegacySource: createSource,
         stillCurrent: () => current,
+      ),
+      throwsStateError,
+    );
+    expect(export.cleared, isTrue);
+  });
+
+  test('one-action key loss after export refuses a result', () async {
+    var actionCurrent = true;
+    export.onList = () => actionCurrent = false;
+    await expectLater(
+      loadAndAnalyzeMixedZkPasswords(
+        fetchMetadata: () async => metadata,
+        fetchV2Items: () async => <String, dynamic>{'items': []},
+        createLegacySource: () async => (
+          export: export,
+          codec: codec,
+          stillCurrent: () => actionCurrent,
+          close: export.clearGrant,
+        ),
+        stillCurrent: () => true,
       ),
       throwsStateError,
     );
@@ -180,7 +212,7 @@ void main() {
           'fields': <String, dynamic>{'password': 'synthetic-private-123'},
         },
       ]},
-      createLegacySource: () {
+      createLegacySource: () async {
         requestedOlderKey = true;
         throw StateError('Older key should not be requested');
       },

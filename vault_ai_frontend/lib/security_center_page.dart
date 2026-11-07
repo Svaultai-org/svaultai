@@ -15,20 +15,13 @@ import 'main.dart' show AppState, backendBaseUrl,
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/zk_local_password_analysis.dart';
 
-// Coordinated with the trusted-device metadata inventory and MVK V2 reader.
-// Kept off until every supported saved item can be read in the private format.
-const bool kEnableZkSecurityLocalAnalyze = bool.fromEnvironment(
-  'VAULTAI_ENABLE_ZK_SECURITY_LOCAL_ANALYZE',
-  defaultValue: false,
-);
-
 // OPAQUE vaults analyze passwords locally. Older ciphertext is exported under
 // a one-use proof and decrypted on the owner device.
 bool useLocalZkPasswordAnalysis({
   required bool hasZkHandle,
   required bool hasMvk,
 }) =>
-    hasZkHandle || (kEnableZkSecurityLocalAnalyze && hasMvk);
+    hasZkHandle || hasMvk;
 
 class SecurityCenterPage extends StatefulWidget {
   const SecurityCenterPage({super.key});
@@ -486,6 +479,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
     }
     bool stillCurrent() =>
         mounted &&
+        app.authed && app.unlocked && !app.sessionVerificationBlocked &&
         app.sessionToken == token &&
         app.vaultId == vaultId &&
         identical(zk_mvk_store.ZkActiveMvk.current(), mvk);
@@ -512,15 +506,24 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
                   _client.listZkItemMetadataRaw(authToken: token),
               fetchV2Items: () =>
                   _client.listZkVaultItemsOnly(authToken: token),
-              createLegacySource: () {
-                final source = createLocalLegacyPasswordSourceForActiveVault(
+              createLegacySource: () async {
+                final source = await createLocalLegacyPasswordSourceForActiveVault(
                   app,
-                  promptPin: () => promptForLocalSecurityCheckPin(context),
+                  promptPin: () {
+                    if (!mounted) throw StateError('Vault session changed');
+                    return promptForLocalSecurityCheckPin(context);
+                  },
                 );
                 if (!source.stillCurrent()) {
+                  source.close();
                   throw StateError('Vault session changed');
                 }
-                return (export: source.export, codec: source.codec);
+                return (
+                  export: source.export,
+                  codec: source.codec,
+                  stillCurrent: source.stillCurrent,
+                  close: source.close,
+                );
               },
               stillCurrent: stillCurrent,
             );
@@ -552,7 +555,8 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
 
   Widget _localZkPasswordSection() {
     final app = context.read<AppState>();
-    final sameVault = _localAnalysisToken == app.sessionToken &&
+    final sameVault = app.unlocked &&
+        _localAnalysisToken == app.sessionToken &&
         _localAnalysisVaultId == app.vaultId;
     final result = sameVault ? _localPasswordAnalysis : null;
     final error = sameVault ? _localPasswordError : null;
