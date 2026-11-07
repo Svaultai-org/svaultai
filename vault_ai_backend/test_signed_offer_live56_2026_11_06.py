@@ -65,20 +65,22 @@ def test_live_legacy_bearer_unchanged_and_v3_bits_authenticated():
         auth_local.sign_opaque_read_offer_token(old, 32)
 
 
-def test_signed_routes_block_only_offered_reads_and_new_upload_starts():
+def test_signed_routes_block_only_offered_reads_and_old_upload_actions():
     for bit, blocked in (
         (1, {"/list-secure-items", "/get-secure-item"}),
         (2, {"/list-files", "/files/synthetic/related"}),
         (4, {"/download-file", "/download-file/manifest",
              "/files/synthetic/related"}),
-        (8, {"/upload-file", "/upload-file/init"}),
+        (8, {"/upload-file", "/upload-file/init",
+             "/upload-file/finalize", "/upload-file/abort"}),
     ):
         principal = {"pin_free_read_offers": bit}
         for path in ("/list-secure-items", "/get-secure-item", "/list-files",
                      "/download-file", "/download-file/manifest",
                      "/files/synthetic/related", "/upload-file",
                      "/upload-file/init", "/upload-file/finalize",
-                     "/upload-file/abort", "/name-file"):
+                     "/upload-file/abort", "/upload-file/finalize-token",
+                     "/upload-file/abort-token", "/name-file"):
             if path in blocked:
                 with pytest.raises(HTTPException) as exc:
                     auth_local.require_signed_offer_route(principal, path=path)
@@ -108,8 +110,13 @@ def test_verifier_enforces_signed_bit_despite_issuance_flag_off(monkeypatch):
             ))
         assert exc.value.status_code == 409
         assert exc.value.detail == "pin_free_file_create_required"
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(auth_local.verify_session_token(
+                request(signed, "/upload-file/finalize"),
+            ))
+        assert exc.value.status_code == 409
         assert asyncio.run(auth_local.verify_session_token(
-            request(signed, "/upload-file/finalize"),
+            request(signed, "/upload-file/finalize-token"),
         ))["pin_free_read_offers"] == 8
         assert asyncio.run(auth_local.verify_session_token(
             request(old, "/upload-file"),

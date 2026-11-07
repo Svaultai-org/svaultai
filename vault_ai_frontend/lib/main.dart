@@ -15734,8 +15734,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       final fin = await client.finalizeChunkedUpload(
         authToken: authToken,
-        vaultName: vaultName,
-        pin: pin,
+        uploadToken: uploadToken,
         fileId: fileId,
       );
 
@@ -15751,8 +15750,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       try {
         await client.abortChunkedUpload(
           authToken: authToken,
-          vaultName: vaultName,
-          pin: pin,
+          uploadToken: uploadToken,
           fileId: fileId,
         );
       } catch (_) {}

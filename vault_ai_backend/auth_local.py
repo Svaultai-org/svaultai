@@ -783,7 +783,8 @@ def require_signed_offer_route(principal: SessionPrincipal, *, path: str) -> Non
              path.count("/") == 3)):
         raise HTTPException(status_code=409,
                             detail="pin_free_private_chat_required")
-    if (path in ("/upload-file", "/upload-file/init") and
+    if (path in ("/upload-file", "/upload-file/init",
+                 "/upload-file/finalize", "/upload-file/abort") and
             offers & PIN_FREE_FILE_CREATE_OFFER):
         raise HTTPException(status_code=409, detail="pin_free_file_create_required")
     blocked_read = (

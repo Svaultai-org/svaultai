@@ -295,7 +295,10 @@ void assertOfferedReadPinFreeRequest(
     _ when RegExp(r'^/files/[^/]+/related$').hasMatch(path) =>
       (signedOffers & 518) != 0 || fileSession.listOfferedForToken(token) ||
           fileSession.downloadOfferedForToken(token),
-    '/upload-file' || '/upload-file/init' => (signedOffers & 8) != 0,
+    '/upload-file' || '/upload-file/init' || '/upload-file/chunk' ||
+    '/upload-file/finalize' || '/upload-file/abort' ||
+    '/upload-file/finalize-token' || '/upload-file/abort-token' =>
+      (signedOffers & 8) != 0,
     '/security-center/analyze-passwords' => (signedOffers & 16) != 0,
     _ => false,
   };
@@ -5299,20 +5302,21 @@ class VaultAIClient {
 
   Future<Map<String, dynamic>> finalizeChunkedUpload({
     required String authToken,
-    required String vaultName,
-    required String pin,
+    required String uploadToken,
     required String fileId,
   }) async {
-    _rejectLegacyFilePinForActiveZk();
-    final uri = Uri.parse('$baseUrl/upload-file/finalize');
+    if (fileId.isEmpty || fileId.length > 128 ||
+        uploadToken.length < 32 || uploadToken.length > 1024) {
+      throw const FormatException('Invalid pending upload identity');
+    }
+    final uri = Uri.parse('$baseUrl/upload-file/finalize-token');
 
     final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': '',
-        'pin': pin,
         'file_id': fileId,
+        'upload_token': uploadToken,
       }),
     );
 
@@ -5336,20 +5340,21 @@ class VaultAIClient {
 
   Future<Map<String, dynamic>> abortChunkedUpload({
     required String authToken,
-    required String vaultName,
-    required String pin,
+    required String uploadToken,
     required String fileId,
   }) async {
-    _rejectLegacyFilePinForActiveZk();
-    final uri = Uri.parse('$baseUrl/upload-file/abort');
+    if (fileId.isEmpty || fileId.length > 128 ||
+        uploadToken.length < 32 || uploadToken.length > 1024) {
+      throw const FormatException('Invalid pending upload identity');
+    }
+    final uri = Uri.parse('$baseUrl/upload-file/abort-token');
 
     final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': '',
-        'pin': pin,
         'file_id': fileId,
+        'upload_token': uploadToken,
       }),
     );
 

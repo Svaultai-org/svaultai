@@ -60,6 +60,8 @@ def _header(token: str) -> list[tuple[bytes, bytes]]:
     (6, "/download-file/manifest", "pin_free_read_required"),
     (8, "/upload-file", "pin_free_file_create_required"),
     (8, "/upload-file/init", "pin_free_file_create_required"),
+    (8, "/upload-file/finalize", "pin_free_file_create_required"),
+    (8, "/upload-file/abort", "pin_free_file_create_required"),
     (16, "/security-center/analyze-passwords",
      "pin_free_password_analysis_required"),
     (519, "/files/synthetic/related", "pin_free_private_chat_required"),
@@ -89,7 +91,8 @@ def test_pin_free_successors_and_unoffered_routes_remain_available():
         "/vault/legacy-file/chunked/manifest", "/download-file/chunk",
         "/vault/file-v2/manifest", "/vault/file-v2/chunk",
         "/vault/file-v2/synthetic/publish-new", "/vault/file-v2/synthetic",
-        "/upload-file/chunk", "/upload-file/finalize", "/upload-file/abort",
+        "/upload-file/chunk", "/upload-file/finalize-token",
+        "/upload-file/abort-token",
     ):
         assert asyncio.run(_probe(path, _header(offered))) == (1, 200, b"ok")
     assert asyncio.run(_probe("/download-file", _header(offered),

@@ -68,7 +68,8 @@ def _replaced_pin_route(path: str, offers: int) -> str | None:
              _RELATED_FILE.fullmatch(path))):
         return "pin_free_read_required"
     if (offers & PIN_FREE_FILE_CREATE_OFFER and
-            path in ("/upload-file", "/upload-file/init")):
+            path in ("/upload-file", "/upload-file/init",
+                     "/upload-file/finalize", "/upload-file/abort")):
         return "pin_free_file_create_required"
     return None
 
@@ -78,7 +79,8 @@ def _candidate_pin_path(path: str) -> bool:
     return (_replaced_private_chat_path(path) or
             path == "/security-center/analyze-passwords" or
             path in ("/list-files", "/download-file", "/download-file/manifest",
-                     "/upload-file", "/upload-file/init"))
+                     "/upload-file", "/upload-file/init",
+                     "/upload-file/finalize", "/upload-file/abort"))
 
 
 class SignedPrivateChatPreBodyGate:

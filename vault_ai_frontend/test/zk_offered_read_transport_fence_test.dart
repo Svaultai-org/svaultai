@@ -132,6 +132,11 @@ void main() {
       '/download-file',
       '/upload-file',
       '/upload-file/init',
+      '/upload-file/chunk',
+      '/upload-file/finalize',
+      '/upload-file/abort',
+      '/upload-file/finalize-token',
+      '/upload-file/abort-token',
     ]) {
       expect(
         () => assertOfferedReadPinFreeRequest(
@@ -142,15 +147,17 @@ void main() {
         throwsStateError,
       );
     }
-    // Finishing or aborting an upload begun before the offer remains usable.
+    // A previously initialized upload keeps its file ID and token, so its
+    // PIN-free completion routes remain available after the offer.
     for (final path in <String>[
-      '/upload-file/finalize',
-      '/upload-file/abort',
+      '/upload-file/chunk',
+      '/upload-file/finalize-token',
+      '/upload-file/abort-token',
     ]) {
       assertOfferedReadPinFreeRequest(
         Uri.parse('https://synthetic.example$path'),
         offeredHeaders,
-        body: <String, String>{'pin': pinMarker},
+        body: <String, String>{'upload_token': 'synthetic-upload-token'},
       );
     }
   });
@@ -182,6 +189,7 @@ void main() {
   test('actual multipart and chunk-init uploads cannot send PIN after offer',
       () async {
     final offeredToken = signedToken(8);
+    SessionTermination.instance.bindSession(offeredToken);
     final sent = <http.Request>[];
     final client = VaultAIClient(
       baseUrl: 'https://synthetic.example',

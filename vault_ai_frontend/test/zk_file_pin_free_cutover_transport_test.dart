@@ -56,18 +56,6 @@ void main() {
           totalBytes: 1,
           chunkSize: 1,
         ),
-        () => client.finalizeChunkedUpload(
-          vaultName: '',
-          pin: '123456',
-          authToken: 'synthetic-session',
-          fileId: 'synthetic-file',
-        ),
-        () => client.abortChunkedUpload(
-          vaultName: '',
-          pin: '123456',
-          authToken: 'synthetic-session',
-          fileId: 'synthetic-file',
-        ),
         () => client.uploadVaultFile(
           vaultName: '',
           pin: '123456',
@@ -105,6 +93,56 @@ void main() {
       'vault_name': '',
       'pin': '123456',
     });
+  });
+
+  test('pending chunk ID completes and aborts with its upload token only',
+      () async {
+    final requests = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        return http.Response(
+          jsonEncode(<String, dynamic>{
+            'status': 'complete',
+            'file_id': 'synthetic-pending-file',
+          }),
+          200,
+        );
+      }),
+    );
+    const token = 'synthetic-upload-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    await client.finalizeChunkedUpload(
+      authToken: 'synthetic-session',
+      fileId: 'synthetic-pending-file',
+      uploadToken: token,
+    );
+    await client.abortChunkedUpload(
+      authToken: 'synthetic-session',
+      fileId: 'synthetic-pending-file',
+      uploadToken: token,
+    );
+    expect(requests.map((request) => request.url.path), <String>[
+      '/upload-file/finalize-token',
+      '/upload-file/abort-token',
+    ]);
+    for (final request in requests) {
+      expect(request.method, 'POST');
+      expect(jsonDecode(request.body), <String, dynamic>{
+        'file_id': 'synthetic-pending-file',
+        'upload_token': token,
+      });
+      expect(request.body, isNot(contains('pin')));
+    }
+    await expectLater(
+      client.finalizeChunkedUpload(
+        authToken: 'synthetic-session',
+        fileId: 'synthetic-pending-file',
+        uploadToken: '123456',
+      ),
+      throwsFormatException,
+    );
+    expect(requests, hasLength(2));
   });
 
   test('ZK V2 inventory sends only a trusted session GET', () async {

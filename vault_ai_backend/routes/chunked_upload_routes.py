@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from psycopg2.extras import RealDictCursor
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from auth_local import verify_session_token
 from device_gate import verify_trusted_device
@@ -72,6 +72,13 @@ class ChunkAbortRequest(BaseModel):
     vault_name: str
     pin: str
     file_id: str
+
+
+class ChunkActionTokenRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    file_id: str = Field(min_length=1, max_length=128)
+    upload_token: str = Field(min_length=1, max_length=1024)
 
 
 def _sweep_stale_uploads_for(cursor, vault_id: str) -> None:
@@ -536,6 +543,27 @@ async def upload_file_finalize(
 ):
     vault_id = principal["vault_id"]
     verify_vault_pin(vault_id, payload.pin)
+    return await _finalize_pending_chunk_upload(
+        vault_id=vault_id, file_id=payload.file_id,
+    )
+
+
+@router.post("/upload-file/finalize-token")
+async def upload_file_finalize_token(
+    payload: ChunkActionTokenRequest,
+    principal=Depends(verify_trusted_device),
+):
+    vault_id = principal["vault_id"]
+    verify_chunk_token(
+        payload.upload_token, kind="upload", vault_id=vault_id,
+        file_id=payload.file_id,
+    )
+    return await _finalize_pending_chunk_upload(
+        vault_id=vault_id, file_id=payload.file_id,
+    )
+
+
+async def _finalize_pending_chunk_upload(*, vault_id: str, file_id: str):
 
     conn = get_db()
     try:
@@ -550,7 +578,7 @@ async def upload_file_finalize(
             WHERE id = %s AND vault_id = %s
             FOR UPDATE
             """,
-            (payload.file_id, vault_id),
+            (file_id, vault_id),
         )
         row = cur.fetchone()
         if not row:
@@ -563,7 +591,7 @@ async def upload_file_finalize(
             conn.rollback()
             return {
                 "status": "already_finalized",
-                "file_id": payload.file_id,
+                "file_id": file_id,
                 "chunk_count": int(row["chunk_count"] or 0),
                 "file_size": int(row["file_size"] or 0),
             }
@@ -577,7 +605,7 @@ async def upload_file_finalize(
             """
             SELECT chunk_index FROM uploaded_file_chunks WHERE file_id = %s
             """,
-            (payload.file_id,),
+            (file_id,),
         )
         present = {int(r["chunk_index"]) for r in (cur.fetchall() or [])}
         expected = set(range(chunk_count))
@@ -600,7 +628,7 @@ async def upload_file_finalize(
             SET upload_status = 'complete'
             WHERE id = %s AND vault_id = %s AND upload_status = 'uploading'
             """,
-            (payload.file_id, vault_id),
+            (file_id, vault_id),
         )
         conn.commit()
     finally:
@@ -611,7 +639,7 @@ async def upload_file_finalize(
         from main import kickoff_analysis_for_uploaded_file
         kickoff_analysis_for_uploaded_file(
             vault_id=vault_id,
-            file_id=payload.file_id,
+            file_id=file_id,
             file_name=row.get("file_name"),
             content_type=row.get("content_type"),
         )
@@ -622,7 +650,7 @@ async def upload_file_finalize(
     try:
         from document_understanding import extract_and_store_document_safe
         extract_and_store_document_safe(
-            vault_id, payload.file_id,
+            vault_id, file_id,
             file_name=row["file_name"],
             saved_name=row["saved_name"],
             asset_type=row["asset_type"],
@@ -647,7 +675,7 @@ async def upload_file_finalize(
 
     return {
         "status": "complete",
-        "file_id": payload.file_id,
+        "file_id": file_id,
         "chunk_count": chunk_count,
         "file_size": int(row["file_size"] or 0),
     }
@@ -660,6 +688,27 @@ async def upload_file_abort(
 ):
     vault_id = principal["vault_id"]
     verify_vault_pin(vault_id, payload.pin)
+    return await _abort_pending_chunk_upload(
+        vault_id=vault_id, file_id=payload.file_id,
+    )
+
+
+@router.post("/upload-file/abort-token")
+async def upload_file_abort_token(
+    payload: ChunkActionTokenRequest,
+    principal=Depends(verify_trusted_device),
+):
+    vault_id = principal["vault_id"]
+    verify_chunk_token(
+        payload.upload_token, kind="upload", vault_id=vault_id,
+        file_id=payload.file_id,
+    )
+    return await _abort_pending_chunk_upload(
+        vault_id=vault_id, file_id=payload.file_id,
+    )
+
+
+async def _abort_pending_chunk_upload(*, vault_id: str, file_id: str):
 
     conn = get_db()
     try:
@@ -673,13 +722,13 @@ async def upload_file_abort(
               AND upload_status = 'uploading'
             RETURNING file_size, import_id
             """,
-            (payload.file_id, vault_id),
+            (file_id, vault_id),
         )
         deleted = cur.fetchone()
 
         if not deleted:
             conn.commit()
-            return {"status": "already_aborted_or_finalized", "file_id": payload.file_id}
+            return {"status": "already_aborted_or_finalized", "file_id": file_id}
 
         cur.execute(
             """
@@ -705,7 +754,7 @@ async def upload_file_abort(
 
     return {
         "status": "aborted",
-        "file_id": payload.file_id,
+        "file_id": file_id,
         "released_bytes": int(deleted["file_size"] or 0),
     }
 
