@@ -7,7 +7,7 @@ import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from device_gate import verify_trusted_device
 from vault_core import get_db, verify_vault_pin                                          
@@ -36,6 +36,31 @@ class ImportBatchActionRequest(BaseModel):
                                                                     
     failed_count_delta: int = 0
     skipped_duplicate_count_delta: int = 0
+
+
+class ImportBatchSessionStartRequest(BaseModel):
+    """PIN-free import bookkeeping; no vault or folder name crosses the wire."""
+
+    model_config = ConfigDict(extra="forbid")
+    total_files: int = Field(default=0, ge=0)
+    total_bytes_planned: int = Field(default=0, ge=0)
+
+
+class ImportBatchSessionActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    failed_count_delta: int = Field(default=0, ge=0)
+    skipped_duplicate_count_delta: int = Field(default=0, ge=0)
+
+
+def _require_zk_import_session(vault_id: str) -> None:
+    from vault_core import is_vault_zk_adopted
+
+    if (
+        os.getenv("VAULTAI_ZK_IMPORT_SESSION_ACTIONS_ENABLED", "false")
+        .strip().lower() != "true"
+        or not is_vault_zk_adopted(vault_id)
+    ):
+        raise HTTPException(status_code=404, detail="not_found")
 
 
 def _authorize_import_batch_action(principal: dict, pin: Optional[str]) -> bool:
@@ -130,4 +155,50 @@ async def complete_import_endpoint(
         import_id=import_id,
         failed_count_delta=payload.failed_count_delta,
         skipped_duplicate_count_delta=payload.skipped_duplicate_count_delta,
+    )
+
+
+@router.post("/imports/session/start")
+async def start_import_session_endpoint(
+    payload: ImportBatchSessionStartRequest,
+    principal=Depends(verify_trusted_device),
+):
+    _require_zk_import_session(principal["vault_id"])
+    return await start_import_endpoint(
+        ImportBatchStartRequest(
+            vault_name="",
+            total_files=payload.total_files,
+            total_bytes_planned=payload.total_bytes_planned,
+        ),
+        principal,
+    )
+
+
+@router.post("/imports/session/{import_id}/cancel")
+async def cancel_import_session_endpoint(
+    import_id: str,
+    payload: ImportBatchSessionActionRequest,
+    principal=Depends(verify_trusted_device),
+):
+    _require_zk_import_session(principal["vault_id"])
+    return await cancel_import_endpoint(
+        import_id, ImportBatchActionRequest(vault_name=""), principal,
+    )
+
+
+@router.post("/imports/session/{import_id}/complete")
+async def complete_import_session_endpoint(
+    import_id: str,
+    payload: ImportBatchSessionActionRequest,
+    principal=Depends(verify_trusted_device),
+):
+    _require_zk_import_session(principal["vault_id"])
+    return await complete_import_endpoint(
+        import_id,
+        ImportBatchActionRequest(
+            vault_name="",
+            failed_count_delta=payload.failed_count_delta,
+            skipped_duplicate_count_delta=payload.skipped_duplicate_count_delta,
+        ),
+        principal,
     )

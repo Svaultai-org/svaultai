@@ -6,7 +6,8 @@ import asyncio
 from unittest import mock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 import main
 import vault_core
@@ -32,12 +33,82 @@ def zk_import_gate(monkeypatch):
 
 
 def test_all_import_routes_require_trusted_device():
-    assert len(routes.router.routes) == 4
+    assert len(routes.router.routes) == 7
     for route in routes.router.routes:
         assert any(
             dependency.call is verify_trusted_device
             for dependency in route.dependant.dependencies
         ), route.path
+
+
+def test_strict_session_import_paths_reject_pin_and_plaintext_names(
+    monkeypatch, zk_import_gate,
+):
+    app = FastAPI()
+    app.include_router(routes.router)
+    app.dependency_overrides[verify_trusted_device] = lambda: PRINCIPAL
+    created = mock.Mock(return_value={"import_id": "synthetic-import"})
+    monkeypatch.setattr(main, "start_import_batch", created)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        for body in (
+            {"pin": "123456"},
+            {"vault_name": "private"},
+            {"root_folder_name": "private"},
+        ):
+            denied = client.post("/imports/session/start", json=body)
+            assert denied.status_code == 422, denied.text
+        created.assert_not_called()
+        accepted = client.post("/imports/session/start", json={
+            "total_files": 2, "total_bytes_planned": 100,
+        })
+        assert accepted.status_code == 200, accepted.text
+        created.assert_called_once_with(
+            vault_id=PRINCIPAL["vault_id"], root_folder_name=None,
+            total_files=2, total_bytes_planned=100,
+        )
+
+
+def test_strict_session_import_actions_preserve_legacy_bookkeeping_gates(
+    monkeypatch, zk_import_gate,
+):
+    app = FastAPI()
+    app.include_router(routes.router)
+    app.dependency_overrides[verify_trusted_device] = lambda: PRINCIPAL
+    cancel = mock.Mock(return_value={"status": "cancelled"})
+    complete = mock.Mock(return_value={"status": "completed"})
+    monkeypatch.setattr(main, "cancel_import_batch", cancel)
+    monkeypatch.setattr(main, "complete_import_batch", complete)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        for action in ("cancel", "complete"):
+            path = f"/imports/session/synthetic-import/{action}"
+            denied = client.post(path, json={"pin": "123456"})
+            assert denied.status_code == 422, denied.text
+            accepted = client.post(path, json={
+                "failed_count_delta": 1,
+                "skipped_duplicate_count_delta": 2,
+            })
+            assert accepted.status_code == 200, accepted.text
+    cancel.assert_called_once_with(
+        vault_id=PRINCIPAL["vault_id"], import_id="synthetic-import",
+    )
+    complete.assert_called_once_with(
+        vault_id=PRINCIPAL["vault_id"], import_id="synthetic-import",
+        failed_count_delta=1, skipped_duplicate_count_delta=2,
+    )
+
+
+def test_strict_session_import_path_is_off_for_legacy_vault(
+    monkeypatch, zk_import_gate,
+):
+    is_zk, verify_pin = zk_import_gate
+    is_zk.return_value = False
+    app = FastAPI()
+    app.include_router(routes.router)
+    app.dependency_overrides[verify_trusted_device] = lambda: PRINCIPAL
+    with TestClient(app, raise_server_exceptions=False) as client:
+        denied = client.post("/imports/session/start", json={})
+    assert denied.status_code == 404
+    verify_pin.assert_not_called()
 
 
 def test_zk_start_uses_trusted_session_without_pin_or_plaintext_folder(
