@@ -42,4 +42,31 @@ void main() {
     });
     expect(sent.every((r) => !r.body.contains('123456')), isTrue);
   });
+
+  test('V2 escrow removal sends one-time proof and legacy removal does not',
+      () async {
+    final sent = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://example.invalid',
+      httpClient: MockClient((request) async {
+        sent.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+    await client.deleteInheritanceCredentials(
+      linkId: 17,
+      authToken: 'synthetic-session',
+      zkProofToken: 'synthetic-proof',
+    );
+    await client.deleteInheritanceCredentials(
+      linkId: 18,
+      authToken: 'synthetic-session',
+    );
+    expect(jsonDecode(sent[0].body), {
+      'beneficiary_link_id': 17,
+      'zk_proof_token': 'synthetic-proof',
+    });
+    expect(jsonDecode(sent[1].body), {'beneficiary_link_id': 18});
+    expect(sent.every((request) => !request.body.contains('123456')), isTrue);
+  });
 }

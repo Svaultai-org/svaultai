@@ -159,6 +159,7 @@ class ReplaceCredentialPackageRequest(_CredentialPackageBase):
 
 class DeleteCredentialPackageRequest(BaseModel):
     beneficiary_link_id: int = Field(..., ge=1)
+    zk_proof_token: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
 
 class CredentialStatusResponse(BaseModel):
@@ -669,6 +670,7 @@ def delete_credentials(
             cur, link_id=payload.beneficiary_link_id,
             owner_vault_id=principal["vault_id"], for_update=True,
         )
+        _require_v2_escrow_proof(link, payload.zk_proof_token, principal)
         _refuse_if_access_in_flight(link)
         prior_state = (link.get("pairing_state") or "").strip()
 

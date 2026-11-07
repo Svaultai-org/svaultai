@@ -16,6 +16,45 @@ const String _info = 'vaultai.inh-mvk.v2';
 final _aes = AesGcm.with256bits();
 final _hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
 
+/// Full SHA-256 fingerprint of the beneficiary's locally derived X25519 key.
+/// The owner must obtain it from the beneficiary over an independent channel.
+Future<String> beneficiaryPublicKeyFingerprint(Uint8List publicKey) async {
+  if (publicKey.length != 32) {
+    throw ArgumentError('Invalid beneficiary public key');
+  }
+  final digest = await Sha256().hash(publicKey);
+  final hex =
+      digest.bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+  return [for (var i = 0; i < hex.length; i += 8) hex.substring(i, i + 8)]
+      .join('-');
+}
+
+Future<String> beneficiaryPrivateKeyFingerprint(SecretKey privateKey) async {
+  final seed = await privateKey.extractBytes();
+  if (seed.length != 32) {
+    throw ArgumentError('Invalid beneficiary private key');
+  }
+  final pair = await X25519().newKeyPairFromSeed(seed);
+  final publicKey = await pair.extractPublicKey();
+  return beneficiaryPublicKeyFingerprint(Uint8List.fromList(publicKey.bytes));
+}
+
+bool beneficiaryFingerprintMatches(String expected, String entered) {
+  String normalized(String value) =>
+      value.replaceAll(RegExp(r'[\s-]'), '').toLowerCase();
+  final left = normalized(expected);
+  final right = normalized(entered);
+  if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(left) ||
+      !RegExp(r'^[0-9a-f]{64}$').hasMatch(right)) {
+    return false;
+  }
+  var difference = 0;
+  for (var i = 0; i < 64; i++) {
+    difference |= left.codeUnitAt(i) ^ right.codeUnitAt(i);
+  }
+  return difference == 0;
+}
+
 class InheritanceMvkEnvelope {
   final String encryptedPayload;
   final String payloadNonce;

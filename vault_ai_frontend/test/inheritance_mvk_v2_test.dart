@@ -76,4 +76,25 @@ void main() {
       throwsA(anything),
     );
   });
+
+  test('independent beneficiary key fingerprint matches only full local key',
+      () async {
+    final beneficiary = await X25519().newKeyPair();
+    final publicKey = await beneficiary.extractPublicKey();
+    final privateKey = SecretKey(await beneficiary.extractPrivateKeyBytes());
+    final local = await beneficiaryPrivateKeyFingerprint(privateKey);
+    final fetched = await beneficiaryPublicKeyFingerprint(
+      Uint8List.fromList(publicKey.bytes),
+    );
+    expect(local, fetched);
+    expect(local.replaceAll('-', '').length, 64);
+    expect(beneficiaryFingerprintMatches(fetched, local), isTrue);
+    expect(beneficiaryFingerprintMatches(fetched, local.substring(0, 20)),
+        isFalse);
+    final other = await X25519().newKeyPair();
+    final otherFingerprint = await beneficiaryPublicKeyFingerprint(
+      Uint8List.fromList((await other.extractPublicKey()).bytes),
+    );
+    expect(beneficiaryFingerprintMatches(fetched, otherFingerprint), isFalse);
+  });
 }

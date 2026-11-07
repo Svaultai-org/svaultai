@@ -2787,11 +2787,15 @@ class VaultAIClient {
   Future<Map<String, dynamic>> deleteInheritanceCredentials({
     required int linkId,
     required String authToken,
+    String? zkProofToken,
   }) async {
     final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/inheritance/credentials/delete'),
       headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode({'beneficiary_link_id': linkId}),
+      body: jsonEncode({
+        'beneficiary_link_id': linkId,
+        if (zkProofToken != null) 'zk_proof_token': zkProofToken,
+      }),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);

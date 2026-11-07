@@ -10159,6 +10159,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final codeCtrl = TextEditingController();
     String? linkErr;
     String? linkedLabel;
+    String? linkedFingerprint;
     bool linking = false;
 
     await showDialog(
@@ -10176,10 +10177,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        const Text(
-                          'Type the pairing code your benefactor gave you. '
-                          'Once linked, you\'ll be able to request transfer '
-                          'whenever you need to.',
+                        Text(
+                          kPrivateOnlyUnlockEnabled
+                              ? 'Type the pairing code the vault owner gave you. '
+                                'They can then prepare private saved-item inheritance.'
+                              : 'Type the pairing code your benefactor gave you. '
+                                'Once linked, you\'ll be able to request transfer whenever you need to.',
                           style:
                               TextStyle(color: VaultColors.textSecondary, fontSize: 13),
                         ),
@@ -10199,11 +10202,32 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         ],
                       ],
                     )
-                  : Text(
-                      'You are now linked as a beneficiary of "$linkedLabel". '
-                      'You can request transfer from the Inheritance page at any time.',
-                      style: const TextStyle(
-                          color: Color(0xFFECECEC), fontSize: 13),
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          linkedFingerprint == null
+                              ? 'You are now linked as a beneficiary of "$linkedLabel". '
+                                'You can request transfer from the Inheritance page at any time.'
+                              : 'You are linked. Give the owner this key fingerprint '
+                                'through a separate channel so they can verify it before sharing saved items.',
+                          style: const TextStyle(
+                              color: Color(0xFFECECEC), fontSize: 13),
+                        ),
+                        if (linkedFingerprint != null) ...[
+                          const SizedBox(height: 12),
+                          SelectableText(linkedFingerprint!,
+                              key: const Key('inheritance_beneficiary_key_fingerprint')),
+                          TextButton.icon(
+                            onPressed: () => Clipboard.setData(
+                              ClipboardData(text: linkedFingerprint!),
+                            ),
+                            icon: const Icon(Icons.copy, size: 16),
+                            label: const Text('Copy fingerprint'),
+                          ),
+                        ],
+                      ],
                     ),
               actions: linkedLabel == null
                   ? [
@@ -10240,6 +10264,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                     if (!kEnableZkBeneficiaryV2Pairing) {
                                       throw StateError('Beneficiary pairing is not available in this build.');
                                     }
+                                    final beneficiarySk =
+                                        zk_sk_store.ZkActiveSkVault.current();
+                                    if (beneficiarySk == null ||
+                                        zk_sk_store.ZkActiveSkVault.currentVaultId() != app.vaultId) {
+                                      throw StateError('Unlock this vault before pairing.');
+                                    }
+                                    final fingerprint = await inh_mvk
+                                        .beneficiaryPrivateKeyFingerprint(beneficiarySk);
                                     final entered = await _promptForActionPin(
                                       context, 'Verify inheritance pairing',
                                     );
@@ -10256,6 +10288,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                       zkProofToken: proof,
                                       authToken: token,
                                     );
+                                    linkedFingerprint = fingerprint;
                                   } else {
                                     requireLegacyBeneficiaryPinActionAllowed(
                                         vaultHandle: app.vaultHandle);
@@ -10306,6 +10339,46 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           },
         );
       },
+    );
+  }
+
+  Future<void> _showBeneficiaryKeyFingerprint() async {
+    final app = context.read<AppState>();
+    final key = zk_sk_store.ZkActiveSkVault.current();
+    if (key == null || app.vaultId == null ||
+        zk_sk_store.ZkActiveSkVault.currentVaultId() != app.vaultId) {
+      _showSnack('Unlock this vault to view its beneficiary key fingerprint.');
+      return;
+    }
+    final fingerprint = await inh_mvk.beneficiaryPrivateKeyFingerprint(key);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Your beneficiary key fingerprint'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Give this fingerprint to the vault owner through a separate channel. '
+                'They must compare every character before preparing saved-item inheritance.'),
+            const SizedBox(height: 12),
+            SelectableText(fingerprint,
+                key: const Key('inheritance_beneficiary_key_fingerprint')),
+          ],
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () => Clipboard.setData(ClipboardData(text: fingerprint)),
+            icon: const Icon(Icons.copy, size: 16),
+            label: const Text('Copy fingerprint'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -10680,6 +10753,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final autofilledUsername = app.vaultName ?? '';
     final usernameCtrl = TextEditingController(text: autofilledUsername);
     final pinCtrl = TextEditingController();
+    final fingerprintCtrl = TextEditingController();
     final formKey = GlobalKey<FormState>();
     bool saving = false;
     String? errRef;
@@ -10692,7 +10766,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           backgroundColor: VaultColors.surfaceElevated,
           title: Text(
             isZkV2
-                ? (isUpdate ? 'Update private vault access' : 'Prepare private vault access')
+                ? (isUpdate ? 'Update saved-item inheritance' : 'Prepare saved-item inheritance')
                 : (isUpdate
                     ? 'Update credentials for $beneficiaryLabel'
                     : 'Credentials to inherit'),
@@ -10705,12 +10779,40 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (isZkV2)
-                    const Text(
-                      'Your vault key is encrypted on this device for this beneficiary. '
-                      'After access is approved or the no-response countdown ends, '
-                      'they can import supported private content into their own vault. '
-                      'Your PIN is not shared.',
-                      style: TextStyle(color: VaultColors.textSecondary, fontSize: 13),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'This option lets the beneficiary import private saved items '
+                          'after access is approved or the no-response countdown ends. '
+                          'Files, photos, recordings, memories, wallet data and chat history '
+                          'are not included. Your vault PIN is not shared.',
+                          style: TextStyle(color: VaultColors.textSecondary, fontSize: 13),
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Ask the beneficiary for the key fingerprint shown on their device. '
+                          'Get it through a separate channel and compare all characters.',
+                          style: TextStyle(color: VaultColors.textSecondary, fontSize: 12),
+                        ),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          key: const Key('inheritance_beneficiary_key_fingerprint_input'),
+                          controller: fingerprintCtrl,
+                          autocorrect: false,
+                          decoration: const InputDecoration(
+                            labelText: 'Beneficiary key fingerprint',
+                            hintText: 'Eight groups of eight characters',
+                          ),
+                          validator: (value) {
+                            final compact = (value ?? '')
+                                .replaceAll(RegExp(r'[\s-]'), '');
+                            return RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(compact)
+                                ? null
+                                : 'Enter the full beneficiary fingerprint';
+                          },
+                        ),
+                      ],
                     )
                   else ...[
                   const Text(
@@ -10787,7 +10889,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               onPressed: saving
                   ? null
                   : () async {
-                      if (!isZkV2 && !(formKey.currentState?.validate() ?? false)) {
+                      if (!(formKey.currentState?.validate() ?? false)) {
                         return;
                       }
                       setLocal(() {
@@ -10799,6 +10901,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       final result = isZkV2
                           ? await _submitInheritanceMvk(
                               linkId: linkId, isUpdate: isUpdate,
+                              beneficiaryFingerprint: fingerprintCtrl.text,
                             )
                           : await _submitInheritanceCredentials(
                               linkId: linkId,
@@ -10824,8 +10927,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         // masking every non-shape failure mode.
                         setLocal(() {
                           saving = false;
-                          errRef = 'Could not save credentials. Please try '
-                              'again.\nReference: ${result.code}';
+                          errRef = result.code == 'INH-MVK-FINGERPRINT'
+                              ? 'The beneficiary key fingerprint does not match. '
+                                  'Confirm it with them before preparing access.'
+                              : 'Could not save ${isZkV2 ? 'saved-item access' : 'credentials'}. '
+                                  'Please try again.\nReference: ${result.code}';
                         });
                       }
                     },
@@ -10848,6 +10954,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     usernameCtrl.dispose();
     pinCtrl.clear();
     pinCtrl.dispose();
+    fingerprintCtrl.clear();
+    fingerprintCtrl.dispose();
     await _loadBeneficiaries();
   }
 
@@ -10989,6 +11097,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<({bool ok, String code})> _submitInheritanceMvk({
     required int linkId,
     required bool isUpdate,
+    required String beneficiaryFingerprint,
   }) async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
@@ -11013,6 +11122,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         return (ok: false, code: 'INH-MVK-NO-PUBKEY');
       }
       final beneficiaryPublicKey = vk_hier.b64urlDecode(encodedKey);
+      final fetchedFingerprint = await inh_mvk
+          .beneficiaryPublicKeyFingerprint(beneficiaryPublicKey);
+      if (!inh_mvk.beneficiaryFingerprintMatches(
+          fetchedFingerprint, beneficiaryFingerprint)) {
+        return (ok: false, code: 'INH-MVK-FINGERPRINT');
+      }
       final entered = await _promptForActionPin(
         context, 'Verify private vault sharing',
       );
@@ -11039,7 +11154,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           body: body, authToken: token,
         );
       }
-      _showSnack(isUpdate ? 'Private vault access updated' : 'Private vault access prepared');
+      _showSnack(isUpdate ? 'Saved-item inheritance updated' : 'Saved-item inheritance prepared');
       return (ok: true, code: '');
     } on InheritanceCredSaveException catch (e) {
       if (app.handleApiException(e)) {
@@ -11054,6 +11169,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<void> _deleteInheritanceCredentials({
     required int linkId,
     required String beneficiaryLabel,
+    bool isZkV2 = false,
   }) async {
     final app = context.read<AppState>();
     final confirmed = await showDialog<bool>(
@@ -11061,11 +11177,17 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       builder: (dialogCtx) => AlertDialog(
         backgroundColor: VaultColors.surfaceElevated,
         title: Text(
-          'Delete credentials for $beneficiaryLabel?',
+          isZkV2
+              ? 'Remove saved-item inheritance for $beneficiaryLabel?'
+              : 'Delete credentials for $beneficiaryLabel?',
         ),
-        content: const Text(
-          'The encrypted username and PIN will be permanently removed. '
-          'They can be re-added later.',
+        content: Text(
+          isZkV2
+              ? 'The encrypted saved-item package will be removed and future claims '
+                'will be blocked. Items already imported into the beneficiary\'s vault '
+                'cannot be recalled.'
+              : 'The encrypted username and PIN will be permanently removed. '
+                'They can be re-added later.',
         ),
         actions: [
           TextButton(
@@ -11085,11 +11207,21 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (token == null) return;
     try {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
+      String? proof;
+      if (isZkV2) {
+        final entered = await _promptForActionPin(
+          context, 'Verify saved-item inheritance removal',
+        );
+        if (entered == null) return;
+        proof = await _zkActionProof(app, token, entered);
+        if (app.sessionToken != token) throw StateError('Vault access changed');
+      }
       await client.deleteInheritanceCredentials(
         linkId: linkId,
         authToken: token,
+        zkProofToken: proof,
       );
-      _showSnack('Credentials deleted');
+      _showSnack(isZkV2 ? 'Saved-item inheritance removed' : 'Credentials deleted');
       await _loadBeneficiaries();
     } on InheritanceCredSaveException catch (e) {
       // 2026-07-22: surface the ACTUAL backend code (e.g.
@@ -11106,13 +11238,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           ? 'INH-CRED-CLIENT-UNKNOWN'
           : e.backendCode!;
       _showSnack(
-        'Could not delete credentials.\nReference: $code',
+        'Could not remove ${isZkV2 ? 'saved-item inheritance' : 'credentials'}.\nReference: $code',
       );
     } catch (e) {
       vlog('inheritance.cred.delete.failed', {'error': e.toString()});
       if (app.handleApiException(e)) return;
       _showSnack(
-        'Could not delete credentials.\nReference: INH-CRED-CLIENT-UNKNOWN',
+        'Could not remove ${isZkV2 ? 'saved-item inheritance' : 'credentials'}.\nReference: INH-CRED-CLIENT-UNKNOWN',
       );
     }
   }
@@ -12412,10 +12544,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                           const SizedBox(width: 6),
                                           Text(
                                             needsReencryption
-                                                ? (isZkV2 ? 'Private vault access: Needs update' : 'Inheritance credentials: Needs update')
+                                                ? (isZkV2 ? 'Saved-item inheritance: Needs update' : 'Inheritance credentials: Needs update')
                                                 : credentialsSaved
-                                                    ? (isZkV2 ? 'Private vault access: Prepared' : 'Inheritance credentials: Saved')
-                                                    : (isZkV2 ? 'Private vault access: Not prepared' : 'Inheritance credentials: Not saved'),
+                                                    ? (isZkV2 ? 'Saved-item inheritance: Prepared' : 'Inheritance credentials: Saved')
+                                                    : (isZkV2 ? 'Saved-item inheritance: Not prepared' : 'Inheritance credentials: Not saved'),
                                             style: TextStyle(
                                               color: needsReencryption
                                                   ? Colors.orange
@@ -12480,14 +12612,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                               _deleteInheritanceCredentials(
                                             linkId: id,
                                             beneficiaryLabel: label,
+                                            isZkV2: isZkV2,
                                           ),
                                           icon: const Icon(
                                               Icons.lock_open_outlined,
                                               size: 18,
                                               color: Colors.redAccent),
-                                          label: const Text(
-                                            'Delete credentials',
-                                            style: TextStyle(
+                                          label: Text(
+                                            isZkV2 ? 'Remove saved-item access' : 'Delete credentials',
+                                            style: const TextStyle(
                                                 color: Colors.redAccent),
                                           ),
                                         ),
@@ -12865,6 +12998,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                     ),
                                 ],
                               ),
+                              if (isZkV2)
+                                TextButton.icon(
+                                  onPressed: _showBeneficiaryKeyFingerprint,
+                                  icon: const Icon(Icons.verified_user_outlined, size: 16),
+                                  label: const Text('Show my key fingerprint'),
+                                ),
                             ],
                           ),
                         );

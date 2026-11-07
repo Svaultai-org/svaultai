@@ -7,8 +7,10 @@ from unittest import mock
 from inheritance_protocol import ZK_BENEFICIARY_V2_MARKER
 from routes.inheritance_credential_routes import (
     _require_credential_protocol, _require_v2_escrow_proof,
+    DeleteCredentialPackageRequest, delete_credentials,
 )
 from routes import auth_zk_routes
+from routes import inheritance_credential_routes as credential_routes
 
 
 def test_legacy_link_accepts_only_v1(monkeypatch):
@@ -42,4 +44,43 @@ def test_v2_escrow_requires_fresh_one_time_proof(monkeypatch):
         _require_v2_escrow_proof(link, None, principal)
     assert missing.value.status_code == 400
     _require_v2_escrow_proof(link, "synthetic-proof", principal)
+    consume.assert_called_once_with("synthetic-proof", principal)
+
+
+def test_v2_delete_requires_proof_before_any_mutation(monkeypatch):
+    principal = {"vault_id": "synthetic-owner", "token_id": "synthetic-session"}
+    link = {"id": 17, "wrapped_vault_key": ZK_BENEFICIARY_V2_MARKER,
+            "pairing_state": "credentials_saved", "status": "linked"}
+    writes = []
+
+    class Cursor:
+        def execute(self, sql, params):
+            writes.append((sql, params))
+
+    class Connection:
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+        def commit(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(credential_routes, "get_db", lambda: Connection())
+    monkeypatch.setattr(credential_routes, "_fetch_owned_link", lambda *_args, **_kwargs: link)
+    monkeypatch.setattr(credential_routes, "_clear_release_timestamps_if_stale", mock.Mock())
+    consume = mock.Mock()
+    monkeypatch.setattr(auth_zk_routes, "consume_recent_zk_proof", consume)
+    with pytest.raises(HTTPException) as missing:
+        delete_credentials(DeleteCredentialPackageRequest(beneficiary_link_id=17), principal)
+    assert missing.value.status_code == 400
+    assert writes == []
+    result = delete_credentials(
+        DeleteCredentialPackageRequest(
+            beneficiary_link_id=17, zk_proof_token="synthetic-proof",
+        ), principal,
+    )
+    assert result.credentials_saved is False
+    assert len(writes) == 2
     consume.assert_called_once_with("synthetic-proof", principal)

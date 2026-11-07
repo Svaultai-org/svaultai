@@ -20,9 +20,11 @@ from inheritance_protocol import (
     zk_beneficiary_v2_enabled,
 )
 from vault_core import get_db
+from rate_limit_sensitive import enforce_export_rate_limit
 
 router = APIRouter()
 _MAX_ITEMS = 500
+_MAX_CIPHERTEXT_BYTES = 4 * 1024 * 1024
 
 
 def _b64(value: bytes) -> str:
@@ -56,6 +58,7 @@ def export_released_vault_items(
                 link["pairing_state"] != "released" or
                 int(link["crypto_version"]) != ZK_BENEFICIARY_V2_CRYPTO_VERSION):
             raise HTTPException(status_code=404, detail="Inheritance export unavailable")
+        enforce_export_rate_limit(vault_id=str(principal["vault_id"]))
         owner_vault_id = link["passer_vault_id"]
         cur.execute(
             """SELECT 1 FROM vault_items
@@ -70,6 +73,19 @@ def export_released_vault_items(
         if cur.fetchone():
             raise HTTPException(status_code=409, detail="owner_items_need_private_migration")
         cur.execute(
+            """SELECT COUNT(*) AS item_count,
+                      COALESCE(SUM(OCTET_LENGTH(item_type_ciphertext) +
+                                   OCTET_LENGTH(service_ciphertext) +
+                                   OCTET_LENGTH(payload_ciphertext)), 0)
+                        AS ciphertext_bytes
+                 FROM vault_items WHERE vault_id = %s""",
+            (owner_vault_id,),
+        )
+        budget = cur.fetchone() or {}
+        if (int(budget.get("item_count") or 0) > _MAX_ITEMS or
+                int(budget.get("ciphertext_bytes") or 0) > _MAX_CIPHERTEXT_BYTES):
+            raise HTTPException(status_code=409, detail="owner_items_exceed_import_limit")
+        cur.execute(
             """SELECT id, item_type_ciphertext, service_ciphertext,
                       payload_ciphertext
                  FROM vault_items
@@ -78,7 +94,10 @@ def export_released_vault_items(
             (owner_vault_id, _MAX_ITEMS + 1),
         )
         rows = cur.fetchall() or []
-        if len(rows) > _MAX_ITEMS:
+        if (len(rows) > _MAX_ITEMS or
+                sum(len(bytes(row[field])) for row in rows for field in (
+                    "item_type_ciphertext", "service_ciphertext", "payload_ciphertext"
+                )) > _MAX_CIPHERTEXT_BYTES):
             raise HTTPException(status_code=409, detail="owner_items_exceed_import_limit")
         return {
             "owner_vault_id": str(owner_vault_id),
