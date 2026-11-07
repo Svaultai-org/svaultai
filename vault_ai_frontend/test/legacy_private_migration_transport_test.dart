@@ -111,4 +111,44 @@ void main() {
       transport.close();
     }
   });
+
+  test('separate completion transport permits only proof retire and V2 reads',
+      () async {
+    final sent = <http.Request>[];
+    final transport = LegacyPrivateMigrationTransport(
+      backendBaseUrl: 'https://synthetic.invalid',
+      sessionToken: 'synthetic-token',
+      deviceId: 'synthetic-device',
+      accessIsCurrent: () => true,
+      allowRetire: true,
+      client: MockClient((request) async {
+        sent.add(request);
+        return http.Response('{"retired":true}', 200);
+      }),
+    );
+    try {
+      await transport.request('POST',
+          '/vault/legacy-ciphertext/migrate/item-retire', {
+        'item_id': 7,
+        'zk_proof_token': 'synthetic-one-use-proof',
+        'readback_receipt': 'synthetic-receipt',
+        'source_snapshot': 'synthetic-source',
+      });
+      await transport.request('GET', '/vault/ciphertext/vault-items');
+      await expectLater(transport.request('POST',
+          '/vault/legacy-ciphertext/migrate/file-retire', {
+        'file_id': 'synthetic-file', 'pin': '123456',
+      }), throwsStateError);
+      await expectLater(transport.request('POST', '/vault/delete/confirm',
+          {'zk_proof_token': 'synthetic-proof'}), throwsStateError);
+      expect(sent.map((r) => r.url.path), [
+        '/vault/legacy-ciphertext/migrate/item-retire',
+        '/vault/ciphertext/vault-items',
+      ]);
+      expect(sent.first.body, isNot(contains('"pin"')));
+      expect(sent.first.headers['Authorization'], 'Bearer synthetic-token');
+    } finally {
+      transport.close();
+    }
+  });
 }

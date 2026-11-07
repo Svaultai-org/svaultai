@@ -57,7 +57,7 @@ class StagedLegacyFile {
     'total_bytes': totalBytes,
     'chunk_size': chunkSize,
     'chunk_count': chunkCiphertexts.length,
-    if (migrationMetadataVersion == 2)
+    if (migrationMetadataVersion >= 2)
       'migration_metadata_version': migrationMetadataVersion,
   };
 
@@ -144,6 +144,7 @@ class LegacyCiphertextMigrationCodec {
     required String? contentType,
     required Map<String, String?> encryptedMetadata,
     Map<String, String?>? legacyExtra,
+    int extraVersion = 2,
     int chunkSize = 256 * 1024,
   }) async {
     if (fileId.isEmpty || chunkSize <= 0) {
@@ -164,7 +165,7 @@ class LegacyCiphertextMigrationCodec {
         throw const FormatException('Legacy file metadata cannot be read');
       }
     }
-    _validateLegacyExtra(legacyExtra);
+    _validateLegacyExtra(legacyExtra, extraVersion: extraVersion);
     final chunks = <String>[];
     for (var offset = 0; offset < plain.length; offset += chunkSize) {
       final end = offset + chunkSize < plain.length
@@ -177,7 +178,7 @@ class LegacyCiphertextMigrationCodec {
     final manifest = <String, Object?>{
       'schema': legacyExtra == null
           ? 'vaultai.file.migrated.v1'
-          : 'vaultai.file.migrated.v2',
+          : 'vaultai.file.migrated.v$extraVersion',
       'file_id': fileId,
       'file_size': plain.length,
       'content_type': contentType,
@@ -194,7 +195,7 @@ class LegacyCiphertextMigrationCodec {
         await aesGcmWrap(metadataKey, utf8.encode(jsonEncode(manifest))),
       ),
       chunkCiphertexts: List<String>.unmodifiable(chunks),
-      migrationMetadataVersion: legacyExtra == null ? 1 : 2,
+      migrationMetadataVersion: legacyExtra == null ? 1 : extraVersion,
     );
   }
 
@@ -207,6 +208,7 @@ class LegacyCiphertextMigrationCodec {
     required String? contentType,
     required Map<String, String?> encryptedMetadata,
     Map<String, String?>? legacyExtra,
+    int extraVersion = 2,
     required int chunkSize,
     required int chunkCount,
     required String manifestCiphertext,
@@ -221,12 +223,12 @@ class LegacyCiphertextMigrationCodec {
           await aesGcmUnwrap(metadataKey, b64urlDecode(manifestCiphertext)),
         ),
       );
-      _validateLegacyExtra(legacyExtra);
+      _validateLegacyExtra(legacyExtra, extraVersion: extraVersion);
       return manifest is Map &&
           manifest['schema'] ==
               (legacyExtra == null
                   ? 'vaultai.file.migrated.v1'
-                  : 'vaultai.file.migrated.v2') &&
+                  : 'vaultai.file.migrated.v$extraVersion') &&
           manifest['file_id'] == fileId &&
           manifest['file_size'] == declaredFileSize &&
           manifest['content_type'] == contentType &&
@@ -275,6 +277,7 @@ class LegacyCiphertextMigrationCodec {
     required String? contentType,
     required Map<String, String?> encryptedMetadata,
     Map<String, String?>? legacyExtra,
+    int extraVersion = 2,
     required int chunkSize,
     required int chunkCount,
     required String manifestCiphertext,
@@ -293,6 +296,7 @@ class LegacyCiphertextMigrationCodec {
         contentType: contentType,
         encryptedMetadata: encryptedMetadata,
         legacyExtra: legacyExtra,
+        extraVersion: extraVersion,
         chunkSize: chunkSize,
         chunkCount: chunkCount,
         manifestCiphertext: manifestCiphertext,
@@ -311,15 +315,21 @@ class LegacyCiphertextMigrationCodec {
     }
   }
 
-  void _validateLegacyExtra(Map<String, String?>? extra) {
+  void _validateLegacyExtra(Map<String, String?>? extra, {
+    required int extraVersion,
+  }) {
     if (extra == null) return;
+    if (extraVersion != 2 && extraVersion != 3) {
+      throw const FormatException('Invalid legacy file extra version');
+    }
     if (extra.length != 2 ||
         !extra.containsKey('relative_path') ||
         !extra.containsKey('extracted_text') ||
         (extra['relative_path'] != null &&
             utf8.encode(extra['relative_path']!).length > 4096) ||
         (extra['extracted_text'] != null &&
-            utf8.encode(extra['extracted_text']!).length > 64 * 1024)) {
+            utf8.encode(extra['extracted_text']!).length >
+                (extraVersion == 3 ? 256 * 1024 : 64 * 1024))) {
       throw const FormatException('Invalid legacy file extra shape');
     }
   }

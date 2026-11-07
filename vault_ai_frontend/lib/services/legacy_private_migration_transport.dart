@@ -13,6 +13,7 @@ class LegacyPrivateMigrationTransport {
     required this.sessionToken,
     required this.deviceId,
     required this.accessIsCurrent,
+    this.allowRetire = false,
     http.Client? client,
   }) : _client = client ?? http.Client();
 
@@ -20,6 +21,7 @@ class LegacyPrivateMigrationTransport {
   final String sessionToken;
   final String? deviceId;
   final bool Function() accessIsCurrent;
+  final bool allowRetire;
   final http.Client _client;
 
   Future<MigrationReply> request(
@@ -28,7 +30,7 @@ class LegacyPrivateMigrationTransport {
     Map<String, dynamic>? body,
   ]) async {
     if (!accessIsCurrent()) throw StateError('Vault session changed');
-    if (!_allowedMigrationRoute(method, path)) {
+    if (!_allowedMigrationRoute(method, path, allowRetire: allowRetire)) {
       throw StateError('Unsupported private migration route');
     }
     final uri = Uri.parse('$backendBaseUrl$path');
@@ -87,7 +89,9 @@ bool _containsPinField(Object? value) {
   return false;
 }
 
-bool _allowedMigrationRoute(String method, String path) {
+bool _allowedMigrationRoute(String method, String path, {
+  required bool allowRetire,
+}) {
   if (!path.startsWith('/') || path.contains('..') ||
       path.contains('?') || path.contains('#')) {
     return false;
@@ -98,8 +102,17 @@ bool _allowedMigrationRoute(String method, String path) {
   final fileV2Read = RegExp(
     r'^/vault/file-v2/[^/]+/(manifest|chunk/[0-9]+)$',
   ).hasMatch(path);
-  if (method == 'GET') return stagedRead || fileV2Read;
+  if (method == 'GET') {
+    return stagedRead || fileV2Read ||
+        (allowRetire && path == '/vault/ciphertext/vault-items');
+  }
   if (method == 'POST') {
+    if (allowRetire && <String>{
+      '/vault/legacy-ciphertext/migrate/item-retire',
+      '/vault/legacy-ciphertext/migrate/file-retire',
+    }.contains(path)) {
+      return true;
+    }
     return const <String>{
       '/vault/legacy-ciphertext/migrate/item-stage',
       '/vault/legacy-ciphertext/migrate/item-reset-stage',

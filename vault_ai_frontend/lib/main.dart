@@ -45,6 +45,7 @@ import 'services/legacy_ciphertext_migration_codec.dart' as legacy_codec;
 import 'services/legacy_saved_item_replacement.dart' as legacy_item_replace;
 import 'services/legacy_saved_item_deletion.dart' as legacy_item_delete;
 import 'services/legacy_content_migration_stager.dart' as legacy_stage;
+import 'services/legacy_content_retirement_coordinator.dart' as legacy_retire;
 import 'services/legacy_private_migration_transport.dart' as private_stage;
 import 'services/legacy_stage_pin_lease.dart';
 import 'services/zk_pin_gate_migration_handoff.dart';
@@ -861,6 +862,13 @@ const bool kEnablePrivateLegacyStageOnDemand = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// A separate, owner-initiated cutover. Keep off until every reader, wallet,
+// and older metadata family has been reviewed on web and both mobile apps.
+const bool kEnablePrivateLegacyRetireOnDemand = bool.fromEnvironment(
+  'VAULTAI_ENABLE_PRIVATE_LEGACY_RETIRE_ON_DEMAND',
+  defaultValue: false,
+);
+
 // Temporary, opt-in browser-only trace for the stage-only rollout. The
 // formatter accepts an enum, never a PIN, identifier, key, token or error.
 const bool kEnableLegacyStageDiagnostics = bool.fromEnvironment(
@@ -915,6 +923,13 @@ const bool kEnableLegacyFileExtraStage = bool.fromEnvironment(
   'VAULTAI_ENABLE_LEGACY_FILE_EXTRA_STAGE',
   defaultValue: false,
 ) && kEnableLegacyStageRecovery;
+
+// Version 3 preserves a larger legacy transcript/OCR field in an encrypted
+// manifest. It is available only in the explicit owner upgrade action.
+const bool kEnableLegacyFileExtraStageV3 = bool.fromEnvironment(
+  'VAULTAI_ENABLE_LEGACY_FILE_EXTRA_V3_STAGE',
+  defaultValue: false,
+) && kEnableLegacyFileExtraStage && kEnablePrivateLegacyStageOnDemand;
 
 const bool kEnableFileV2UiRead = bool.fromEnvironment(
   'VAULTAI_ENABLE_FILE_V2_UI_READ',
@@ -5884,44 +5899,108 @@ Future<void> _stageLegacyContentBestEffort({
   }
 }
 
-Future<legacy_stage.LegacyStageResult> preparePrivateLegacyContentOnDemand(
+Future<({
+  legacy_stage.LegacyStageResult stage,
+  legacy_retire.LegacyRetirementResult? retirement,
+})> _runPrivateLegacyContentOnDemand(
   AppState app, {
   required Future<String?> Function() promptPin,
+  required bool finishUpgrade,
 }) async {
   if (!kPrivateOnlyUnlockEnabled || !kEnablePrivateLegacyStageOnDemand) {
     throw StateError('Private content preparation is unavailable');
   }
-  final source = await createLocalLegacyPasswordSourceForActiveVault(
-    app, promptPin: promptPin,
-  );
-  final token = app.sessionToken;
-  if (token == null || !source.stillCurrent()) {
-    source.close();
-    throw StateError('Vault session changed');
+  if (finishUpgrade && !kEnablePrivateLegacyRetireOnDemand) {
+    throw StateError('Private content completion is unavailable');
   }
-  final transport = private_stage.LegacyPrivateMigrationTransport(
-    backendBaseUrl: backendBaseUrl,
-    sessionToken: token,
-    deviceId: apiClientDeviceId(),
-    accessIsCurrent: source.stillCurrent,
-  );
+  LegacyStagePinLease? pinLease;
+  Future<String?> boundedOwnerPrompt() async {
+    final active = pinLease;
+    if (active != null) {
+      try {
+        return active.requirePin();
+      } on StateError {
+        active.clear();
+        pinLease = null;
+        throw StateError('Owner upgrade session expired. Resume later.');
+      }
+    }
+    final pin = await promptPin();
+    if (pin != null) pinLease = LegacyStagePinLease(pin);
+    return pin;
+  }
   try {
-    final result = await legacy_stage.LegacyContentMigrationStager(
-      enabled: true,
-      recoveryEnabled: kEnableLegacyStageRecovery,
-      prioritizeUnstagedFiles: true,
-      extraFileMetadataEnabled: kEnableLegacyFileExtraStage,
-      requireReadbackEvidence: true,
-      export: source.export,
-      codec: source.codec,
-      request: transport.request,
-    ).stageAndVerify();
-    if (!source.stillCurrent()) throw StateError('Vault session changed');
-    return result;
+    final source = await createLocalLegacyPasswordSourceForActiveVault(
+      app, promptPin: boundedOwnerPrompt,
+    );
+    final token = app.sessionToken;
+    if (token == null || !source.stillCurrent()) {
+      source.close();
+      throw StateError('Vault session changed');
+    }
+    final transport = private_stage.LegacyPrivateMigrationTransport(
+      backendBaseUrl: backendBaseUrl,
+      sessionToken: token,
+      deviceId: apiClientDeviceId(),
+      accessIsCurrent: source.stillCurrent,
+      allowRetire: finishUpgrade,
+    );
+    try {
+      final result = await legacy_stage.LegacyContentMigrationStager(
+        enabled: true,
+        recoveryEnabled: kEnableLegacyStageRecovery,
+        prioritizeUnstagedFiles: true,
+        extraFileMetadataEnabled: kEnableLegacyFileExtraStage,
+        extraFileMetadataV3Enabled: kEnableLegacyFileExtraStageV3,
+        requireReadbackEvidence: true,
+        maxFileCiphertextChars:
+            legacy_stage.LegacyContentMigrationStager
+                .maxOwnerInitiatedFileCiphertextChars,
+        export: source.export,
+        codec: source.codec,
+        request: transport.request,
+      ).stageAndVerify();
+      if (!source.stillCurrent()) throw StateError('Vault session changed');
+      final retirement = finishUpgrade
+          ? await legacy_retire.LegacyContentRetirementCoordinator(
+              enabled: true,
+              accessIsCurrent: source.stillCurrent,
+              mvk: source.codec.mvk,
+              request: transport.request,
+              freshProof: source.export.proofProvider,
+              now: DateTime.now,
+            ).complete(result.verifiedReadbacks, ownerInitiated: true)
+          : null;
+      return (stage: result, retirement: retirement);
+    } finally {
+      transport.close();
+      source.close();
+    }
   } finally {
-    transport.close();
-    source.close();
+    pinLease?.clear();
   }
+}
+
+Future<legacy_stage.LegacyStageResult> preparePrivateLegacyContentOnDemand(
+  AppState app, {
+  required Future<String?> Function() promptPin,
+}) async => (await _runPrivateLegacyContentOnDemand(
+  app, promptPin: promptPin, finishUpgrade: false,
+)).stage;
+
+Future<({
+  legacy_stage.LegacyStageResult stage,
+  legacy_retire.LegacyRetirementResult retirement,
+})> finishPrivateLegacyContentOnDemand(
+  AppState app, {
+  required Future<String?> Function() promptPin,
+}) async {
+  final result = await _runPrivateLegacyContentOnDemand(
+    app, promptPin: promptPin, finishUpgrade: true,
+  );
+  final retirement = result.retirement;
+  if (retirement == null) throw StateError('Private upgrade did not complete');
+  return (stage: result.stage, retirement: retirement);
 }
 
 final class _BoundLegacySavedItemReadSession {
@@ -13897,12 +13976,17 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         const Expanded(child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('Prepare older vault content',
+                            Text(kEnablePrivateLegacyRetireOnDemand
+                                ? 'Complete older vault upgrade'
+                                : 'Prepare older vault content',
                               style: TextStyle(fontSize: 16,
                                   fontWeight: FontWeight.w700)),
                             SizedBox(height: 2),
-                            Text('Verify encrypted copies of older saved '
-                                'items and files. You can resume later.',
+                            Text(kEnablePrivateLegacyRetireOnDemand
+                                ? 'Verify older items and files, then switch '
+                                    'them to private access. You can resume later.'
+                                : 'Verify encrypted copies of older saved '
+                                    'items and files. You can resume later.',
                               style: TextStyle(fontSize: 13,
                                   color: VaultColors.textSecondary)),
                           ],
@@ -14226,12 +14310,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     setState(() => _privateLegacyStageBusy = true);
     try {
-      final result = await preparePrivateLegacyContentOnDemand(
-        app,
-        promptPin: () => _promptForActionPin(
-          context, 'Verify older vault content',
-        ),
+      Future<String?> ownerPrompt() => _promptForActionPin(
+        context, 'Verify older vault content',
       );
+      final completion = kEnablePrivateLegacyRetireOnDemand
+          ? await finishPrivateLegacyContentOnDemand(
+              app, promptPin: ownerPrompt,
+            )
+          : null;
+      final result = completion?.stage ??
+          await preparePrivateLegacyContentOnDemand(
+            app, promptPin: ownerPrompt,
+          );
       if (!mounted) return;
       final deferred = result.itemsDeferredForSize +
           result.filesDeferredForSize +
@@ -14242,14 +14332,21 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           ? 'No older content needs preparation.'
           : 'Verified encrypted copies of ${result.itemsVerified} saved '
               'items and ${result.filesVerified} files.';
+      final retired = completion?.retirement;
+      final completionText = retired == null
+          ? 'Your originals remain available.'
+          : 'Switched ${retired.itemsRetired} saved items and '
+              '${retired.filesRetired} files to private access. '
+              '${retired.receiptsExpired} verification receipts expired.';
       await showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('Older content preparation'),
+          title: Text(kEnablePrivateLegacyRetireOnDemand
+              ? 'Older content upgrade' : 'Older content preparation'),
           content: Text(deferred == 0
-              ? '$summary Your originals remain available.'
+              ? '$summary $completionText'
               : '$summary $deferred items or files still need a later '
-                  'upgrade pass. Your originals remain available.'),
+                  'upgrade pass. $completionText'),
           actions: [TextButton(
             onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Done'),
@@ -14260,7 +14357,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // The owner dismissed the PIN dialog. No data was changed.
     } catch (error) {
       if (!mounted || app.handleApiException(error)) return;
-      _showSnack('Could not prepare older content. You can retry later.');
+      _showSnack(kEnablePrivateLegacyRetireOnDemand
+          ? 'The upgrade paused. Your encrypted content remains saved. '
+              'You can retry later.'
+          : 'Could not prepare older content. You can retry later.');
     } finally {
       if (mounted) setState(() => _privateLegacyStageBusy = false);
     }

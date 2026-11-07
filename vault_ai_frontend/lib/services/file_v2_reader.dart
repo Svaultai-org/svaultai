@@ -137,22 +137,32 @@ class FileV2Reader {
         chunkCount != (total + chunkSize - 1) ~/ chunkSize) {
       throw const FormatException('Invalid V2 file framing');
     }
+    final migrationMetadataVersion =
+        response['migration_metadata_version'] ?? 1;
+    if (migrationMetadataVersion is! int ||
+        migrationMetadataVersion < 1 || migrationMetadataVersion > 3) {
+      throw const FormatException('Invalid V2 file metadata version');
+    }
+    final encodedManifest = response['manifest_ciphertext'] as String;
+    final maxManifestBytes = migrationMetadataVersion == 3
+        ? 2 * 1024 * 1024
+        : migrationMetadataVersion == 2 ? 512 * 1024 : 128 * 1024;
+    if (encodedManifest.length > ((maxManifestBytes + 64) * 4 ~/ 3) + 8) {
+      throw const FormatException('V2 file manifest exceeds safe limit');
+    }
     final metadataKey = await VaultKeyHierarchy(mvk).metadataKey();
     final plaintext = await aesGcmUnwrap(
       metadataKey,
-      b64urlDecode(response['manifest_ciphertext'] as String),
+      b64urlDecode(encodedManifest),
     );
     final decoded = jsonDecode(utf8.decode(plaintext));
-    final migrationMetadataVersion =
-        response['migration_metadata_version'] ?? 1;
     if (decoded is! Map ||
-        migrationMetadataVersion is! int ||
-        migrationMetadataVersion < 1 ||
-        migrationMetadataVersion > 2 ||
         decoded['schema'] !=
             (migrationMetadataVersion == 2
                 ? 'vaultai.file.migrated.v2'
-                : 'vaultai.file.migrated.v1') ||
+                : migrationMetadataVersion == 3
+                    ? 'vaultai.file.migrated.v3'
+                    : 'vaultai.file.migrated.v1') ||
         decoded['file_id'] != fileId ||
         decoded['file_size'] != total ||
         decoded['chunk_size'] != chunkSize ||
@@ -161,7 +171,7 @@ class FileV2Reader {
     }
     String? relativePath;
     String? extractedText;
-    if (migrationMetadataVersion == 2) {
+    if (migrationMetadataVersion >= 2) {
       final extra = decoded['legacy_extra'];
       if (extra is! Map ||
           extra.length != 2 ||
@@ -177,7 +187,9 @@ class FileV2Reader {
       extractedText = extra['extracted_text'] as String?;
       if ((relativePath != null && utf8.encode(relativePath).length > 4096) ||
           (extractedText != null &&
-              utf8.encode(extractedText).length > 64 * 1024)) {
+              utf8.encode(extractedText).length >
+                  (migrationMetadataVersion == 3
+                      ? 256 * 1024 : 64 * 1024))) {
         throw const FormatException('V2 legacy file extras too large');
       }
     } else if (decoded.containsKey('legacy_extra')) {

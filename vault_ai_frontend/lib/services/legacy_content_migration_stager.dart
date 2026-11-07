@@ -92,6 +92,7 @@ class LegacyContentMigrationStager {
   // and fetched readback chunks at once. Keep automatic unlock-time work
   // below a conservative per-record memory budget until it streams.
   static const int maxAutomaticCiphertextChars = 8 * 1024 * 1024;
+  static const int maxOwnerInitiatedFileCiphertextChars = 64 * 1024 * 1024;
   // Only independent V2 status/chunk requests run together. Export grant
   // pages, proof operations, and whole-file verification remain sequential.
   static const int maxConcurrentV2Requests = 2;
@@ -100,7 +101,9 @@ class LegacyContentMigrationStager {
   final bool recoveryEnabled;
   final bool prioritizeUnstagedFiles;
   final bool extraFileMetadataEnabled;
+  final bool extraFileMetadataV3Enabled;
   final bool requireReadbackEvidence;
+  final int maxFileCiphertextChars;
   final LegacyCiphertextExportClient export;
   final LegacyCiphertextMigrationCodec codec;
   final MigrationRequest request;
@@ -111,7 +114,9 @@ class LegacyContentMigrationStager {
     this.recoveryEnabled = false,
     this.prioritizeUnstagedFiles = false,
     this.extraFileMetadataEnabled = false,
+    this.extraFileMetadataV3Enabled = false,
     this.requireReadbackEvidence = false,
+    this.maxFileCiphertextChars = maxAutomaticCiphertextChars,
     required this.export,
     required this.codec,
     required this.request,
@@ -121,6 +126,10 @@ class LegacyContentMigrationStager {
   Future<LegacyStageResult> stageAndVerify() async {
     if (!enabled) {
       return const LegacyStageResult(itemsVerified: 0, filesVerified: 0);
+    }
+    if (maxFileCiphertextChars <= 0 ||
+        maxFileCiphertextChars > maxOwnerInitiatedFileCiphertextChars) {
+      throw ArgumentError('Invalid file migration limit');
     }
     var itemsVerified = 0;
     var filesVerified = 0;
@@ -151,13 +160,14 @@ class LegacyContentMigrationStager {
               pathBytes is! int || pathBytes < 0) {
             throw const FormatException('Legacy file extra size unavailable');
           }
-          if (textBytes > 64 * 1024 || pathBytes > 4096) {
+          if (textBytes > (extraFileMetadataV3Enabled
+                  ? 256 * 1024 : 64 * 1024) || pathBytes > 4096) {
             filesDeferredForSize++;
             continue;
           }
         }
         if (file['ciphertext_chars'] is int &&
-            (file['ciphertext_chars'] as int) > maxAutomaticCiphertextChars) {
+            (file['ciphertext_chars'] as int) > maxFileCiphertextChars) {
           filesDeferredForSize++;
           continue;
         }
@@ -482,15 +492,26 @@ class LegacyContentMigrationStager {
       throw const _UnreadableLegacyFileSource();
     }
     Map<String, String?>? legacyExtra;
+    var extraVersion = 2;
     if (extraFileMetadataEnabled) {
       final hasExtra = metadata['has_legacy_extra_data'];
       if (hasExtra is! bool) {
         throw const FormatException('Legacy file extra contract unavailable');
       }
       if (hasExtra) {
+        final listedTextBytes = record['extra_text_bytes'];
+        if (listedTextBytes is! int || listedTextBytes < 0 ||
+            listedTextBytes > 256 * 1024) {
+          throw const FormatException('Legacy file extra size unavailable');
+        }
+        extraVersion = listedTextBytes > 64 * 1024 ? 3 : 2;
+        if (extraVersion == 3 && !extraFileMetadataV3Enabled) {
+          throw const FormatException('Large legacy text is unavailable');
+        }
         legacyExtra = await export.readFileExtras(
           fileId: id,
           sourceSnapshot: source.sourceSnapshot,
+          useV3: extraVersion == 3,
         );
         if (legacyExtra.values.every((value) => value == null)) {
           throw const FormatException('Legacy file extra source changed');
@@ -517,6 +538,7 @@ class LegacyContentMigrationStager {
         contentType: contentType as String?,
         encryptedMetadata: encryptedMetadata,
         legacyExtra: legacyExtra,
+        extraVersion: extraVersion,
       );
     } on FormatException {
       throw const _UnreadableLegacyFileSource();
@@ -574,6 +596,7 @@ class LegacyContentMigrationStager {
               contentType: contentType,
               encryptedMetadata: encryptedMetadata,
               legacyExtra: legacyExtra,
+              extraVersion: extraVersion,
               chunkSize: prepared.chunkSize,
               chunkCount: prepared.chunkCiphertexts.length,
               manifestCiphertext: body['manifest_ciphertext'] as String,
@@ -658,6 +681,7 @@ class LegacyContentMigrationStager {
       contentType: contentType,
       encryptedMetadata: encryptedMetadata,
       legacyExtra: legacyExtra,
+      extraVersion: extraVersion,
       chunkSize: prepared.chunkSize,
       chunkCount: prepared.chunkCiphertexts.length,
       manifestCiphertext: readback['manifest_ciphertext'] as String,

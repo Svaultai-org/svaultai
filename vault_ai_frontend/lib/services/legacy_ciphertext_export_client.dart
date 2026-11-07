@@ -139,6 +139,7 @@ class LegacyCiphertextExportClient {
   Future<Map<String, String?>> readFileExtras({
     required String fileId,
     required String sourceSnapshot,
+    bool useV3 = false,
   }) async {
     if (fileId.isEmpty ||
         !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(sourceSnapshot)) {
@@ -146,12 +147,13 @@ class LegacyCiphertextExportClient {
     }
     try {
       final response = await _page(<String, dynamic>{
-        'mode': 'read_file_extra',
+        'mode': useV3 ? 'read_file_extra_v3' : 'read_file_extra',
         'file_id': fileId,
       });
       final extras = response['legacy_extra'];
       if (response['file_id'] != fileId ||
           response['source_snapshot'] != sourceSnapshot ||
+          (useV3 && response['legacy_extra_version'] != 3) ||
           extras is! Map<String, dynamic> ||
           extras.length != 2 ||
           !extras.containsKey('relative_path') ||
@@ -163,7 +165,8 @@ class LegacyCiphertextExportClient {
       if ((path != null && path is! String) ||
           (text != null && text is! String) ||
           (path is String && utf8.encode(path).length > 4096) ||
-          (text is String && utf8.encode(text).length > 64 * 1024)) {
+          (text is String && utf8.encode(text).length >
+              (useV3 ? 256 * 1024 : 64 * 1024))) {
         throw const FormatException('Invalid legacy file extra shape');
       }
       return <String, String?>{

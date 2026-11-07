@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vault_ai_frontend/services/file_v2_reader.dart';
 import 'package:vault_ai_frontend/services/legacy_ciphertext_export_client.dart';
 import 'package:vault_ai_frontend/services/legacy_ciphertext_migration_codec.dart';
 import 'package:vault_ai_frontend/services/legacy_content_migration_stager.dart';
@@ -38,6 +39,7 @@ LegacyCiphertextExportClient _export({
   Map<String, Map<String, String?>>? fileExtras,
   LegacyProofProvider? proofProvider,
   List<String>? fileReadOrder,
+  List<String>? exportModes,
 }) {
   var nextSequence = 0;
   var grants = 0;
@@ -127,12 +129,16 @@ LegacyCiphertextExportClient _export({
                 },
           };
         case 'read_file_extra':
+        case 'read_file_extra_v3':
           final fileId = body['file_id'] as String;
+          exportModes?.add(body['mode'] as String);
           return <String, dynamic>{
             ...common,
             'file_id': fileId,
             'source_snapshot': fileSnapshots?[fileId] ?? _snapshotA,
             'legacy_extra': fileExtras?[fileId],
+            if (body['mode'] == 'read_file_extra_v3')
+              'legacy_extra_version': 3,
           };
       }
       fail('Unexpected export mode');
@@ -325,6 +331,94 @@ void main() {
     expect(calls.where((path) => path.endsWith('/page')), hasLength(2));
   });
 
+  test('owner file ceiling admits 8 to 64 MiB and defers larger sources',
+      () async {
+    final calls = <String>[];
+    final reads = <String>[];
+    final overAutomatic =
+        LegacyContentMigrationStager.maxAutomaticCiphertextChars + 1;
+    final overBackend =
+        LegacyContentMigrationStager.maxOwnerInitiatedFileCiphertextChars + 1;
+    final owner = LegacyContentMigrationStager(
+      enabled: true,
+      maxFileCiphertextChars:
+          LegacyContentMigrationStager.maxOwnerInitiatedFileCiphertextChars,
+      export: _export(
+        itemRows: const [],
+        fileRows: <Map<String, dynamic>>[{
+          'file_id': 'owner-large', 'ciphertext_chars': overAutomatic,
+        }],
+        itemCiphertexts: const {},
+        fileCiphertexts: const {},
+        calls: calls,
+        fileReadOrder: reads,
+      ),
+      codec: LegacyCiphertextMigrationCodec(
+        legacyKey: _legacyKey, mvk: _mvk,
+      ),
+      request: (_, __, [___]) async =>
+          throw StateError('No V2 route is needed before source read'),
+    );
+    await expectLater(owner.stageAndVerify(), throwsA(anything));
+    expect(reads, ['owner-large']);
+
+    final oversized = await LegacyContentMigrationStager(
+      enabled: true,
+      maxFileCiphertextChars:
+          LegacyContentMigrationStager.maxOwnerInitiatedFileCiphertextChars,
+      export: _export(
+        itemRows: const [],
+        fileRows: <Map<String, dynamic>>[{
+          'file_id': 'above-backend', 'ciphertext_chars': overBackend,
+        }],
+        itemCiphertexts: const {},
+        fileCiphertexts: const {},
+        calls: <String>[],
+      ),
+      codec: LegacyCiphertextMigrationCodec(
+        legacyKey: _legacyKey, mvk: _mvk,
+      ),
+      request: (_, __, [___]) async =>
+          throw StateError('Oversize source must stay untouched'),
+    ).stageAndVerify();
+    expect(oversized.filesDeferredForSize, 1);
+  });
+
+  test('local codec verifies a synthetic 9 MiB owner file', () async {
+    final plain = List<int>.filled(9 * 1024 * 1024, 7);
+    final legacy = await _legacyEncrypt(plain);
+    expect(legacy.length,
+        greaterThan(LegacyContentMigrationStager.maxAutomaticCiphertextChars));
+    expect(legacy.length,
+        lessThan(LegacyContentMigrationStager.maxOwnerInitiatedFileCiphertextChars));
+    final codec = LegacyCiphertextMigrationCodec(
+      legacyKey: _legacyKey, mvk: _mvk,
+    );
+    final metadataKey = await VaultKeyHierarchy(_mvk).metadataKey();
+    final metadata = <String, String?>{
+      'file_name_ciphertext': b64urlEncode(await aesGcmWrap(
+          metadataKey, utf8.encode('synthetic-large.bin'))),
+    };
+    final staged = await codec.stageFile(
+      fileId: 'synthetic-large',
+      legacyCiphertext: legacy,
+      declaredFileSize: plain.length,
+      contentType: 'application/octet-stream',
+      encryptedMetadata: metadata,
+    );
+    expect(await codec.verifyStagedFile(
+      fileId: 'synthetic-large',
+      legacyCiphertext: legacy,
+      declaredFileSize: plain.length,
+      contentType: 'application/octet-stream',
+      encryptedMetadata: metadata,
+      chunkSize: staged.chunkSize,
+      chunkCount: staged.chunkCiphertexts.length,
+      manifestCiphertext: staged.manifestCiphertext,
+      chunkCiphertexts: staged.chunkCiphertexts,
+    ), isTrue);
+  });
+
   test('oversize legacy text is deferred before owner content export',
       () async {
     final calls = <String>[];
@@ -354,6 +448,107 @@ void main() {
     expect(result.filesVerified, 0);
     expect(result.filesDeferredForSize, 1);
     expect(calls.where((path) => path.endsWith('/page')), hasLength(2));
+  });
+
+  test('owner V3 path preserves a 201 KiB legacy text field', () async {
+    final text = List<String>.filled(201 * 1024, 'x').join();
+    final encrypted = await _legacyEncrypt(<int>[1, 2, 3]);
+    final modes = <String>[];
+    final stager = LegacyContentMigrationStager(
+      enabled: true,
+      extraFileMetadataEnabled: true,
+      extraFileMetadataV3Enabled: true,
+      export: _export(
+        itemRows: const [],
+        fileRows: <Map<String, dynamic>>[{
+          'file_id': 'synthetic-v3',
+          'ciphertext_chars': encrypted.length,
+          'extra_text_bytes': utf8.encode(text).length,
+          'extra_path_bytes': 0,
+        }],
+        itemCiphertexts: const {},
+        fileCiphertexts: {'synthetic-v3': encrypted},
+        calls: <String>[],
+        exportModes: modes,
+        fileSourceMetadata: <String, Map<String, dynamic>>{
+          'synthetic-v3': {
+            'file_size': 3,
+            'file_name': 'synthetic-v3.bin',
+            'content_type': 'application/octet-stream',
+            'has_legacy_extra_data': true,
+          },
+        },
+        fileExtras: <String, Map<String, String?>>{
+          'synthetic-v3': {
+            'relative_path': null, 'extracted_text': text,
+          },
+        },
+      ),
+      codec: LegacyCiphertextMigrationCodec(
+        legacyKey: _legacyKey, mvk: _mvk,
+      ),
+      request: (_, __, [___]) async =>
+          throw StateError('V3 export and local staging reached'),
+    );
+    await expectLater(stager.stageAndVerify(), throwsStateError);
+    expect(modes, ['read_file_extra_v3']);
+  });
+
+  test('V3 manifest readback decrypts exact large extracted text', () async {
+    final text = List<String>.filled(201 * 1024, 'v').join();
+    final legacy = await _legacyEncrypt(<int>[1, 2, 3]);
+    final metadataKey = await VaultKeyHierarchy(_mvk).metadataKey();
+    final metadata = <String, String?>{
+      'file_name_ciphertext': b64urlEncode(await aesGcmWrap(
+          metadataKey, utf8.encode('synthetic-v3.bin'))),
+    };
+    final extra = <String, String?>{
+      'relative_path': 'private/folder',
+      'extracted_text': text,
+    };
+    final codec = LegacyCiphertextMigrationCodec(
+      legacyKey: _legacyKey, mvk: _mvk,
+    );
+    final staged = await codec.stageFile(
+      fileId: 'synthetic-v3', legacyCiphertext: legacy,
+      declaredFileSize: 3, contentType: 'application/octet-stream',
+      encryptedMetadata: metadata, legacyExtra: extra, extraVersion: 3,
+    );
+    expect(staged.migrationMetadataVersion, 3);
+    expect(staged.toManifestBody()['migration_metadata_version'], 3);
+    expect(await codec.verifyStagedFile(
+      fileId: 'synthetic-v3', legacyCiphertext: legacy,
+      declaredFileSize: 3, contentType: 'application/octet-stream',
+      encryptedMetadata: metadata, legacyExtra: extra, extraVersion: 3,
+      chunkSize: staged.chunkSize,
+      chunkCount: staged.chunkCiphertexts.length,
+      manifestCiphertext: staged.manifestCiphertext,
+      chunkCiphertexts: staged.chunkCiphertexts,
+    ), isTrue);
+    final reader = FileV2Reader(mvk: _mvk, get: (path) async {
+      if (path.endsWith('/manifest')) {
+        return <String, dynamic>{
+          'file_id': 'synthetic-v3',
+          'crypto_version': 'client_mvk_v2',
+          'manifest_ciphertext': staged.manifestCiphertext,
+          'total_bytes': 3, 'chunk_size': staged.chunkSize,
+          'chunk_count': staged.chunkCiphertexts.length,
+          'migration_metadata_version': 3,
+          'lifecycle_state': 'legacy_migration_retired',
+          'verification_state': 'client_verified',
+          'name_version': 0,
+        };
+      }
+      expect(path, '/vault/file-v2/synthetic-v3/chunk/0');
+      return <String, dynamic>{
+        'file_id': 'synthetic-v3', 'chunk_index': 0,
+        'ciphertext': staged.chunkCiphertexts.single,
+      };
+    });
+    final read = await reader.download('synthetic-v3', requireRetired: true);
+    expect(read.bytes, [1, 2, 3]);
+    expect(read.manifest.relativePath, 'private/folder');
+    expect(read.manifest.extractedText, text);
   });
 
   test('unreadable local file source does not block a later valid file',
