@@ -16,6 +16,7 @@ from auth_local import (
     PIN_FREE_FILE_CREATE_OFFER,
     PIN_FREE_FILE_DOWNLOAD_OFFER,
     PIN_FREE_FILE_LIST_OFFER,
+    PIN_FREE_PASSWORD_ANALYSIS_OFFER,
     PIN_FREE_PRIVATE_CHAT_OFFER,
     _parse_token_claims,
 )
@@ -53,6 +54,9 @@ def _signed_offer_bits(headers: list[tuple[bytes, bytes]]) -> int:
 
 def _replaced_pin_route(path: str, offers: int) -> str | None:
     path = path.rstrip("/")
+    if (offers & PIN_FREE_PASSWORD_ANALYSIS_OFFER and
+            path == "/security-center/analyze-passwords"):
+        return "pin_free_password_analysis_required"
     if (offers & PIN_FREE_PRIVATE_CHAT_OFFER and
             _replaced_private_chat_path(path)):
         return "pin_free_private_chat_required"
@@ -72,6 +76,7 @@ def _replaced_pin_route(path: str, offers: int) -> str | None:
 def _candidate_pin_path(path: str) -> bool:
     path = path.rstrip("/")
     return (_replaced_private_chat_path(path) or
+            path == "/security-center/analyze-passwords" or
             path in ("/list-files", "/download-file", "/download-file/manifest",
                      "/upload-file", "/upload-file/init"))
 

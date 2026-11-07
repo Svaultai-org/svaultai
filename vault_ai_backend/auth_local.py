@@ -122,8 +122,9 @@ PIN_FREE_ITEM_READ_OFFER = 1
 PIN_FREE_FILE_LIST_OFFER = 2
 PIN_FREE_FILE_DOWNLOAD_OFFER = 4
 PIN_FREE_FILE_CREATE_OFFER = 8
+PIN_FREE_PASSWORD_ANALYSIS_OFFER = 16
 PIN_FREE_PRIVATE_CHAT_OFFER = 512
-_SIGNED_OFFER_MASK = 15
+_SIGNED_OFFER_MASK = 31
 _SIGNED_WIDE_OFFER_MASK = _SIGNED_OFFER_MASK | PIN_FREE_PRIVATE_CHAT_OFFER
 
 
@@ -770,6 +771,10 @@ def require_signed_offer_route(principal: SessionPrincipal, *, path: str) -> Non
             offers & ~_SIGNED_WIDE_OFFER_MASK):
         raise _auth_401("invalid_session")
     path = path.rstrip("/")
+    if (path == "/security-center/analyze-passwords" and
+            offers & PIN_FREE_PASSWORD_ANALYSIS_OFFER):
+        raise HTTPException(status_code=409,
+                            detail="pin_free_password_analysis_required")
     if offers & PIN_FREE_PRIVATE_CHAT_OFFER and (
             path == "/chat" or path == "/vault-analysis/deep-answer" or
             (path.startswith("/vault-analysis/deep-answer/") and
