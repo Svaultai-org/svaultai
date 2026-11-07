@@ -187,12 +187,37 @@ class WalletV2MigrationClient {
     return decoded;
   }
 
+  /// Prepare an exact, locally verified V2 copy without retiring the source.
+  /// A prepared wallet is pending and cannot be used for receiving or signing.
+  Future<String> prepareLegacy({
+    required int legacyItemId,
+    required LegacyCiphertextSource source,
+    required WalletV2Identity identity,
+  }) => _stageOrMigrateLegacy(
+    legacyItemId: legacyItemId,
+    source: source,
+    identity: identity,
+    retire: false,
+  );
+
   /// Stages, reads back, locally decrypts, then retires one exact legacy row.
   /// Any failure before retirement leaves the legacy source intact.
   Future<String> migrateLegacy({
     required int legacyItemId,
     required LegacyCiphertextSource source,
     required WalletV2Identity identity,
+  }) => _stageOrMigrateLegacy(
+    legacyItemId: legacyItemId,
+    source: source,
+    identity: identity,
+    retire: true,
+  );
+
+  Future<String> _stageOrMigrateLegacy({
+    required int legacyItemId,
+    required LegacyCiphertextSource source,
+    required WalletV2Identity identity,
+    required bool retire,
   }) async {
     identity.validate();
     _checkAccess();
@@ -329,6 +354,9 @@ class WalletV2MigrationClient {
             verified.secret, activeIdentity.publicAddress)) {
       throw const FormatException('Wallet readback verification failed');
     }
+    // Preparation must not request a retirement proof or remove the legacy
+    // wallet. The verified pending ciphertext can be resumed later.
+    if (!retire) return activeIdentity.recordId;
     final proof = await proofProvider();
     _checkAccess();
     if (proof.isEmpty) throw StateError('Wallet proof unavailable');

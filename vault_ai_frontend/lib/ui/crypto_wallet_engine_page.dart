@@ -344,14 +344,14 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
       if (!mounted) return;
       setState(() {
         _walletUpgradeStatus = count == 0
-            ? 'No older wallets needed upgrading.'
-            : '$count older wallet${count == 1 ? '' : 's'} upgraded.';
+            ? 'No older wallets need preparation.'
+            : 'Verified encrypted copies of $count older wallet${count == 1 ? '' : 's'}. Your originals remain available.';
       });
       await _loadFeatures();
     } catch (_) {
       if (!mounted) return;
       setState(() => _walletUpgradeStatus =
-          'Wallet upgrade was not completed. Existing data remains saved.');
+          'Wallet preparation paused. Existing data remains saved.');
     } finally {
       if (mounted) setState(() => _upgradingWallets = false);
     }
@@ -1541,7 +1541,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
             onPressed: upgradingWallets ? null : onUpgradeLegacyWallets,
             icon: const Icon(Icons.sync_rounded, size: 16),
             label: Text(upgradingWallets
-                ? 'Upgrading wallets…' : 'Upgrade existing wallets'),
+                ? 'Preparing wallets…' : 'Prepare existing wallets'),
           ),
         if (walletUpgradeStatus != null)
           Text(walletUpgradeStatus!,

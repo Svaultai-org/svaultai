@@ -23106,8 +23106,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       wallet: walletV2,
                       proofProvider: source.proof,
                       accessIsCurrent: source.stillCurrent,
-                    ).run();
-                    return result.migrated;
+                    ).run(prepareOnly: true);
+                    return result.prepared;
                   } finally {
                     source.close();
                   }

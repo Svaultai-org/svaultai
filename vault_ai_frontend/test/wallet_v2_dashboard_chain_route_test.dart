@@ -219,7 +219,7 @@ Future<void> _pumpDashboard(
 }
 
 void main() {
-  testWidgets('private wallet upgrade starts once and reports completion',
+  testWidgets('private wallet preparation starts once and reports copies',
       (tester) async {
     final api = _ChainApi('SOL', 'synthetic-SOL-address');
     final pending = Completer<int>();
@@ -243,7 +243,7 @@ void main() {
     pending.complete(1);
     await tester.pumpAndSettle();
     expect(calls, 1);
-    expect(find.text('1 older wallet upgraded.'), findsOneWidget);
+    expect(find.text('Verified encrypted copies of 1 older wallet. Your originals remain available.'), findsOneWidget);
   });
 
   for (final asset in ['SOL', 'USDT_TRC20']) {

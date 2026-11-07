@@ -11,10 +11,12 @@ import 'wallet_v2_migration.dart';
 
 class WalletV2UpgradeResult {
   final int migrated;
+  final int prepared;
   final int inspected;
 
   const WalletV2UpgradeResult({
     required this.migrated,
+    this.prepared = 0,
     required this.inspected,
   });
 }
@@ -40,12 +42,15 @@ class WalletV2OwnerUpgrade {
     }
   }
 
-  Future<WalletV2UpgradeResult> run() async {
+  /// Preparation verifies a pending V2 copy while the old wallet remains
+  /// usable. Retirement is a separate, explicit owner action.
+  Future<WalletV2UpgradeResult> run({bool prepareOnly = false}) async {
     _requireAccess();
     // The inventory may include saved items. Never read their ciphertext.
     final inventory = await export.listItemsBounded(maxRecords: 5000);
     _requireAccess();
     var migrated = 0;
+    var prepared = 0;
     var inspected = 0;
     for (final row in inventory) {
       if (row['item_type'] != 'crypto_wallet_account') continue;
@@ -121,15 +126,34 @@ class WalletV2OwnerUpgrade {
             wallet.secretMatchesAddress(chain, secret, address),
         accessIsCurrent: () => accessIsCurrent() && wallet.accessIsCurrent(),
       );
-      final publishedId = await migrator.migrateLegacy(
-        legacyItemId: itemId,
-        source: source,
-        identity: identity,
-      );
+      final recordId = prepareOnly
+          ? await migrator.prepareLegacy(
+              legacyItemId: itemId,
+              source: source,
+              identity: identity,
+            )
+          : await migrator.migrateLegacy(
+              legacyItemId: itemId,
+              source: source,
+              identity: identity,
+            );
       _requireAccess();
+      if (prepareOnly) {
+        final pending = await wallet.findPending(slot);
+        if (pending == null ||
+            pending.identity.recordId != recordId ||
+            pending.identity.publicAddress != identity.publicAddress ||
+            pending.identity.label != identity.label ||
+            pending.legacyItemId != itemId ||
+            pending.legacySourceSnapshot != source.sourceSnapshot) {
+          throw StateError('Prepared wallet is not visible');
+        }
+        prepared++;
+        continue;
+      }
       final published = await wallet.findVerified(slot);
       if (published == null ||
-          published.recordId != publishedId ||
+          published.recordId != recordId ||
           published.publicAddress != identity.publicAddress ||
           published.label != identity.label) {
         throw StateError('Upgraded wallet is not visible');
@@ -138,6 +162,10 @@ class WalletV2OwnerUpgrade {
       _requireAccess();
       migrated++;
     }
-    return WalletV2UpgradeResult(migrated: migrated, inspected: inspected);
+    return WalletV2UpgradeResult(
+      migrated: migrated,
+      prepared: prepared,
+      inspected: inspected,
+    );
   }
 }

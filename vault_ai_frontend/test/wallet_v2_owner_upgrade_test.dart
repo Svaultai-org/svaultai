@@ -55,6 +55,7 @@ class _Server {
   Map<String, dynamic>? stage;
   bool sourcePresent = true;
   bool verified = false;
+  int proofCalls = 0;
 
   Future<Map<String, dynamic>> post(
       String path, Map<String, dynamic> body) async {
@@ -102,7 +103,23 @@ class _Server {
       };
     }
     if (path == '/vault/wallet-v2/pending') {
-      return {'wallets': <Object>[]};
+      return {
+        'wallets': stage == null || verified
+            ? <Object>[]
+            : [
+                {
+                  'wallet_record_id': _recordId,
+                  'chain': 'evm',
+                  'network': 'ethereum_mainnet',
+                  'asset': 'ETH',
+                  'public_address': _address,
+                  'wallet_label': 'Synthetic wallet',
+                  'migration_state': 'migration_pending',
+                  'legacy_item_id': 42,
+                  'legacy_source_snapshot': _snapshot,
+                }
+              ],
+      };
     }
     if (path == '/vault/wallet-v2/$_recordId') {
       expect(stage, isNotNull);
@@ -171,6 +188,7 @@ Future<({WalletV2OwnerUpgrade upgrade, _Export export, _Server server})> _setup(
           LegacyCiphertextMigrationCodec(legacyKey: legacyKey, mvk: mvk),
       wallet: wallet,
       proofProvider: () async {
+        server.proofCalls++;
         expect(server.sourcePresent, isTrue);
         return 'synthetic-action-proof';
       },
@@ -191,6 +209,7 @@ void main() {
     expect(fixture.export.reads, 1);
     expect(fixture.server.sourcePresent, isFalse);
     expect(fixture.server.verified, isTrue);
+    expect(fixture.server.proofCalls, 1);
     expect(
         fixture.server.calls.indexOf('/vault/wallet-v2/$_recordId'),
         lessThan(
@@ -203,6 +222,39 @@ void main() {
     await expectLater(fixture.upgrade.run(), throwsFormatException);
     expect(fixture.server.sourcePresent, isTrue);
     expect(fixture.server.verified, isFalse);
+    expect(fixture.server.proofCalls, 0);
+    expect(fixture.server.calls,
+        isNot(contains('/vault/wallet-v2/migrate/retire')));
+  });
+
+  test('prepare verifies a pending copy and preserves the old wallet', () async {
+    final fixture = await _setup();
+    final result = await fixture.upgrade.run(prepareOnly: true);
+    expect(result.prepared, 1);
+    expect(result.migrated, 0);
+    expect(result.inspected, 1);
+    expect(fixture.server.sourcePresent, isTrue);
+    expect(fixture.server.verified, isFalse);
+    expect(fixture.server.proofCalls, 0);
+    expect(fixture.server.stage, isNotNull);
+    expect(fixture.server.calls,
+        isNot(contains('/vault/wallet-v2/migrate/retire')));
+
+    // Re-running verifies the same ciphertext rather than creating another
+    // wallet or retiring the source.
+    final second = await fixture.upgrade.run(prepareOnly: true);
+    expect(second.prepared, 1);
+    expect(fixture.server.proofCalls, 0);
+    expect(fixture.server.calls.where(
+        (path) => path == '/vault/wallet-v2/migrate/stage'), hasLength(1));
+  });
+
+  test('failed prepare readback leaves the old wallet untouched', () async {
+    final fixture = await _setup(corruptReadback: true);
+    await expectLater(
+        fixture.upgrade.run(prepareOnly: true), throwsFormatException);
+    expect(fixture.server.sourcePresent, isTrue);
+    expect(fixture.server.proofCalls, 0);
     expect(fixture.server.calls,
         isNot(contains('/vault/wallet-v2/migrate/retire')));
   });
