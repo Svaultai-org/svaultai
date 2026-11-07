@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from psycopg2.extras import RealDictCursor
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from auth_local import verify_session_token
 from device_gate import (
@@ -436,7 +436,7 @@ class SelfApprovalRequest(BaseModel):
 
 class SelfApprovalProofRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    zk_proof_token: str
+    zk_proof_token: str = Field(..., min_length=1, max_length=128)
 
 
 def _require_pending_proof_self_approval(vault_id: str) -> None:
