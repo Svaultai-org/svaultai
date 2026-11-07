@@ -45,6 +45,7 @@ import 'services/legacy_ciphertext_migration_codec.dart' as legacy_codec;
 import 'services/legacy_saved_item_replacement.dart' as legacy_item_replace;
 import 'services/legacy_saved_item_deletion.dart' as legacy_item_delete;
 import 'services/legacy_content_migration_stager.dart' as legacy_stage;
+import 'services/legacy_private_migration_transport.dart' as private_stage;
 import 'services/legacy_stage_pin_lease.dart';
 import 'services/zk_pin_gate_migration_handoff.dart';
 import 'services/file_v2_writer.dart';
@@ -852,6 +853,13 @@ const bool kEnableLegacyContentStage = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// An explicit owner action can stage and verify older ciphertext with a
+// one-time OPAQUE proof and a local key. It never retires the original rows.
+const bool kEnablePrivateLegacyStageOnDemand = bool.fromEnvironment(
+  'VAULTAI_ENABLE_PRIVATE_LEGACY_STAGE_ON_DEMAND',
+  defaultValue: false,
+);
+
 // Temporary, opt-in browser-only trace for the stage-only rollout. The
 // formatter accepts an enum, never a PIN, identifier, key, token or error.
 const bool kEnableLegacyStageDiagnostics = bool.fromEnvironment(
@@ -898,7 +906,7 @@ void _legacyStageDiagnostic(LegacyStageDiagnosticCode code) {
 const bool kEnableLegacyStageRecovery = bool.fromEnvironment(
   'VAULTAI_ENABLE_LEGACY_STAGE_RECOVERY',
   defaultValue: false,
-) && kEnableLegacyContentStage;
+) && (kEnableLegacyContentStage || kEnablePrivateLegacyStageOnDemand);
 
 // Requires backend 0056 and the proof-bound read_file_extra export mode.
 // Keep off until V2 readers on all supported clients can read V2 manifests.
@@ -5869,6 +5877,46 @@ Future<void> _stageLegacyContentBestEffort({
   }
 }
 
+Future<legacy_stage.LegacyStageResult> preparePrivateLegacyContentOnDemand(
+  AppState app, {
+  required Future<String?> Function() promptPin,
+}) async {
+  if (!kPrivateOnlyUnlockEnabled || !kEnablePrivateLegacyStageOnDemand) {
+    throw StateError('Private content preparation is unavailable');
+  }
+  final source = await createLocalLegacyPasswordSourceForActiveVault(
+    app, promptPin: promptPin,
+  );
+  final token = app.sessionToken;
+  if (token == null || !source.stillCurrent()) {
+    source.close();
+    throw StateError('Vault session changed');
+  }
+  final transport = private_stage.LegacyPrivateMigrationTransport(
+    backendBaseUrl: backendBaseUrl,
+    sessionToken: token,
+    deviceId: apiClientDeviceId(),
+    accessIsCurrent: source.stillCurrent,
+  );
+  try {
+    final result = await legacy_stage.LegacyContentMigrationStager(
+      enabled: true,
+      recoveryEnabled: kEnableLegacyStageRecovery,
+      prioritizeUnstagedFiles: true,
+      extraFileMetadataEnabled: kEnableLegacyFileExtraStage,
+      requireReadbackEvidence: true,
+      export: source.export,
+      codec: source.codec,
+      request: transport.request,
+    ).stageAndVerify();
+    if (!source.stillCurrent()) throw StateError('Vault session changed');
+    return result;
+  } finally {
+    transport.close();
+    source.close();
+  }
+}
+
 final class _BoundLegacySavedItemReadSession {
   const _BoundLegacySavedItemReadSession({
     required this.token,
@@ -10285,6 +10333,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   late final RecordingStorage _recordingStorage;
 
   late final UploadQueueController _uploadQueue;
+  bool _privateLegacyStageBusy = false;
 
   _UploadContext? _currentUploadContext;
 
@@ -13819,6 +13868,50 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 ),
                 const SizedBox(height: 12),
 
+                if (kPrivateOnlyUnlockEnabled &&
+                    kEnablePrivateLegacyStageOnDemand &&
+                    app.vaultHandle?.isNotEmpty == true) ...[
+                  InkWell(
+                    key: const Key('settings_prepare_older_content'),
+                    onTap: _privateLegacyStageBusy
+                        ? null : _prepareOlderContentOnDemand,
+                    borderRadius: BorderRadius.circular(18),
+                    child: Container(
+                      padding: const EdgeInsets.all(18),
+                      decoration: BoxDecoration(
+                        color: VaultColors.surface,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: Colors.white10),
+                      ),
+                      child: Row(children: [
+                        const Icon(Icons.upgrade,
+                            color: VaultColors.textSecondary),
+                        const SizedBox(width: 12),
+                        const Expanded(child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Prepare older vault content',
+                              style: TextStyle(fontSize: 16,
+                                  fontWeight: FontWeight.w700)),
+                            SizedBox(height: 2),
+                            Text('Verify encrypted copies of older saved '
+                                'items and files. You can resume later.',
+                              style: TextStyle(fontSize: 13,
+                                  color: VaultColors.textSecondary)),
+                          ],
+                        )),
+                        if (_privateLegacyStageBusy)
+                          const SizedBox(width: 18, height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        else
+                          const Icon(Icons.chevron_right,
+                              color: VaultColors.textSecondary),
+                      ]),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+
                 InkWell(
                   onTap: () => Navigator.pushNamed(context, '/storage'),
                   borderRadius: BorderRadius.circular(18),
@@ -14117,6 +14210,55 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     );
   }
 
+  Future<void> _prepareOlderContentOnDemand() async {
+    if (_privateLegacyStageBusy) return;
+    final app = context.read<AppState>();
+    if (!app.unlocked || app.sessionToken == null) {
+      _showSnack('Unlock your vault to prepare older content.');
+      return;
+    }
+    setState(() => _privateLegacyStageBusy = true);
+    try {
+      final result = await preparePrivateLegacyContentOnDemand(
+        app,
+        promptPin: () => _promptForActionPin(
+          context, 'Verify older vault content',
+        ),
+      );
+      if (!mounted) return;
+      final deferred = result.itemsDeferredForSize +
+          result.filesDeferredForSize +
+          result.filesDeferredForUnreadableSource +
+          result.filesDeferredForExtraLegacyData;
+      final summary = result.itemsVerified == 0 &&
+              result.filesVerified == 0 && deferred == 0
+          ? 'No older content needs preparation.'
+          : 'Verified encrypted copies of ${result.itemsVerified} saved '
+              'items and ${result.filesVerified} files.';
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Older content preparation'),
+          content: Text(deferred == 0
+              ? '$summary Your originals remain available.'
+              : '$summary $deferred items or files still need a later '
+                  'upgrade pass. Your originals remain available.'),
+          actions: [TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Done'),
+          )],
+        ),
+      );
+    } on ephemeral_file.LegacyFileActionCancelled {
+      // The owner dismissed the PIN dialog. No data was changed.
+    } catch (error) {
+      if (!mounted || app.handleApiException(error)) return;
+      _showSnack('Could not prepare older content. You can retry later.');
+    } finally {
+      if (mounted) setState(() => _privateLegacyStageBusy = false);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -14142,6 +14284,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           sending || _sendDispatchInFlight || thinking ||
           _isListening || _isRecording || _isVideoRecording ||
           _conciergeLoginEditBusy || loadingFiles || loadingLogins ||
+          _privateLegacyStageBusy ||
           loadingBeneficiaries || loadingInheritances ||
           _generatedLoginDraftActionsInFlight.isNotEmpty ||
           _pendingLocalDelete != null ||

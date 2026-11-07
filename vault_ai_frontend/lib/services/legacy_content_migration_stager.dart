@@ -54,6 +54,9 @@ class LegacyStageResult {
   final int filesDeferredForSize;
   final int filesDeferredForUnreadableSource;
   final int filesDeferredForExtraLegacyData;
+  /// Short-lived, source-bound evidence for a separate, owner-approved
+  /// completion flow. No retirement is performed by this stager.
+  final List<LegacyStageReadbackEvidence> verifiedReadbacks;
 
   const LegacyStageResult({
     required this.itemsVerified,
@@ -62,6 +65,25 @@ class LegacyStageResult {
     this.filesDeferredForSize = 0,
     this.filesDeferredForUnreadableSource = 0,
     this.filesDeferredForExtraLegacyData = 0,
+    this.verifiedReadbacks = const <LegacyStageReadbackEvidence>[],
+  });
+}
+
+class LegacyStageReadbackEvidence {
+  final bool isFile;
+  final String recordId;
+  final String sourceSnapshot;
+  final String readbackReceipt;
+  final DateTime receiptExpiresAt;
+  final bool verifiedExtraFields;
+
+  const LegacyStageReadbackEvidence({
+    required this.isFile,
+    required this.recordId,
+    required this.sourceSnapshot,
+    required this.readbackReceipt,
+    required this.receiptExpiresAt,
+    this.verifiedExtraFields = false,
   });
 }
 
@@ -78,6 +100,7 @@ class LegacyContentMigrationStager {
   final bool recoveryEnabled;
   final bool prioritizeUnstagedFiles;
   final bool extraFileMetadataEnabled;
+  final bool requireReadbackEvidence;
   final LegacyCiphertextExportClient export;
   final LegacyCiphertextMigrationCodec codec;
   final MigrationRequest request;
@@ -88,6 +111,7 @@ class LegacyContentMigrationStager {
     this.recoveryEnabled = false,
     this.prioritizeUnstagedFiles = false,
     this.extraFileMetadataEnabled = false,
+    this.requireReadbackEvidence = false,
     required this.export,
     required this.codec,
     required this.request,
@@ -104,6 +128,7 @@ class LegacyContentMigrationStager {
     var filesDeferredForSize = 0;
     var filesDeferredForUnreadableSource = 0;
     var filesDeferredForExtraLegacyData = 0;
+    final verifiedReadbacks = <LegacyStageReadbackEvidence>[];
     try {
       final items = await export.listItems();
       for (final item in items) {
@@ -112,7 +137,7 @@ class LegacyContentMigrationStager {
           itemsDeferredForSize++;
           continue;
         }
-        if (await _stageItem(item)) itemsVerified++;
+        if (await _stageItem(item, verifiedReadbacks.add)) itemsVerified++;
       }
       onPhase?.call(LegacyStagePhase.itemsComplete);
       final files = await export.listFiles();
@@ -147,7 +172,7 @@ class LegacyContentMigrationStager {
           : eligibleFiles;
       for (final file in orderedFiles) {
         try {
-          await _stageFile(file);
+          await _stageFile(file, verifiedReadbacks.add);
           filesVerified++;
         } on _UnreadableLegacyFileSource {
           // A historical file can be malformed or encrypted under a key that
@@ -167,6 +192,9 @@ class LegacyContentMigrationStager {
         filesDeferredForSize: filesDeferredForSize,
         filesDeferredForUnreadableSource: filesDeferredForUnreadableSource,
         filesDeferredForExtraLegacyData: filesDeferredForExtraLegacyData,
+        verifiedReadbacks: List<LegacyStageReadbackEvidence>.unmodifiable(
+          verifiedReadbacks,
+        ),
       );
     } finally {
       export.clearGrant();
@@ -228,19 +256,21 @@ class LegacyContentMigrationStager {
     return results;
   }
 
-  Future<bool> _stageItem(Map<String, dynamic> record) async {
+  Future<bool> _stageItem(Map<String, dynamic> record,
+      void Function(LegacyStageReadbackEvidence) onVerified) async {
     try {
-      return await _stageItemOnce(record);
+      return await _stageItemOnce(record, onVerified);
     } on _StageConflict {
       if (!recoveryEnabled) rethrow;
       final id = record['item_id'];
       if (id is! int || id <= 0) rethrow;
       await _resetItemStageAfterFreshExport(id);
-      return _stageItemOnce(await _freshItemRecord(id));
+      return _stageItemOnce(await _freshItemRecord(id), onVerified);
     }
   }
 
-  Future<bool> _stageItemOnce(Map<String, dynamic> record) async {
+  Future<bool> _stageItemOnce(Map<String, dynamic> record,
+      void Function(LegacyStageReadbackEvidence) onVerified) async {
     final id = record['item_id'];
     final chars = record['ciphertext_chars'];
     if (id is! int || id <= 0 || chars is! int) {
@@ -314,6 +344,12 @@ class LegacyContentMigrationStager {
     )) {
       throw const _StageConflict();
     }
+    final evidence = _readbackEvidence(
+      body, isFile: false, recordId: '$id',
+      sourceSnapshot: expectedSnapshot,
+      requireEvidence: requireReadbackEvidence,
+    );
+    if (evidence != null) onVerified(evidence);
     return true;
   }
 
@@ -370,16 +406,17 @@ class LegacyContentMigrationStager {
     }
   }
 
-  Future<void> _stageFile(Map<String, dynamic> record) async {
+  Future<void> _stageFile(Map<String, dynamic> record,
+      void Function(LegacyStageReadbackEvidence) onVerified) async {
     try {
-      await _stageFileOnce(record);
+      await _stageFileOnce(record, onVerified);
     } on _StageConflict {
       if (!recoveryEnabled) rethrow;
       final id = record['file_id'];
       if (id is! String || id.isEmpty) rethrow;
       await _resetFileStageAfterFreshExport(id);
       try {
-        await _stageFileOnce(await _freshFileRecord(id));
+        await _stageFileOnce(await _freshFileRecord(id), onVerified);
       } on _UnreadableLegacyFileSource {
         // The recovery reset may already have changed a V2 sidecar. Abort
         // rather than counting this as a harmless pre-write deferral.
@@ -424,7 +461,8 @@ class LegacyContentMigrationStager {
     export.clearGrant();
   }
 
-  Future<void> _stageFileOnce(Map<String, dynamic> record) async {
+  Future<void> _stageFileOnce(Map<String, dynamic> record,
+      void Function(LegacyStageReadbackEvidence) onVerified) async {
     final id = record['file_id'];
     final chars = record['ciphertext_chars'];
     if (id is! String || id.isEmpty || chars is! int) {
@@ -633,9 +671,27 @@ class LegacyContentMigrationStager {
       throw const _ExtraLegacyFileData();
     }
     _require200(finalSource);
-    if (_requireMap(finalSource)['source_snapshot'] != source.sourceSnapshot) {
+    final finalBody = _requireMap(finalSource);
+    if (finalBody['source_snapshot'] != source.sourceSnapshot) {
       throw const FormatException('Legacy file changed during readback');
     }
+    if (requireReadbackEvidence &&
+        (readback['v2_ciphertext_sha256'] is! String ||
+         finalBody['v2_ciphertext_sha256'] !=
+             readback['v2_ciphertext_sha256'] ||
+         finalBody['manifest_ciphertext'] !=
+             readback['manifest_ciphertext'] ||
+         finalBody['chunk_count'] != readback['chunk_count'] ||
+         finalBody['total_bytes'] != readback['total_bytes'])) {
+      throw const FormatException('Staged file changed during readback');
+    }
+    final evidence = _readbackEvidence(
+      finalBody, isFile: true, recordId: id,
+      sourceSnapshot: source.sourceSnapshot,
+      verifiedExtraFields: legacyExtra != null,
+      requireEvidence: requireReadbackEvidence,
+    );
+    if (evidence != null) onVerified(evidence);
   }
 
   Future<Map<String, String?>> _fileEncryptedMetadata(
@@ -695,6 +751,44 @@ class _UnreadableLegacyFileSource implements Exception {
 
 bool _validSnapshot(Object? value) =>
     value is String && RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(value);
+
+LegacyStageReadbackEvidence? _readbackEvidence(
+  Map<String, dynamic> body, {
+  required bool isFile,
+  required String recordId,
+  required String sourceSnapshot,
+  required bool requireEvidence,
+  bool verifiedExtraFields = false,
+}) {
+  final receipt = body['readback_receipt'];
+  final expires = body['receipt_expires_at'];
+  final parts = receipt is String ? receipt.split('.') : const <String>[];
+  final expirySeconds = parts.length == 4 ? int.tryParse(parts[1]) : null;
+  final expiresAt = expires is String ? DateTime.tryParse(expires) : null;
+  final expectedPrefix = isFile ? 'fr1' : 'ir1';
+  final now = DateTime.now().toUtc();
+  final valid = _validSnapshot(sourceSnapshot) &&
+      parts.length == 4 && parts[0] == expectedPrefix &&
+      RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(parts[2]) &&
+      RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(parts[3]) &&
+      expirySeconds != null && expiresAt != null &&
+      expiresAt.isAfter(now) &&
+      expiresAt.difference(now) <= const Duration(minutes: 10) &&
+      (expiresAt.millisecondsSinceEpoch ~/ 1000 - expirySeconds).abs() <= 1;
+  if (!valid) {
+    if (requireEvidence) {
+      throw const FormatException('Readback receipt is unavailable');
+    }
+    return null;
+  }
+  return LegacyStageReadbackEvidence(
+    isFile: isFile, recordId: recordId,
+    sourceSnapshot: sourceSnapshot,
+    readbackReceipt: receipt as String,
+    receiptExpiresAt: expiresAt.toUtc(),
+    verifiedExtraFields: verifiedExtraFields,
+  );
+}
 
 String? _detailCode(MigrationReply reply) {
   final data = reply.data;

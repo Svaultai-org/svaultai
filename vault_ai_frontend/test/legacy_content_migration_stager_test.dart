@@ -747,12 +747,18 @@ void main() {
 
   test('stages item, reads it back, and resumes without a second write',
       () async {
+    final receiptExpiry = DateTime.now().toUtc().add(
+      const Duration(minutes: 5),
+    );
+    final itemReceipt = 'ir1.${receiptExpiry.millisecondsSinceEpoch ~/ 1000}.'
+        '$_snapshotA.$_snapshotB';
     final legacy = await _legacyEncrypt(utf8.encode(jsonEncode(
       <String, Object>{'username': 'synthetic-user', 'note': 'synthetic-note'},
     )));
     final calls = <String>[];
     Map<String, dynamic>? stageBody;
     var stageWrites = 0;
+    var omitReceipt = false;
     final metadataKey = await VaultKeyHierarchy(_mvk).metadataKey();
     final encryptedType = b64urlEncode(
       await aesGcmWrap(metadataKey, utf8.encode('login')),
@@ -771,6 +777,7 @@ void main() {
     };
     final stager = LegacyContentMigrationStager(
       enabled: true,
+      requireReadbackEvidence: true,
       export: _export(
         itemRows: <Map<String, dynamic>>[
           <String, dynamic>{
@@ -803,7 +810,9 @@ void main() {
                   'item_id': 9,
                   ...stageBody!,
                   'source_snapshot': itemSnapshots[9],
-                  'readback_receipt': 'synthetic-receipt',
+                  if (!omitReceipt) 'readback_receipt': itemReceipt,
+                  if (!omitReceipt)
+                    'receipt_expires_at': receiptExpiry.toIso8601String(),
                 });
         }
         expect(path, '/vault/legacy-ciphertext/migrate/item-stage');
@@ -833,6 +842,13 @@ void main() {
     final second = await stager.stageAndVerify();
     expect(first.itemsVerified, 1);
     expect(second.itemsVerified, 1);
+    expect(first.verifiedReadbacks, hasLength(1));
+    expect(first.verifiedReadbacks.single.recordId, '9');
+    expect(first.verifiedReadbacks.single.sourceSnapshot, _snapshotB);
+    expect(first.verifiedReadbacks.single.readbackReceipt, itemReceipt);
+    expect(first.verifiedReadbacks.single.isFile, isFalse);
+    omitReceipt = true;
+    await expectLater(stager.stageAndVerify(), throwsFormatException);
     expect(stageWrites, 1);
     expect(calls.any((c) => c.contains('retire')), isFalse);
     expect(utf8.decode(await aesGcmUnwrap(metadataKey,
@@ -844,6 +860,11 @@ void main() {
 
   test('stages file chunks, verifies fetched bytes, and never retires',
       () async {
+    final receiptExpiry = DateTime.now().toUtc().add(
+      const Duration(minutes: 5),
+    );
+    final fileReceipt = 'fr1.${receiptExpiry.millisecondsSinceEpoch ~/ 1000}.'
+        '$_snapshotA.$_snapshotB';
     final bytes = List<int>.generate(300000, (i) => (i * 13) & 255);
     final legacy = await _legacyEncrypt(bytes);
     final calls = <String>[];
@@ -872,8 +893,11 @@ void main() {
     var inFlightChunkGets = 0;
     var maxInFlightChunkGets = 0;
     final readbackCompletions = <int>[];
+    var corruptFinalHash = false;
+    var stagedReads = 0;
     final stager = LegacyContentMigrationStager(
       enabled: true,
+      requireReadbackEvidence: true,
       export: _export(
         itemRows: const <Map<String, dynamic>>[],
         fileRows: <Map<String, dynamic>>[
@@ -914,6 +938,7 @@ void main() {
       request: (method, path, [body]) async {
         calls.add('$method $path');
         if (path.endsWith('/file-staged/synthetic-file')) {
+          stagedReads++;
           if (manifest == null) {
             return const MigrationReply(
                 409, <String, dynamic>{'detail': 'file_v2_not_staged'});
@@ -928,7 +953,11 @@ void main() {
             'chunk_count': manifest!['chunk_count'],
             'manifest_ciphertext': manifest!['manifest_ciphertext'],
             'source_snapshot': _snapshotA,
-            'readback_receipt': 'synthetic-receipt',
+            'v2_ciphertext_sha256': corruptFinalHash && stagedReads == 2
+                ? List<String>.filled(64, 'b').join()
+                : List<String>.filled(64, 'a').join(),
+            'readback_receipt': fileReceipt,
+            'receipt_expires_at': receiptExpiry.toIso8601String(),
           });
         }
         if (path.endsWith('/manifest') && method == 'GET') {
@@ -1005,11 +1034,19 @@ void main() {
     );
     final second = await stager.stageAndVerify();
     expect(second.filesVerified, 1);
+    expect(second.verifiedReadbacks, hasLength(1));
+    expect(second.verifiedReadbacks.single.recordId, 'synthetic-file');
+    expect(second.verifiedReadbacks.single.sourceSnapshot, _snapshotA);
+    expect(second.verifiedReadbacks.single.readbackReceipt, fileReceipt);
+    expect(second.verifiedReadbacks.single.isFile, isTrue);
     expect(chunks.length, 2);
     expect(calls.where((c) => c == 'POST /vault/file-v2/manifest').length, 1);
     final writes = calls.where((c) => c == 'PUT /vault/file-v2/chunk').length;
     final third = await stager.stageAndVerify();
     expect(third.filesVerified, 1);
+    stagedReads = 0;
+    corruptFinalHash = true;
+    await expectLater(stager.stageAndVerify(), throwsFormatException);
     expect(maxInFlightChunkGets, 2);
     expect(readbackCompletions.sublist(readbackCompletions.length - 2),
         <int>[1, 0]);
