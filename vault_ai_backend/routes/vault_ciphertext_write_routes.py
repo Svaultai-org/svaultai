@@ -999,7 +999,10 @@ def ai_memory_ciphertext_list(
                 bytes(row["payload_ciphertext"])
             ).decode().rstrip("="),
             memory_lookup_hash=base64.urlsafe_b64encode(
-                bytes(row["memory_lookup_hash"])
+                # Legacy metadata migration preserves the complete payload,
+                # but has no client-computed title lookup hash. Listing those
+                # envelopes must still work; a filtered lookup cannot match it.
+                bytes(row["memory_lookup_hash"] or b"")
             ).decode().rstrip("="),
         )
         for row in rows

@@ -50,12 +50,12 @@ def _request(device_id: str, path: str = "/vault/file-v2") -> Request:
 @pytest.mark.parametrize(
     "module,expected_count",
     [
-        (file_v2_routes, 7),
-        (vault_ciphertext_write_routes, 14),
+        (file_v2_routes, 8),
+        (vault_ciphertext_write_routes, 15),
         (credential_v2_routes, 8),
         (wallet_v2_routes, 4),
         (wallet_backup_v2_routes, 4),
-        (vault_metadata_migration_routes, 3),
+        (vault_metadata_migration_routes, 5),
     ],
 )
 def test_all_opaque_content_routes_require_trusted_device(module, expected_count):

@@ -2,8 +2,9 @@
 
 The client drives this loop after successful unlock. Each batch is
 transactional: the client submits ciphertext values for a set of
-legacy plaintext rows; the server writes ciphertext, nulls the
-plaintext column, and advances the migration cursor.
+legacy plaintext rows. For memory, the server stages an aggregate
+ciphertext but retains all source fields until a separate, owner-verified
+cutover. Other metadata columns are cleared after ciphertext write.
 
 Design invariants:
 
@@ -11,8 +12,8 @@ Design invariants:
     caller's vault. No admin path exists.
   * The server never learns which vault key was used to produce the
     ciphertext. Payloads are opaque BYTEA.
-  * A single failed batch is idempotent: re-applying the same batch
-    is a no-op because the WHERE clause requires plaintext-not-null.
+  * A single failed batch is idempotent: memory copies are never overwritten,
+    and the other tables require plaintext-not-null.
   * The server never reveals the plaintext (or lack thereof) of any
     other vault. Every SELECT is filtered by ``vault_id =
     principal["vault_id"]``.
@@ -31,7 +32,7 @@ import binascii
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from psycopg2.extras import RealDictCursor
 
@@ -50,6 +51,7 @@ BATCH_SIZE_DEFAULT = 100
 BATCH_SIZE_MAX = 250
 
 MAX_CIPHERTEXT_BYTES = 128 * 1024
+MEMORY_PAYLOAD_FORMAT = "json_object_v1"
 
 
 def _b64url_decode(text: str, *, name: str) -> bytes:
@@ -161,6 +163,7 @@ class ApplyBatchRow(BaseModel):
 class ApplyBatchRequest(BaseModel):
     table: str = Field(..., min_length=1, max_length=64)
     rows: list[ApplyBatchRow]
+    memory_payload_format: Optional[str] = Field(None, max_length=32)
 
 
 class ApplyBatchResponse(BaseModel):
@@ -172,6 +175,23 @@ class MigrationStatusResponse(BaseModel):
     completed_tables: list[str]
     pending_tables: list[str]
     completed_at: Optional[str]
+
+
+class MemoryReadbackResponse(BaseModel):
+    row_id: int
+    payload_ciphertext: str
+
+
+@router.get("/vault/metadata-migration/memory-capabilities")
+def memory_migration_capabilities(
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict[str, Any]:
+    """Tell newer clients this server stages copies without clearing sources."""
+    return {
+        "memory_payload_format": MEMORY_PAYLOAD_FORMAT,
+        "preserves_legacy_source": True,
+        "opaque_readback": True,
+    }
 
 
 @router.get(
@@ -211,6 +231,14 @@ def next_batch(
             plaintext_filter = " OR ".join(
                 f"{col} IS NOT NULL" for col in spec.plaintext_columns
             )
+            # A memory backfill stages a copy. Keep the original fields until
+            # a separate owner-verified cutover can retire them. Exclude rows
+            # with any existing payload so a malformed old copy is never
+            # overwritten or retried on every unlock.
+            needs_copy = (
+                "AND payload_ciphertext IS NULL"
+                if name == "vault_ai_memory" else ""
+            )
             columns_selected = [spec.id_column, *spec.plaintext_columns]
             cur.execute(
                 f"""
@@ -218,6 +246,7 @@ def next_batch(
                   FROM {spec.table}
                   WHERE vault_id = %s
                     AND ({plaintext_filter})
+                    {needs_copy}
                   LIMIT %s
                 """,
                 (principal["vault_id"], limit),
@@ -244,6 +273,7 @@ def next_batch(
                   FROM {spec.table}
                   WHERE vault_id = %s
                     AND ({plaintext_filter})
+                    {needs_copy}
                 """,
                 (principal["vault_id"],),
             )
@@ -301,6 +331,13 @@ def apply_batch(
         raise HTTPException(
             status_code=400, detail="unknown migration table",
         )
+    if (
+        payload.table == "vault_ai_memory"
+        and payload.memory_payload_format != MEMORY_PAYLOAD_FORMAT
+    ):
+        # Older clients encrypted the last scalar field over the full payload.
+        # Refuse that shape before opening a DB transaction or clearing fields.
+        raise HTTPException(status_code=400, detail="memory_payload_format_required")
     if not payload.rows:
         return ApplyBatchResponse(applied=0, skipped=0)
     if len(payload.rows) > BATCH_SIZE_MAX:
@@ -308,6 +345,20 @@ def apply_batch(
             status_code=413,
             detail=f"batch exceeds {BATCH_SIZE_MAX} rows",
         )
+    if payload.table == "vault_ai_memory":
+        for row in payload.rows:
+            if set(row.ciphertext) != {"payload_ciphertext"}:
+                raise HTTPException(
+                    status_code=400, detail="memory_aggregate_envelope_required",
+                )
+            envelope = _b64url_decode(
+                row.ciphertext["payload_ciphertext"],
+                name="payload_ciphertext",
+            )
+            if len(envelope) < 29 or envelope[0] != 1:
+                raise HTTPException(
+                    status_code=400, detail="memory_aggregate_envelope_required",
+                )
 
     applied = 0
     skipped = 0
@@ -342,17 +393,30 @@ def apply_batch(
                     "payload_ciphertext = CASE WHEN encrypted_data IS NOT NULL "
                     "THEN NULL ELSE payload_ciphertext END"
                 )
-            set_plaintext_parts = [
-                f"{col} = NULL" for col in spec.plaintext_columns
-            ]
+            set_plaintext_parts = (
+                [] if spec.table == "vault_ai_memory" else
+                [f"{col} = NULL" for col in spec.plaintext_columns]
+            )
             plaintext_not_null_parts = " OR ".join(
                 f"{col} IS NOT NULL" for col in spec.plaintext_columns
             )
 
             params: list[Any] = [
                 *ct_map.values(),
-                row.row_id, principal["vault_id"],
             ]
+            if payload.table == "vault_ai_memory":
+                # Legacy rows predate the client-owned record identity. A
+                # structural ID makes this aggregate readable/editable without
+                # deriving identity or lookup values from private memory text.
+                set_ciphertext_parts.append(
+                    "memory_record_id = COALESCE(memory_record_id, %s)"
+                )
+                params.append(f"memory-migrated-{row.row_id}")
+            params.extend([row.row_id, principal["vault_id"]])
+            preserve_existing_payload = (
+                "AND payload_ciphertext IS NULL"
+                if payload.table == "vault_ai_memory" else ""
+            )
             if spec.table == "uploaded_files":
                 cur.execute(
                     "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
@@ -367,11 +431,11 @@ def apply_batch(
             cur.execute(
                 f"""
                 UPDATE {spec.table}
-                   SET {', '.join(set_ciphertext_parts)},
-                       {', '.join(set_plaintext_parts)}
+                   SET {', '.join(set_ciphertext_parts + set_plaintext_parts)}
                  WHERE {spec.id_column} = %s
                    AND vault_id = %s
                    AND ({plaintext_not_null_parts})
+                   {preserve_existing_payload}
                 """,
                 params,
             )
@@ -384,6 +448,40 @@ def apply_batch(
         conn.close()
 
     return ApplyBatchResponse(applied=applied, skipped=skipped)
+
+
+@router.get(
+    "/vault/metadata-migration/memory-readback/{row_id}",
+    response_model=MemoryReadbackResponse,
+)
+def memory_readback(
+    row_id: int,
+    http_response: Response,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> MemoryReadbackResponse:
+    """Return only the owner's staged opaque envelope for local verification."""
+    if row_id < 1:
+        raise HTTPException(status_code=400, detail="invalid_memory_row_id")
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """SELECT payload_ciphertext FROM vault_ai_memory
+                WHERE id = %s AND vault_id = %s AND superseded_at IS NULL""",
+            (row_id, principal["vault_id"]),
+        )
+        row = cur.fetchone()
+    finally:
+        conn.close()
+    if row is None or row["payload_ciphertext"] is None:
+        raise HTTPException(status_code=404, detail="memory_copy_not_found")
+    http_response.headers["Cache-Control"] = "no-store"
+    return MemoryReadbackResponse(
+        row_id=row_id,
+        payload_ciphertext=base64.urlsafe_b64encode(
+            bytes(row["payload_ciphertext"]),
+        ).decode().rstrip("="),
+    )
 
 
 @router.get(

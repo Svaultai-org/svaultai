@@ -4,8 +4,8 @@
 // /vault/metadata-migration/next-batch, encrypts each row's legacy
 // plaintext metadata locally under the appropriate vault-scoped
 // subkey, and posts /vault/metadata-migration/apply-batch. The
-// server writes the ciphertext columns and NULLs the legacy
-// plaintext columns atomically.
+// server writes the ciphertext columns. Memory source fields stay intact
+// until a separate owner-verified cutover; other metadata is cleared.
 //
 // The loop is:
 //   * resumable (state lives in vault_metadata_migration_state)
@@ -15,13 +15,11 @@
 //     status.completed_at is set)
 //   * failure-tolerant (a failed batch does not delete user data;
 //     the row simply stays legacy until the next unlock)
-//   * never destructive — only NULLs plaintext AFTER ciphertext write
-//     succeeds server-side, and only for rows whose ciphertext the
-//     server just persisted.
+//   * memory copies are staged and read back without clearing source;
+//     other metadata is NULLed only after ciphertext write succeeds.
 //
-// The user's actual files, wallets, notes, notifications, memories,
-// and content are never touched by this loop. Only the human-readable
-// metadata *labels* around them.
+// File content and wallet material are not rewritten by this loop. Legacy
+// memory fields are preserved together in one encrypted JSON payload.
 
 import 'dart:async';
 import 'dart:convert';
@@ -41,6 +39,8 @@ typedef HttpJsonGet = Future<Map<String, dynamic>> Function(
   String path, {
   String? bearerToken,
 });
+
+const memoryMigrationPayloadFormat = 'json_object_v1';
 
 class MigrationRunResult {
   final int batchesApplied;
@@ -106,6 +106,22 @@ class MetadataMigrationClient {
 
         final subkey = _pickSubkey(table, metadataKey, memoryKey);
         final ciphertextRows = <Map<String, dynamic>>[];
+        final memoryPayloads = <String, String>{};
+        if (table == 'vault_ai_memory') {
+          // An old server ignores unknown request fields and would clear the
+          // source after accepting a malformed payload. Require the paired
+          // non-destructive server before sending any memory ciphertext.
+          final capabilities = await get(
+            '/vault/metadata-migration/memory-capabilities',
+            bearerToken: sessionToken,
+          ).timeout(const Duration(seconds: 12));
+          if (capabilities['memory_payload_format'] !=
+                  memoryMigrationPayloadFormat ||
+              capabilities['preserves_legacy_source'] != true ||
+              capabilities['opaque_readback'] != true) {
+            throw StateError('Safe memory migration is unavailable');
+          }
+        }
         for (final row in rows) {
           if (row is! Map) continue;
           final rowId = row['row_id'];
@@ -113,15 +129,36 @@ class MetadataMigrationClient {
           if (rowId == null || plaintext is! Map) continue;
 
           final ctMap = <String, String>{};
-          for (final entry in plaintext.entries) {
-            final colName = entry.key.toString();
-            final value = entry.value;
-            if (value == null) continue;
-            final valueStr = value is String ? value : jsonEncode(value);
-            final ctColName = _ciphertextColumnFor(table, colName);
-            if (ctColName == null) continue;
-            final encoded = await aesGcmWrap(subkey, utf8.encode(valueStr));
-            ctMap[ctColName] = b64urlEncode(encoded);
+          if (table == 'vault_ai_memory') {
+            if (plaintext.isEmpty) continue;
+            // Every field, including nulls and future JSON fields, belongs in
+            // the same object. Encrypting scalars into the same destination
+            // column would overwrite earlier fields before the request.
+            final payload = <String, dynamic>{
+              for (final entry in plaintext.entries)
+                entry.key.toString(): entry.value,
+            };
+            final expectedJson = jsonEncode(payload);
+            final ciphertext = await aesGcmWrap(
+                subkey, Uint8List.fromList(utf8.encode(expectedJson)));
+            final locallyOpened = utf8.decode(
+                await aesGcmUnwrap(subkey, ciphertext));
+            if (locallyOpened != expectedJson) {
+              throw StateError('Memory aggregate verification failed');
+            }
+            ctMap['payload_ciphertext'] = b64urlEncode(ciphertext);
+            memoryPayloads['$rowId'] = expectedJson;
+          } else {
+            for (final entry in plaintext.entries) {
+              final colName = entry.key.toString();
+              final value = entry.value;
+              if (value == null) continue;
+              final valueStr = value is String ? value : jsonEncode(value);
+              final ctColName = _ciphertextColumnFor(table, colName);
+              if (ctColName == null) continue;
+              final encoded = await aesGcmWrap(subkey, utf8.encode(valueStr));
+              ctMap[ctColName] = b64urlEncode(encoded);
+            }
           }
 
           if (ctMap.isEmpty) continue;
@@ -140,6 +177,8 @@ class MetadataMigrationClient {
           '/vault/metadata-migration/apply-batch',
           {
             'table': table,
+            if (table == 'vault_ai_memory')
+              'memory_payload_format': memoryMigrationPayloadFormat,
             'rows': ciphertextRows,
           },
           bearerToken: sessionToken,
@@ -147,6 +186,27 @@ class MetadataMigrationClient {
 
         final applied = (applyResp['applied'] as int?) ?? 0;
         final skipped = (applyResp['skipped'] as int?) ?? 0;
+        if (table == 'vault_ai_memory') {
+          for (final row in ciphertextRows) {
+            final rowId = '${row['row_id']}';
+            final readback = await get(
+              '/vault/metadata-migration/memory-readback/'
+              '${Uri.encodeComponent(rowId)}',
+              bearerToken: sessionToken,
+            ).timeout(const Duration(seconds: 12));
+            final ciphertext = readback['payload_ciphertext'];
+            if (ciphertext is! String ||
+                ciphertext !=
+                    (row['ciphertext'] as Map)['payload_ciphertext']) {
+              throw StateError('Memory readback does not match staged copy');
+            }
+            final opened = utf8.decode(await aesGcmUnwrap(
+                memoryKey, b64urlDecode(ciphertext)));
+            if (opened != memoryPayloads[rowId]) {
+              throw StateError('Memory readback content does not match source');
+            }
+          }
+        }
         batchesApplied += 1;
         rowsApplied += applied;
         rowsSkipped += skipped;
@@ -170,7 +230,9 @@ class MetadataMigrationClient {
   }
 
   SecretKey _pickSubkey(
-    String table, SecretKey metadataKey, SecretKey memoryKey,
+    String table,
+    SecretKey metadataKey,
+    SecretKey memoryKey,
   ) {
     if (table == 'vault_ai_memory') return memoryKey;
     return metadataKey;
@@ -183,35 +245,36 @@ class MetadataMigrationClient {
     switch (table) {
       case 'uploaded_files':
         switch (col) {
-          case 'file_name': return 'file_name_ciphertext';
-          case 'saved_name': return 'saved_name_ciphertext';
-          case 'content_type': return 'content_type_ciphertext';
-          case 'detected_type': return 'detected_type_ciphertext';
-          case 'detected_service': return 'detected_service_ciphertext';
-          case 'asset_type': return 'asset_type_ciphertext';
+          case 'file_name':
+            return 'file_name_ciphertext';
+          case 'saved_name':
+            return 'saved_name_ciphertext';
+          case 'content_type':
+            return 'content_type_ciphertext';
+          case 'detected_type':
+            return 'detected_type_ciphertext';
+          case 'detected_service':
+            return 'detected_service_ciphertext';
+          case 'asset_type':
+            return 'asset_type_ciphertext';
         }
         return null;
       case 'vault_items':
         switch (col) {
-          case 'item_type': return 'item_type_ciphertext';
-          case 'service': return 'service_ciphertext';
+          case 'item_type':
+            return 'item_type_ciphertext';
+          case 'service':
+            return 'service_ciphertext';
         }
         return null;
       case 'notifications':
         switch (col) {
-          case 'title': return 'title_ciphertext';
-          case 'body': return 'body_ciphertext';
-          case 'metadata': return 'metadata_ciphertext';
-        }
-        return null;
-      case 'vault_ai_memory':
-        // Server exposes memory_key/memory_value/memory_normalized_key
-        // as an aggregate row; client packs them into a single JSON
-        // payload_ciphertext blob. See metadata endpoint spec.
-        if (col == 'memory_key' ||
-            col == 'memory_value' ||
-            col == 'memory_normalized_key') {
-          return 'payload_ciphertext';
+          case 'title':
+            return 'title_ciphertext';
+          case 'body':
+            return 'body_ciphertext';
+          case 'metadata':
+            return 'metadata_ciphertext';
         }
         return null;
       default:
