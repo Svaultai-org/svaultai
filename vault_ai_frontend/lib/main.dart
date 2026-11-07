@@ -1177,7 +1177,7 @@ const bool kPrivateWalletFeatureParityReady = false;
 const bool kEnableWalletV2UiRead = bool.fromEnvironment(
   'VAULTAI_ENABLE_WALLET_V2_UI_READ',
   defaultValue: false,
-) && kPrivateOnlyUnlockEnabled;
+);
 const bool kEnableWalletV2UiCreate = bool.fromEnvironment(
   'VAULTAI_ENABLE_WALLET_V2_UI_CREATE',
   defaultValue: false,
