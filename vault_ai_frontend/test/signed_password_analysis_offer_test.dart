@@ -10,6 +10,11 @@ String _signedToken(int bits) => base64Url
     .encode(<int>[3, bits, ...List<int>.filled(48, 7)])
     .replaceAll('=', '');
 
+String _signedChatToken(int bits) => base64Url
+    .encode(<int>[4, (bits >> 8) & 255, bits & 255,
+      ...List<int>.filled(48, 7)])
+    .replaceAll('=', '');
+
 void main() {
   test('password-analysis offer is opt in until the server is ready', () {
     expect(kSignedPasswordAnalysisClientEnabled, isFalse);
@@ -76,5 +81,27 @@ void main() {
 
   test('read-only offer alone does not claim local analyzer support', () {
     expect(signedPasswordAnalysisOfferedForToken(_signedToken(7)), isFalse);
+  });
+
+  test('combined private-chat and analyzer offer keeps both signed bits', () {
+    final token = _signedChatToken(535);
+    final response = <String, dynamic>{
+      'session_token': token,
+      'pin_free_read_offers_signed': true,
+      'pin_free_legacy_item_read': true,
+      'pin_free_legacy_file_list': true,
+      'pin_free_legacy_file_download': true,
+      'pin_free_private_chat_signed': true,
+      'pin_free_password_analysis_signed': true,
+    };
+    expect(
+      signedOfferTokenMatches(
+        response,
+        requirePrivateChatOffer: true,
+        requirePasswordAnalysisOffer: true,
+      ),
+      isTrue,
+    );
+    expect(signedPasswordAnalysisOfferedForToken(token), isTrue);
   });
 }
