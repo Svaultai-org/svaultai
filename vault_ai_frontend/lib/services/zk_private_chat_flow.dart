@@ -59,13 +59,14 @@ class ZkPrivateChatFlow {
     }
   }
 
-  Future<ZkPrivateChatTurn> run(String prompt) async {
+  Future<ZkPrivateChatTurn> run(String prompt, {bool forcePrivate = false}) async {
     _checkAccess();
     final preliminary = ZkLocalChatRouter.resolve(
       prompt: prompt,
       savedItems: const [],
       files: const [],
       previousSelection: _selection,
+      forcePrivate: forcePrivate,
     );
     if (preliminary.disposition == ZkLocalChatDisposition.unsupportedAction) {
       return ZkPrivateChatTurn(local: preliminary);
@@ -91,6 +92,7 @@ class ZkPrivateChatFlow {
       savedItems: index.savedItems,
       files: index.files,
       previousSelection: _selection,
+      forcePrivate: forcePrivate,
     );
     _selection = result.disposition == ZkLocalChatDisposition.found
         ? result.selection

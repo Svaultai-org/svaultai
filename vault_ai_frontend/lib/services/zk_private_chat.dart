@@ -169,6 +169,7 @@ class ZkLocalChatRouter {
     required List<ZkLocalChatRecord> savedItems,
     required List<ZkLocalChatRecord> files,
     ZkLocalChatRecord? previousSelection,
+    bool forcePrivate = false,
   }) {
     final query = prompt.trim();
     if (_followUp.hasMatch(query)) {
@@ -191,7 +192,7 @@ class ZkLocalChatRouter {
     if (_mutationCue.hasMatch(query) && !isHowTo) {
       return const ZkLocalChatResult(ZkLocalChatDisposition.unsupportedAction);
     }
-    final isPrivate = _privateCue.hasMatch(query) ||
+    final isPrivate = forcePrivate || _privateCue.hasMatch(query) ||
         (hasLookup && (hasMy || hasAsset)) ||
         (hasMy && !isHowTo);
     if (!isPrivate) {

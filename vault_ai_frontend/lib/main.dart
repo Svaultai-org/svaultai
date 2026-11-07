@@ -19066,7 +19066,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
     _scrollToBottom();
     try {
-      final turn = await _zkPrivateChatFlow!.run(text);
+      final privateFileLookup =
+          ZkPinFreeFileSession.instance.listOfferedForToken(token) &&
+          extractLocalFileLookupQuery(text) != null;
+      final turn = await _zkPrivateChatFlow!.run(
+        text, forcePrivate: privateFileLookup,
+      );
       if (!currentAccess()) return;
       final local = turn.local;
       final selected = local.selection;

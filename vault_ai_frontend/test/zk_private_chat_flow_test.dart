@@ -73,6 +73,32 @@ void main() {
     expect(generalCalls, 0);
   });
 
+  test('offered filename lookup stays local after a name miss', () async {
+    var generalCalls = 0;
+    final flow = ZkPrivateChatFlow(
+      accessIsCurrent: () => true,
+      loadIndex: () async => const ZkPrivateChatIndex(
+        savedItems: [],
+        files: [ZkLocalChatRecord(
+          kind: ZkLocalChatKind.file,
+          id: 'text-1',
+          title: 'journal.txt',
+          searchText: 'beach afternoon',
+        )],
+        incomplete: false,
+      ),
+      sendGeneral: (_, __) async {
+        generalCalls++;
+        return 'unexpected general reply';
+      },
+    );
+    final found = await flow.run('open beach', forcePrivate: true);
+    expect(found.local.selection?.id, 'text-1');
+    final missing = await flow.run('open absent', forcePrivate: true);
+    expect(missing.local.disposition, ZkLocalChatDisposition.notFound);
+    expect(generalCalls, 0);
+  });
+
   test('general AI history excludes every private turn', () async {
     final received = <List<ZkGeneralChatTurn>>[];
     final flow = ZkPrivateChatFlow(
