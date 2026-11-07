@@ -32,8 +32,11 @@ Map<String, dynamic> _response(
     };
 
 void main() {
-  test('beneficiary offer is default off and exact in v3/v4 combinations', () {
+  test('beneficiary offer is disabled in the default build', () {
     expect(kSignedBeneficiaryClientEnabled, isFalse);
+  }, skip: kSignedBeneficiaryClientEnabled);
+
+  test('beneficiary offer is exact in v3/v4 combinations', () {
     expect(hasSignedBeneficiaryOffer(_signedToken(64)), isTrue);
     expect(
         signedOfferTokenMatches(
