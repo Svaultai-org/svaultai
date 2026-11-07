@@ -5828,6 +5828,9 @@ Future<Map<String, dynamic>> _readLegacyZkSavedItem(
   AppState app,
   int itemId,
 ) async {
+  if (kPrivateOnlyUnlockEnabled) {
+    return _readLegacyZkSavedItemEphemeral(app, itemId);
+  }
   final token = app.sessionToken;
   final vaultId = app.vaultId;
   final vaultName = app.vaultName;
@@ -5924,6 +5927,107 @@ Future<Map<String, dynamic>> _readLegacyZkSavedItem(
   });
 }
 
+Future<String?> _promptLegacyItemActionPin(String title) {
+  final context = rootNavigatorKey.currentContext;
+  if (context == null) {
+    throw StateError('Vault verification is unavailable');
+  }
+  return _promptForActionPin(context, title);
+}
+
+Future<Map<String, dynamic>> _readLegacyZkSavedItemEphemeral(
+  AppState app,
+  int itemId,
+) async {
+  final token = app.sessionToken;
+  final vaultId = app.vaultId;
+  final vaultName = app.vaultName;
+  final handle = app.vaultHandle;
+  final mvk = zk_mvk_store.ZkActiveMvk.current();
+  if (token == null || vaultId == null || vaultName == null ||
+      handle?.isNotEmpty != true || mvk == null || itemId <= 0) {
+    throw StateError('Private saved-item reader is unavailable');
+  }
+  final sessionEpoch = app._sessionEpoch;
+  final foregroundEpoch = app._sessionProbeEpoch;
+  final generation = st.SessionTermination.instance.generation;
+  bool current() => app.authed && app.unlocked && app._sessionForeground &&
+      !app.sessionVerificationBlocked && app.sessionToken == token &&
+      app.vaultId == vaultId && app.vaultName == vaultName &&
+      app.vaultHandle == handle && app._sessionEpoch == sessionEpoch &&
+      app._sessionProbeEpoch == foregroundEpoch &&
+      st.SessionTermination.instance.generation == generation &&
+      !st.SessionTermination.instance.isTerminated &&
+      zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
+      identical(zk_mvk_store.ZkActiveMvk.current(), mvk);
+  void requireCurrent() {
+    if (!current()) throw StateError('Vault session changed during saved-item read');
+  }
+  final action = ephemeral_file.EphemeralLegacyFileAction(
+    promptPin: () => _promptLegacyItemActionPin('Verify saved-item view'),
+    verifyPin: (pin) => _zkActionProof(app, token, pin),
+    deriveKey: (pin) => _ephemeralLegacyContentKey(
+      app: app, token: token, vaultId: vaultId, pin: pin,
+      accessIsCurrent: current,
+    ),
+    accessIsCurrent: current,
+  );
+  legacy_item_read.LegacySavedItemReadSession? reader;
+  try {
+    final legacyKey = await action.open();
+    requireCurrent();
+    reader = legacy_item_read.LegacySavedItemReadSession(
+      export: legacy_export.LegacyCiphertextExportClient(
+        proofProvider: action.proof,
+        post: (path, body) async {
+          requireCurrent();
+          assertPrivateOnlyPinFreeBody(body);
+          final reply = await _zkHttpPost(path, body, bearerToken: token);
+          requireCurrent();
+          return reply;
+        },
+      ),
+      isCurrent: current,
+    );
+    return await reader.readItemWith(itemId, (_, source) async {
+      requireCurrent();
+      final key = await vk_hier.VaultKeyHierarchy(mvk).metadataKey();
+      Future<String> label(String plainField, String cipherField) async {
+        final encrypted = source.sourceMetadata[cipherField];
+        if (encrypted is String && encrypted.isNotEmpty) {
+          return utf8.decode(await vk_hier.aesGcmUnwrap(
+            key, vk_hier.b64urlDecode(encrypted),
+          ));
+        }
+        final plain = source.sourceMetadata[plainField];
+        if (plain is String && plain.isNotEmpty) return plain;
+        throw const FormatException('Saved-item label is unavailable');
+      }
+      final itemType = await label('item_type', 'item_type_ciphertext');
+      final service = await label('service', 'service_ciphertext');
+      final raw = await legacy_codec.LegacyCiphertextMigrationCodec(
+        legacyKey: legacyKey, mvk: mvk,
+      ).decodeLegacyItem(source.ciphertext);
+      requireCurrent();
+      final hasEnvelope = const {'category', 'title', 'fields', 'item_id'}
+          .any(raw.containsKey);
+      final fields = hasEnvelope ? raw['fields'] : raw;
+      if (fields is! Map) throw const FormatException('Invalid saved-item fields');
+      return <String, dynamic>{
+        'id': itemId,
+        'item_type': itemType,
+        'service': service,
+        'fields': Map<String, dynamic>.from(fields),
+        'notes': hasEnvelope ? raw['notes'] : null,
+        'storage_engine': 'legacy_compatibility',
+      };
+    });
+  } finally {
+    reader?.close();
+    action.close();
+  }
+}
+
 Future<Map<String, dynamic>> _replaceLegacyZkSavedItem(
   AppState app, {
   required int itemId,
@@ -5941,16 +6045,15 @@ Future<Map<String, dynamic>> _replaceLegacyZkSavedItem(
       handle == null || mvk == null || itemId <= 0) {
     throw StateError('Private saved-item editor is unavailable');
   }
-  final legacyKey = _VaultCrypto._keyCache[
-    _VaultCrypto._ck(vaultId, vaultName)
-  ];
-  if (legacyKey == null) {
-    throw StateError('Private saved-item editor is unavailable');
-  }
-  final pin = await _VaultCrypto.currentPinOrThrow();
+  final sessionEpoch = app._sessionEpoch;
+  final foregroundEpoch = app._sessionProbeEpoch;
   final generation = st.SessionTermination.instance.generation;
   void checkSession() {
-    if (!app.unlocked || app.sessionToken != token ||
+    if (!app.authed || !app.unlocked || !app._sessionForeground ||
+        app.sessionVerificationBlocked ||
+        app._sessionEpoch != sessionEpoch ||
+        app._sessionProbeEpoch != foregroundEpoch ||
+        app.sessionToken != token ||
         app.vaultId != vaultId || app.vaultName != vaultName ||
         app.vaultHandle != handle ||
         !identical(zk_mvk_store.ZkActiveMvk.current(), mvk) ||
@@ -5959,10 +6062,41 @@ Future<Map<String, dynamic>> _replaceLegacyZkSavedItem(
       throw StateError('Vault session changed during saved-item edit');
     }
   }
+  bool current() {
+    try {
+      checkSession();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+  ephemeral_file.EphemeralLegacyFileAction? action;
+  late final SecretKey legacyKey;
+  String? cachedPin;
+  if (kPrivateOnlyUnlockEnabled) {
+    action = ephemeral_file.EphemeralLegacyFileAction(
+      promptPin: () => _promptLegacyItemActionPin('Verify saved-item edit'),
+      verifyPin: (pin) => _zkActionProof(app, token, pin),
+      deriveKey: (pin) => _ephemeralLegacyContentKey(
+        app: app, token: token, vaultId: vaultId, pin: pin,
+        accessIsCurrent: current,
+      ),
+      accessIsCurrent: current,
+    );
+    legacyKey = await action.open();
+  } else {
+    final key = _VaultCrypto._keyCache[_VaultCrypto._ck(vaultId, vaultName)];
+    if (key == null) {
+      throw StateError('Private saved-item editor is unavailable');
+    }
+    legacyKey = key;
+    cachedPin = await _VaultCrypto.currentPinOrThrow();
+  }
   Future<String> proof() async {
     checkSession();
+    if (action != null) return action.proof();
     final result = await ZkAuthService(_zkHttpPost).verifyPinProof(
-      vaultHandle: handle, pin: pin, sessionToken: token,
+      vaultHandle: handle, pin: cachedPin!, sessionToken: token,
     );
     checkSession();
     return result.token;
@@ -5971,13 +6105,13 @@ Future<Map<String, dynamic>> _replaceLegacyZkSavedItem(
     proofProvider: proof,
     post: (path, body) async {
       checkSession();
+      assertPrivateOnlyPinFreeBody(body);
       final result = await _zkHttpPost(path, body, bearerToken: token);
       checkSession();
       return result;
     },
   );
-  final metadataKey = await vk_hier.VaultKeyHierarchy(mvk).metadataKey();
-  checkSession();
+  late final SecretKey metadataKey;
   Future<String> label(Map<String, dynamic> row,
       String plainField, String cipherField) async {
     final encrypted = row[cipherField];
@@ -5991,6 +6125,8 @@ Future<Map<String, dynamic>> _replaceLegacyZkSavedItem(
     throw const FormatException('Saved-item label is unavailable');
   }
   try {
+    metadataKey = await vk_hier.VaultKeyHierarchy(mvk).metadataKey();
+    checkSession();
     return await legacy_item_replace.LegacySavedItemReplacement(
       legacyKey: legacyKey,
       mvk: mvk,
@@ -6034,6 +6170,7 @@ Future<Map<String, dynamic>> _replaceLegacyZkSavedItem(
       },
       post: (path, body) async {
         checkSession();
+        assertPrivateOnlyPinFreeBody(body);
         final response = await _zkHttpPost(path, body, bearerToken: token);
         checkSession();
         return response;
@@ -6050,6 +6187,8 @@ Future<Map<String, dynamic>> _replaceLegacyZkSavedItem(
     );
   } finally {
     export.clearGrant();
+    action?.close();
+    cachedPin = null;
   }
 }
 
@@ -9135,9 +9274,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               ? '' : await _VaultCrypto.currentPinOrThrow();
           if (!dialogIsCurrent()) return;
           final privateZk = _privateZkSavedItemSession(app);
-          final client = privateZk
-              ? VaultAIClient(baseUrl: backendBaseUrl) : _savedItemClient(app);
-          final fetched = privateZk
+          final client = _savedItemClient(app);
+          final fetched = privateZk && !kEnableKeylessLegacySavedItemEdit
               ? await client.getZkVaultSecureItemOnly(
                   authToken: token,
                   service: service,

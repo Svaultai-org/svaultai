@@ -28,7 +28,6 @@ void main() {
       final oldCiphertext = await codec.encodeLegacyItem(old);
       final requests = <String>[];
       String? candidate;
-      String? stagedTitle;
       var proofCalls = 0;
       final replacement = LegacySavedItemReplacement(
         legacyKey: legacyKey,
@@ -55,11 +54,10 @@ void main() {
           expect(jsonEncode(body), isNot(contains('synthetic-pin-marker')));
           if (path.endsWith('/stage')) {
             expect(body['source_snapshot'], snapshot);
-            expect(body['new_service'], 'New title');
+            expect(body.containsKey('new_service'), isFalse);
             candidate = body['candidate_encrypted_data'] as String;
-            stagedTitle = body['new_service'] as String;
             final decoded = await codec.decodeLegacyItem(candidate!);
-            expect(decoded['title'], 'New title');
+            expect(decoded['title'], 'Old title');
             expect(decoded['notes'], 'keep note');
             expect(decoded['schema'], 3);
             expect(decoded['fields'], <String, dynamic>{
@@ -83,7 +81,7 @@ void main() {
             'id': 42,
             'item_id': 42,
             'item_type': 'login',
-            'service': 'New title',
+            'service': 'Old title',
             'updated': true,
             'created': false,
           };
@@ -96,7 +94,7 @@ void main() {
             'item_id': 42,
             'source_snapshot': snapshot,
             'candidate_encrypted_data': candidate,
-            'new_service': stagedTitle,
+            'new_service': null,
             'readback_receipt': 'receipt',
           };
         },
@@ -105,7 +103,6 @@ void main() {
         itemId: 42,
         itemType: 'login',
         oldService: 'Old title',
-        newService: 'New title',
         fields: <String, dynamic>{'username': 'new-user'},
       );
       expect(result['updated'], true);
@@ -116,6 +113,33 @@ void main() {
       ]);
     },
   );
+
+  test('rename refuses before staging a candidate', () async {
+    var requestedSource = false;
+    final replacement = LegacySavedItemReplacement(
+      legacyKey: legacyKey,
+      mvk: mvk,
+      requireCurrentSession: () {},
+      proofProvider: () async => 'unused',
+      sourceReader: (_) async {
+        requestedSource = true;
+        throw StateError('must not read source');
+      },
+      post: (_, __) async => throw StateError('must not stage'),
+      get: (_) async => throw StateError('must not read staged candidate'),
+    );
+    await expectLater(
+      replacement.replace(
+        itemId: 42,
+        itemType: 'login',
+        oldService: 'Old title',
+        newService: 'New title',
+        fields: <String, dynamic>{'username': 'new-user'},
+      ),
+      throwsStateError,
+    );
+    expect(requestedSource, isFalse);
+  });
 
   test('mismatched staged bytes never request a promotion proof', () async {
     final oldCiphertext = await codec.encodeLegacyItem(<String, dynamic>{

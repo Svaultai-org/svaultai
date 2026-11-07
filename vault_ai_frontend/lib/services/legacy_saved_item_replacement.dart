@@ -9,11 +9,10 @@ import 'package:cryptography/cryptography.dart';
 import 'legacy_ciphertext_migration_codec.dart';
 import 'zk_proof_token_guard.dart';
 
-typedef LegacyItemRequest =
-    Future<Map<String, dynamic>> Function(
-      String path,
-      Map<String, dynamic> body,
-    );
+typedef LegacyItemRequest = Future<Map<String, dynamic>> Function(
+  String path,
+  Map<String, dynamic> body,
+);
 typedef LegacyItemRead = Future<Map<String, dynamic>> Function(String path);
 
 class LegacySavedItemSource {
@@ -34,6 +33,7 @@ class LegacySavedItemSource {
 
 class LegacySavedItemReplacement {
   static const int maxCiphertextChars = 8 * 1024 * 1024;
+  static const int maxCandidateCiphertextChars = 174764;
 
   final SecretKey legacyKey;
   final SecretKey mvk;
@@ -63,11 +63,13 @@ class LegacySavedItemReplacement {
     if (itemId <= 0 || itemType.trim().isEmpty || oldService.trim().isEmpty) {
       throw const FormatException('Invalid saved-item identity');
     }
-    final title = newService?.trim().isNotEmpty == true
-        ? newService!.trim()
-        : oldService;
+    final title =
+        newService?.trim().isNotEmpty == true ? newService!.trim() : oldService;
     if (title.trim().isEmpty || title.length > 256) {
       throw const FormatException('Invalid saved-item title');
+    }
+    if (title != oldService) {
+      throw StateError('Older saved-item rename needs a private upgrade');
     }
     requireCurrentSession();
     final source = await sourceReader(itemId);
@@ -109,7 +111,7 @@ class LegacySavedItemReplacement {
     };
     final candidate = await codec.encodeLegacyItem(merged);
     requireCurrentSession();
-    if (candidate.length > maxCiphertextChars) {
+    if (candidate.length > maxCandidateCiphertextChars) {
       throw const FormatException('Saved item is too large');
     }
     final base = '/vault/items/legacy-ciphertext/$itemId/replace';
@@ -131,7 +133,9 @@ class LegacySavedItemReplacement {
         receipt.length > 256) {
       throw const FormatException('Saved-item readback did not match');
     }
-    final readback = await codec.decodeLegacyItem(candidate);
+    final readback = await codec.decodeLegacyItem(
+      staged['candidate_encrypted_data'] as String,
+    );
     requireCurrentSession();
     if (jsonEncode(readback) != jsonEncode(merged)) {
       throw const FormatException('Saved-item readback could not be verified');
