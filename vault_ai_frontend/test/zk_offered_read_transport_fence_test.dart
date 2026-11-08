@@ -79,7 +79,7 @@ void main() {
       throwsStateError,
     );
     expect(() => request('/download-file?pin=$pinMarker'), throwsStateError);
-    request('/download-file', body: '{}');
+    expect(() => request('/download-file', body: '{}'), throwsStateError);
   });
 
   test('saved-item offer remains fenced after local lock', () {
@@ -102,6 +102,39 @@ void main() {
       headers,
       body: jsonEncode(<String, String>{'pin': pinMarker}),
     );
+  });
+
+  test('offered old read routes never leave the device without a PIN field',
+      () {
+    final offeredToken = signedToken(7);
+    final offeredHeaders = <String, String>{
+      'Authorization': 'Bearer $offeredToken',
+    };
+    for (final path in <String>[
+      '/list-secure-items', '/get-secure-item', '/list-login-names',
+      '/get-login', '/login-count', '/manage/list-login-names',
+      '/manage/list-secure-items', '/manage/logins-full',
+      '/list-files', '/download-file', '/download-file/manifest',
+    ]) {
+      expect(
+        () => assertOfferedReadPinFreeRequest(
+          Uri.parse('https://synthetic.example$path'),
+          offeredHeaders,
+          body: const <String, String>{'vault_name': 'private name'},
+        ),
+        throwsStateError,
+        reason: path,
+      );
+      expect(
+        () => assertOfferedReadPinFreeRequest(
+          Uri.parse('https://synthetic.example$path'),
+          offeredHeaders,
+          body: '{}',
+        ),
+        throwsStateError,
+        reason: path,
+      );
+    }
   });
 
   test('a new bearer does not inherit the old bearer offer', () {

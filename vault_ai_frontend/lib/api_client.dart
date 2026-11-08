@@ -305,11 +305,10 @@ bool signedAuthDeviceOfferedForToken(String token) =>
 bool signedImportOfferedForToken(String token) =>
     (_signedOfferBits(token) & 256) != 0;
 
-/// An authenticated OPAQUE offer replaces a specific older read route for the
-/// life of that bearer. Keep this check at the HTTP boundary as well as at
-/// the feature call sites: a direct or late caller must not revive a PIN read
-/// after a file or saved-item read was offered without one. Other legacy
-/// actions remain available while their replacements are being built.
+/// An authenticated OPAQUE offer replaces specific older routes for the life
+/// of that bearer. Reject those paths before transport, including requests
+/// whose body omitted the PIN but could still contain the raw vault name.
+/// Upload-token continuation paths are separate PIN-free contracts.
 void assertOfferedReadPinFreeRequest(
   Uri uri,
   Map<String, String>? headers, {
@@ -347,7 +346,10 @@ void assertOfferedReadPinFreeRequest(
       (signedOffers & 2) != 0 || fileSession.listOfferedForToken(token),
     '/download-file' || '/download-file/manifest' =>
       (signedOffers & 4) != 0 || fileSession.downloadOfferedForToken(token),
-    '/list-secure-items' || '/get-secure-item' =>
+    '/list-secure-items' || '/get-secure-item' ||
+    '/list-login-names' || '/get-login' || '/login-count' ||
+    '/manage/list-login-names' || '/manage/list-secure-items' ||
+    '/manage/logins-full' =>
       (signedOffers & 1) != 0 || itemSession.wasOfferedForToken(token),
     '/chat' || '/vault-analysis/deep-answer' =>
       (signedOffers & 512) != 0,
@@ -356,9 +358,10 @@ void assertOfferedReadPinFreeRequest(
     _ when RegExp(r'^/files/[^/]+/related$').hasMatch(path) =>
       (signedOffers & 518) != 0 || fileSession.listOfferedForToken(token) ||
           fileSession.downloadOfferedForToken(token),
-    '/upload-file' || '/upload-file/init' || '/upload-file/chunk' ||
+    '/upload-file' || '/upload-file/init' ||
     '/upload-file/finalize' || '/upload-file/abort' ||
-    '/upload-file/finalize-token' || '/upload-file/abort-token' =>
+    '/upload-file/chunk' || '/upload-file/finalize-token' ||
+    '/upload-file/abort-token' =>
       (signedOffers & 8) != 0,
     '/security-center/analyze-passwords' => (signedOffers & 16) != 0,
     '/memory/list' || '/memory/create' || '/memory/update' ||
@@ -371,9 +374,16 @@ void assertOfferedReadPinFreeRequest(
     _ => false,
   };
   if (!offered) return;
+  // These three continuation paths authenticate with an upload token. Every
+  // other path above is the retired PIN contract and must not be sent at all.
+  if (path != '/upload-file/chunk' &&
+      path != '/upload-file/finalize-token' &&
+      path != '/upload-file/abort-token') {
+    throw StateError('This action uses the private vault route.');
+  }
   if (_requestBodyContainsPin(body, headers: headers) ||
       _requestMetadataContainsPin(uri, headers)) {
-    throw StateError('This read uses the private vault route.');
+    throw StateError('This upload uses the private vault route.');
   }
 }
 
