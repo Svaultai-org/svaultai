@@ -290,6 +290,7 @@ class CryptoWalletEnginePage extends StatefulWidget {
   final WalletV2ActiveClient? walletV2;
   final bool walletV2SendEnabled;
   final Future<int> Function()? upgradeLegacyWallets;
+  final Future<int> Function()? finishLegacyWallets;
 
   // 2026-07-13 network-scoped: production bug was that the ETH Send
   // path called a legacy /crypto/wallet/{asset}/receive endpoint which
@@ -317,6 +318,7 @@ class CryptoWalletEnginePage extends StatefulWidget {
     this.walletV2,
     this.walletV2SendEnabled = false,
     this.upgradeLegacyWallets,
+    this.finishLegacyWallets,
     this.loadFromAddress,
     this.moneroWalletAdapter = const NullMoneroWalletAdapter(),
     this.moneroScannerAdapter = const NullMoneroScannerAdapter(),
@@ -352,6 +354,55 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
       if (!mounted) return;
       setState(() => _walletUpgradeStatus =
           'Wallet preparation paused. Existing data remains saved.');
+    } finally {
+      if (mounted) setState(() => _upgradingWallets = false);
+    }
+  }
+
+  Future<void> _finishWalletUpgrade() async {
+    final action = widget.finishLegacyWallets;
+    if (_upgradingWallets || action == null ||
+        widget.walletV2?.accessIsCurrent() != true) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Finish wallet upgrade?'),
+        content: const Text(
+          'SVaultAI will verify each private wallet copy on this device, '
+          'then remove its older PIN-encrypted record. Keep this vault open '
+          'until the upgrade finishes.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Finish upgrade'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted ||
+        widget.walletV2?.accessIsCurrent() != true) return;
+    setState(() {
+      _upgradingWallets = true;
+      _walletUpgradeStatus = null;
+    });
+    try {
+      final count = await action();
+      if (!mounted) return;
+      setState(() {
+        _walletUpgradeStatus = count == 0
+            ? 'No older wallets needed upgrading.'
+            : 'Upgraded $count wallet${count == 1 ? '' : 's'} to private storage.';
+      });
+      await _loadFeatures();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _walletUpgradeStatus =
+          'Wallet upgrade paused. Reopen your wallet to check its status.');
     } finally {
       if (mounted) setState(() => _upgradingWallets = false);
     }
@@ -554,6 +605,8 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
       walletV2SendEnabled: widget.walletV2SendEnabled,
       onUpgradeLegacyWallets: widget.upgradeLegacyWallets == null
           ? null : _runWalletUpgrade,
+      onFinishLegacyWallets: widget.finishLegacyWallets == null
+          ? null : _finishWalletUpgrade,
       upgradingWallets: _upgradingWallets,
       walletUpgradeStatus: _walletUpgradeStatus,
       loadFromAddress: widget.loadFromAddress,
@@ -589,6 +642,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   final WalletV2ActiveClient? walletV2;
   final bool walletV2SendEnabled;
   final VoidCallback? onUpgradeLegacyWallets;
+  final VoidCallback? onFinishLegacyWallets;
   final bool upgradingWallets;
   final String? walletUpgradeStatus;
   // 2026-07-13: network-scoped signature — see notes on the public
@@ -621,6 +675,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     this.walletV2,
     this.walletV2SendEnabled = false,
     this.onUpgradeLegacyWallets,
+    this.onFinishLegacyWallets,
     this.upgradingWallets = false,
     this.walletUpgradeStatus,
     this.loadFromAddress,
@@ -1542,6 +1597,14 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
             icon: const Icon(Icons.sync_rounded, size: 16),
             label: Text(upgradingWallets
                 ? 'Preparing wallets…' : 'Prepare existing wallets'),
+          ),
+        if (walletV2 != null && onFinishLegacyWallets != null)
+          OutlinedButton.icon(
+            key: const Key('crypto_wallet_engine_finish_wallets_btn'),
+            onPressed: upgradingWallets ? null : onFinishLegacyWallets,
+            icon: const Icon(Icons.verified_user_outlined, size: 16),
+            label: Text(upgradingWallets
+                ? 'Upgrading wallets…' : 'Finish wallet upgrade'),
           ),
         if (walletUpgradeStatus != null)
           Text(walletUpgradeStatus!,

@@ -1220,6 +1220,12 @@ const bool kEnableWalletV2UiMigration = bool.fromEnvironment(
   'VAULTAI_ENABLE_WALLET_V2_UI_MIGRATION',
   defaultValue: false,
 ) && kEnableWalletV2UiRead;
+// Completing an owner-verified wallet copy retires the older PIN-encrypted
+// wallet row. Keep this separate from preparation and disabled by default.
+const bool kEnableWalletV2UiRetirement = bool.fromEnvironment(
+  'VAULTAI_ENABLE_WALLET_V2_UI_RETIREMENT',
+  defaultValue: false,
+) && kEnableWalletV2UiMigration && kEnableWalletV2UiSend;
 
 bool legacyAuthFallbackPermitted({
   required bool opaqueLookupMissed,
@@ -23131,6 +23137,28 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       accessIsCurrent: source.stillCurrent,
                     ).run(prepareOnly: true);
                     return result.prepared;
+                  } finally {
+                    source.close();
+                  }
+                }
+              : null,
+          finishLegacyWallets: kEnableWalletV2UiRetirement && walletV2 != null
+              ? () async {
+                  final source =
+                      await createLocalLegacyPasswordSourceForActiveVault(
+                    app,
+                    promptPin: () => _promptForActionPin(
+                      engineCtx, 'Finish wallet upgrade'),
+                  );
+                  try {
+                    final result = await WalletV2OwnerUpgrade(
+                      export: source.export,
+                      legacyCodec: source.codec,
+                      wallet: walletV2,
+                      proofProvider: source.proof,
+                      accessIsCurrent: source.stillCurrent,
+                    ).run();
+                    return result.migrated;
                   } finally {
                     source.close();
                   }

@@ -186,6 +186,7 @@ Future<void> _pumpDashboard(
   WalletV2ActiveClient? walletV2,
   bool walletV2SendEnabled = true,
   Future<int> Function()? upgradeLegacyWallets,
+  Future<int> Function()? finishLegacyWallets,
 }) async {
   tester.view.physicalSize = const Size(1200, 2400);
   tester.view.devicePixelRatio = 1;
@@ -204,6 +205,7 @@ Future<void> _pumpDashboard(
           walletV2: walletV2,
           walletV2SendEnabled: walletV2SendEnabled,
           upgradeLegacyWallets: upgradeLegacyWallets,
+          finishLegacyWallets: finishLegacyWallets,
           decryptForVault: (_) async => throw StateError('Legacy secret used'),
           isVaultKeyAvailable: () => true,
           encryptForVault: (_) async => throw StateError('Legacy key used'),
@@ -244,6 +246,37 @@ void main() {
     await tester.pumpAndSettle();
     expect(calls, 1);
     expect(find.text('Verified encrypted copies of 1 older wallet. Your originals remain available.'), findsOneWidget);
+  });
+
+  testWidgets('finishing a wallet upgrade requires explicit confirmation',
+      (tester) async {
+    final api = _ChainApi('SOL', 'synthetic-SOL-address');
+    var calls = 0;
+    await _pumpDashboard(
+      tester,
+      api: api,
+      walletV2: _walletV2('SOL', api.address),
+      finishLegacyWallets: () async {
+        calls++;
+        return 1;
+      },
+    );
+    final button =
+        find.byKey(const Key('crypto_wallet_engine_finish_wallets_btn'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(calls, 0);
+    expect(find.text('Finish wallet upgrade?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(calls, 0);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Finish upgrade'));
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+    expect(find.text('Upgraded 1 wallet to private storage.'), findsOneWidget);
   });
 
   for (final asset in ['SOL', 'USDT_TRC20']) {
