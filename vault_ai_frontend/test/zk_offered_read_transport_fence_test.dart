@@ -205,7 +205,7 @@ void main() {
     for (final path in <String>[
       '/get-or-create-vault-meta', '/verify-pin', '/rotate-vault-kdf',
       '/vault-stats', '/devices/request-self-approval',
-      '/devices/finalize-self-approval',
+      '/devices/finalize-self-approval', '/vault/delete/confirm',
     ]) {
       expect(() => assertOfferedReadPinFreeRequest(
         Uri.parse('https://synthetic.example$path'), offeredHeaders,

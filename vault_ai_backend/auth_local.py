@@ -788,7 +788,8 @@ def require_signed_offer_route(principal: SessionPrincipal, *, path: str) -> Non
             "/get-or-create-vault-meta", "/verify-pin",
             "/rotate-vault-kdf", "/vault-stats",
             "/devices/request-self-approval",
-            "/devices/finalize-self-approval")):
+            "/devices/finalize-self-approval",
+            "/vault/delete/confirm")):
         raise HTTPException(status_code=409,
                             detail="pin_free_auth_device_required")
     if offers & PIN_FREE_IMPORT_OFFER and (

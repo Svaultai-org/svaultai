@@ -44,6 +44,7 @@ from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, ConfigDict, Field
 
 from auth_local import (
+    PIN_FREE_AUTH_DEVICE_OFFER,
     SessionPrincipal,
     revoke_all_sessions_for_vault,
     verify_session_token,
@@ -391,6 +392,14 @@ def _zk_delete_proof_enabled() -> bool:
     ).strip().lower() == "true"
 
 
+def _delete_proof_required(principal: SessionPrincipal) -> bool:
+    """An issued signed offer keeps its proof successor after flag changes."""
+    offered = bool(principal.get("pin_free_read_offers", 0) &
+                   PIN_FREE_AUTH_DEVICE_OFFER)
+    return ((offered or _zk_delete_proof_enabled()) and
+            _vault_has_zk_registration(principal["vault_id"]))
+
+
 def _vault_has_zk_registration(vault_id: str) -> bool:
     """Read the authoritative account mode; fail closed on DB errors."""
     conn = get_db()
@@ -437,10 +446,7 @@ def get_delete_status(
             "apple_subscription_state": "temporarily_unavailable",
             "retryable": True,
         }
-    zk_proof_required = (
-        _zk_delete_proof_enabled()
-        and _vault_has_zk_registration(principal["vault_id"])
-    )
+    zk_proof_required = _delete_proof_required(principal)
     return DeleteStatusResponse(
         confirmation_phrase=CONFIRMATION_PHRASE,
         requires_pin=not zk_proof_required,
@@ -538,7 +544,7 @@ def confirm_delete(
             },
         )
 
-    if _zk_delete_proof_enabled() and _vault_has_zk_registration(vault_id):
+    if _delete_proof_required(principal):
         if payload.pin is not None or not payload.zk_proof_token:
             raise HTTPException(
                 status_code=401,
@@ -604,9 +610,7 @@ def confirm_delete_proof(
 ) -> Response:
     """Keep the proof form usable after the mixed PIN/PIN-free path is fenced."""
 
-    if not _zk_delete_proof_enabled() or not _vault_has_zk_registration(
-        principal["vault_id"]
-    ):
+    if not _delete_proof_required(principal):
         raise HTTPException(status_code=404, detail="not_found")
     return confirm_delete(
         DeleteConfirmRequest(

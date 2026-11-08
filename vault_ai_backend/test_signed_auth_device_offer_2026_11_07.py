@@ -13,7 +13,7 @@ from signed_private_chat_prebody_gate import SignedPrivateChatPreBodyGate
 OLD_ROUTES = (
     "/get-or-create-vault-meta", "/verify-pin", "/rotate-vault-kdf",
     "/vault-stats", "/devices/request-self-approval",
-    "/devices/finalize-self-approval",
+    "/devices/finalize-self-approval", "/vault/delete/confirm",
 )
 
 
@@ -52,6 +52,10 @@ def test_offer_is_explicit_and_requires_pending_proof(monkeypatch):
         negotiate(_request(offer=True), signed_reads=True)
     assert denied.value.detail == "signed_auth_device_unavailable"
     monkeypatch.setenv("VAULTAI_ZK_PENDING_DEVICE_PROOF_ENABLED", "true")
+    with pytest.raises(HTTPException) as denied:
+        negotiate(_request(offer=True), signed_reads=True)
+    assert denied.value.detail == "signed_auth_device_unavailable"
+    monkeypatch.setenv("VAULTAI_ZK_DELETE_PROOF_ENABLED", "true")
     assert negotiate(_request(offer=True), signed_reads=True) is True
 
 
@@ -74,7 +78,7 @@ def test_only_signed_offered_sessions_fence_six_old_routes():
                  "/auth/zk-pending-verify-finalize",
                  "/devices/request-self-approval-proof",
                  "/devices/finalize-self-approval-proof", "/vault-meta",
-                 "/vault-stats/zk"):
+                 "/vault-stats/zk", "/vault/delete/confirm-proof"):
         auth_local.require_signed_offer_route(
             {"pin_free_read_offers": 128}, path=path)
 

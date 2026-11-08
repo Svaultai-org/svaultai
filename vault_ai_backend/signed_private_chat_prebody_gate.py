@@ -46,6 +46,7 @@ _OLD_AUTH_DEVICE_ROUTES = {
     "/get-or-create-vault-meta", "/verify-pin", "/rotate-vault-kdf",
     "/vault-stats", "/devices/request-self-approval",
     "/devices/finalize-self-approval",
+    "/vault/delete/confirm",
 }
 
 

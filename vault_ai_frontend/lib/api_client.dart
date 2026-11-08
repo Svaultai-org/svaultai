@@ -325,7 +325,7 @@ void assertOfferedReadPinFreeRequest(
       const <String>{
         '/get-or-create-vault-meta', '/verify-pin', '/rotate-vault-kdf',
         '/vault-stats', '/devices/request-self-approval',
-        '/devices/finalize-self-approval',
+        '/devices/finalize-self-approval', '/vault/delete/confirm',
       }.contains(path)) {
     throw StateError('This action uses the private vault route.');
   }
@@ -1486,11 +1486,13 @@ class VaultAIClient {
       throw ArgumentError(
           'Exactly one delete verification method is required.');
     }
-    if (kEnableZkPrivateOnlyUnlock &&
+    final proofOnly = kEnableZkPrivateOnlyUnlock ||
+        signedAuthDeviceOfferedForToken(authToken);
+    if (proofOnly &&
         (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
       throw StateError('Private vault deletion requires an OPAQUE proof.');
     }
-    final uri = Uri.parse(kEnableZkPrivateOnlyUnlock
+    final uri = Uri.parse(proofOnly
         ? '$baseUrl/vault/delete/confirm-proof'
         : '$baseUrl/vault/delete/confirm');
     final body = jsonEncode({

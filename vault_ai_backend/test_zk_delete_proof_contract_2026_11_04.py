@@ -124,6 +124,23 @@ def test_strict_proof_route_does_not_allow_legacy_vault(delete_harness):
     destroy.assert_not_called()
 
 
+def test_signed_offer_keeps_delete_proof_after_flag_is_disabled(delete_harness):
+    delete, client, is_zk, bill, consume, verify_pin, destroy = delete_harness
+    with mock.patch.dict(PRINCIPAL, {"pin_free_read_offers": 128}), \
+         mock.patch.dict("os.environ", {"VAULTAI_ZK_DELETE_PROOF_ENABLED": "false"}):
+        status = client.get("/vault/delete/status")
+        assert status.status_code == 200
+        assert status.json()["requires_opaque_verification"] is True
+        response = client.post("/vault/delete/confirm-proof", json=_body(
+            delete, zk_proof_token="synthetic-one-time-proof",
+        ))
+    assert response.status_code == 204, response.text
+    consume.assert_called_once()
+    verify_pin.assert_not_called()
+    bill.assert_called_once_with(VAULT_ID)
+    destroy.assert_called_once()
+
+
 def test_failed_proof_cannot_reach_deletion_service(delete_harness):
     delete, client, is_zk, bill, consume, verify_pin, destroy = delete_harness
     consume.side_effect = HTTPException(status_code=401, detail="invalid proof")

@@ -159,6 +159,37 @@ void main() {
       authToken: token, pin: '123456'), throwsStateError);
   });
 
+  test('signed auth-device session uses proof-only vault deletion', () async {
+    final token = base64Url.encode(
+      <int>[3, 128, ...List<int>.filled(48, 7)],
+    ).replaceAll('=', '');
+    final sent = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://example.invalid',
+      httpClient: MockClient((request) async {
+        sent.add(request);
+        return http.Response('', 204);
+      }),
+    );
+    await client.confirmDeleteVault(
+      authToken: token,
+      requestToken: 'synthetic-challenge',
+      zkProofToken: 'synthetic-proof',
+      confirmationPhrase: 'DELETE MY VAULT',
+    );
+    expect(sent.single.url.path, '/vault/delete/confirm-proof');
+    final body = jsonDecode(sent.single.body) as Map<String, dynamic>;
+    expect(body.keys.toSet(), {
+      'request_token', 'zk_proof_token', 'confirmation_phrase',
+    });
+    await expectLater(client.confirmDeleteVault(
+      authToken: token,
+      requestToken: 'synthetic-challenge',
+      pin: '123456',
+      confirmationPhrase: 'DELETE MY VAULT',
+    ), throwsStateError);
+  });
+
   test('pending OPAQUE HTTP adapter keeps device and bearer scope', () async {
     setApiClientDeviceId('synthetic_pending_device_1234');
     final sent = <http.Request>[];

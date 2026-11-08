@@ -1057,7 +1057,9 @@ def _signed_auth_device_negotiation(request: Request, *, signed_reads: bool) -> 
     if not signed_reads or not request_has_file_v2_reader(request):
         raise HTTPException(status_code=409, detail="signed_read_offers_required")
     if (os.getenv("VAULTAI_SIGNED_AUTH_DEVICE_OFFER_ENABLED", "false")
-            .strip().lower() != "true" or not pending_device_proof_enabled()):
+            .strip().lower() != "true" or not pending_device_proof_enabled() or
+            os.getenv("VAULTAI_ZK_DELETE_PROOF_ENABLED", "false")
+            .strip().lower() != "true"):
         raise HTTPException(status_code=409,
                             detail="signed_auth_device_unavailable")
     return True
