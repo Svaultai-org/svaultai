@@ -38,6 +38,20 @@ _OLD_FILE_MUTATIONS = {
     ("POST", "/manage/file/delete"),
     ("DELETE", "/delete-file"),
 }
+# These compatibility endpoints have no caller in either the current client
+# or the last released signed-read client. A client that requests the signed
+# item-read offer must not send their older PIN wire contract. Unoffered
+# sessions retain these routes until the full client cutover is complete.
+_OLD_SIGNED_CLIENT_COMPAT_ROUTES = {
+    ("POST", "/delete-login"),
+    ("PATCH", "/manage/login"),
+    ("DELETE", "/manage/login"),
+    ("POST", "/manage/login/delete"),
+    ("POST", "/crypto/save-wallet-profile"),
+    ("POST", "/crypto/save-sensitive-backup"),
+    ("POST", "/crypto/reveal-sensitive-backup"),
+    ("POST", "/crypto/save-note"),
+}
 _OLD_ITEM_READS = {
     "/list-secure-items", "/get-secure-item", "/list-login-names",
     "/get-login", "/login-count", "/manage/list-login-names",
@@ -79,6 +93,9 @@ def _signed_offer_bits(headers: list[tuple[bytes, bytes]]) -> int:
 
 def _replaced_pin_route(path: str, offers: int, method: str = "POST") -> str | None:
     path = path.rstrip("/")
+    if (offers & PIN_FREE_ITEM_READ_OFFER and
+            (method, path) in _OLD_SIGNED_CLIENT_COMPAT_ROUTES):
+        return "pin_free_client_required"
     if offers & PIN_FREE_AUTH_DEVICE_OFFER and path in _OLD_AUTH_DEVICE_ROUTES:
         return "pin_free_auth_device_required"
     if (method == "POST" and offers & PIN_FREE_IMPORT_OFFER and
@@ -122,7 +139,8 @@ def _replaced_pin_route(path: str, offers: int, method: str = "POST") -> str | N
 
 def _candidate_pin_path(path: str, method: str = "POST") -> bool:
     path = path.rstrip("/")
-    if (method, path) in _OLD_FILE_MUTATIONS:
+    if ((method, path) in _OLD_FILE_MUTATIONS or
+            (method, path) in _OLD_SIGNED_CLIENT_COMPAT_ROUTES):
         return True
     if method != "POST":
         return False

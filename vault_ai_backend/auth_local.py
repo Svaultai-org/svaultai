@@ -786,6 +786,14 @@ def require_signed_offer_route(principal: SessionPrincipal, *, path: str) -> Non
             offers & ~_SIGNED_WIDE_OFFER_MASK):
         raise _auth_401("invalid_session")
     path = path.rstrip("/")
+    if offers & PIN_FREE_ITEM_READ_OFFER and path in (
+            "/delete-login", "/manage/login", "/manage/login/delete",
+            "/crypto/save-wallet-profile", "/crypto/save-sensitive-backup",
+            "/crypto/reveal-sensitive-backup", "/crypto/save-note"):
+        # Signed-read clients have no caller for these older compatibility
+        # contracts. Preserve them for unoffered clients during cutover.
+        raise HTTPException(status_code=409,
+                            detail="pin_free_client_required")
     if (offers & PIN_FREE_AUTH_DEVICE_OFFER and path in (
             "/get-or-create-vault-meta", "/verify-pin",
             "/rotate-vault-kdf", "/vault-stats",
