@@ -81,6 +81,10 @@ const bool kSignedBeneficiaryClientEnabled = bool.fromEnvironment(
   'VAULTAI_ENABLE_SIGNED_BENEFICIARY',
   defaultValue: false,
 );
+const bool kSignedAuthDeviceClientEnabled = bool.fromEnvironment(
+  'VAULTAI_ENABLE_SIGNED_AUTH_DEVICE',
+  defaultValue: false,
+);
 
 /// A version signal for the backend's old-client rejection at OPAQUE
 /// finalize. It does not grant any content capability by itself.
@@ -103,13 +107,13 @@ bool hasSignedBeneficiaryOffer(String token) {
       return false;
     }
     if (wire[0] == 3) {
-      if (wire.length != 50 || (wire[1] & ~127) != 0) return true;
+      if (wire.length != 50 || (wire[1] & ~255) != 0) return true;
       return (wire[1] & 64) != 0;
     }
     if (wire[0] == 4) {
       if (wire.length != 51) return true;
       final offers = (wire[1] << 8) | wire[2];
-      if ((offers & ~639) != 0 || (offers & 519) != 519) return true;
+      if ((offers & ~767) != 0 || (offers & 519) != 519) return true;
       return (offers & 64) != 0;
     }
     return false;
@@ -126,6 +130,7 @@ bool signedOfferTokenMatches(
   bool requirePrivateChatOffer = false,
   bool requirePasswordAnalysisOffer = false,
   bool requireBeneficiaryOffer = false,
+  bool requireAuthDeviceOffer = false,
 }) {
   if (response['pin_free_read_offers_signed'] != true) return false;
   if (requireFileCreateOffer &&
@@ -165,6 +170,10 @@ bool signedOfferTokenMatches(
           response['pin_free_beneficiary_v2'] == true)) {
     return false;
   }
+  if (requireAuthDeviceOffer &&
+      response['pin_free_auth_device_signed'] != true) return false;
+  if (!requireAuthDeviceOffer &&
+      response['pin_free_auth_device_signed'] == true) return false;
   final token = response['session_token'];
   if (token is! String || token.isEmpty) return false;
   try {
@@ -179,6 +188,7 @@ bool signedOfferTokenMatches(
                 response['pin_free_beneficiary_v2'] == true
             ? 64
             : 0) |
+        (requireAuthDeviceOffer ? 128 : 0) |
         (requirePrivateChatOffer ? 512 : 0);
     if ((expected & 4) != 0 && (expected & 2) == 0) return false;
     if (requirePrivateChatOffer) {
@@ -1046,7 +1056,8 @@ class ZkAuthService {
             kSignedFileMutationClientEnabled ||
             kSignedPrivateChatClientEnabled ||
             kSignedPasswordAnalysisClientEnabled ||
-            kSignedBeneficiaryClientEnabled) &&
+            kSignedBeneficiaryClientEnabled ||
+            kSignedAuthDeviceClientEnabled) &&
         !signedOfferTokenMatches(
           finalizeResponse,
           requireFileCreateOffer: kSignedFileCreateClientEnabled,
@@ -1054,6 +1065,7 @@ class ZkAuthService {
           requirePrivateChatOffer: kSignedPrivateChatClientEnabled,
           requirePasswordAnalysisOffer: kSignedPasswordAnalysisClientEnabled,
           requireBeneficiaryOffer: kSignedBeneficiaryClientEnabled,
+          requireAuthDeviceOffer: kSignedAuthDeviceClientEnabled,
         )) {
       throw OpaqueUnavailable('Authenticated session offer unavailable');
     }

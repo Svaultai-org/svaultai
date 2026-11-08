@@ -125,8 +125,10 @@ PIN_FREE_FILE_CREATE_OFFER = 8
 PIN_FREE_PASSWORD_ANALYSIS_OFFER = 16
 PIN_FREE_FILE_MUTATION_OFFER = 32
 PIN_FREE_BENEFICIARY_OFFER = 64
+PIN_FREE_AUTH_DEVICE_OFFER = 128
 PIN_FREE_PRIVATE_CHAT_OFFER = 512
-_SIGNED_OFFER_MASK = 31 | PIN_FREE_FILE_MUTATION_OFFER | PIN_FREE_BENEFICIARY_OFFER
+_SIGNED_OFFER_MASK = (31 | PIN_FREE_FILE_MUTATION_OFFER |
+                      PIN_FREE_BENEFICIARY_OFFER | PIN_FREE_AUTH_DEVICE_OFFER)
 _SIGNED_WIDE_OFFER_MASK = _SIGNED_OFFER_MASK | PIN_FREE_PRIVATE_CHAT_OFFER
 
 
@@ -778,6 +780,13 @@ def require_signed_offer_route(principal: SessionPrincipal, *, path: str) -> Non
             offers & ~_SIGNED_WIDE_OFFER_MASK):
         raise _auth_401("invalid_session")
     path = path.rstrip("/")
+    if (offers & PIN_FREE_AUTH_DEVICE_OFFER and path in (
+            "/get-or-create-vault-meta", "/verify-pin",
+            "/rotate-vault-kdf", "/vault-stats",
+            "/devices/request-self-approval",
+            "/devices/finalize-self-approval")):
+        raise HTTPException(status_code=409,
+                            detail="pin_free_auth_device_required")
     if (path == "/security-center/analyze-passwords" and
             offers & PIN_FREE_PASSWORD_ANALYSIS_OFFER):
         raise HTTPException(status_code=409,

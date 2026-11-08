@@ -5498,6 +5498,14 @@ Future<Map<String, dynamic>> _zkHttpPost(
     }
     headers['X-SVaultAI-Pin-Free-Beneficiary'] = '1';
   }
+  if (path == '/auth/zk-login-finalize' && kSignedAuthDeviceClientEnabled) {
+    if (!kSignedReadOffersClientEnabled || !kEnableFileV2UiRead ||
+        !kEnableZkPendingDeviceProof) {
+      throw OpaqueUnavailable(
+          'Signed auth and device access needs pending OPAQUE proof.');
+    }
+    headers['X-SVaultAI-Pin-Free-Auth-Device'] = '1';
+  }
   if (path == '/auth/zk-login-finalize') {
     headers.addAll(strictPinFreeClientHeaders(
       privateOnlyBuild: kPrivateOnlyUnlockEnabled,

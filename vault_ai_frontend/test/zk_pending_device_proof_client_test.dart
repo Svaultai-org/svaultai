@@ -130,6 +130,35 @@ void main() {
     setApiClientDeviceId('');
   });
 
+  test('signed auth-device session uses proof-only self-approval routes',
+      () async {
+    final token = base64Url.encode(
+      <int>[3, 128, ...List<int>.filled(48, 7)],
+    ).replaceAll('=', '');
+    final sent = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://example.invalid',
+      httpClient: MockClient((request) async {
+        sent.add(request);
+        return http.Response('{"status":"cooldown"}', 200);
+      }),
+    );
+    await client.requestSelfApproval(
+      authToken: token, zkProofToken: 'synthetic-proof-one');
+    await client.finalizeSelfApproval(
+      authToken: token, zkProofToken: 'synthetic-proof-two');
+    expect(sent.map((r) => r.url.path), <String>[
+      '/devices/request-self-approval-proof',
+      '/devices/finalize-self-approval-proof',
+    ]);
+    for (final request in sent) {
+      expect((jsonDecode(request.body) as Map).keys.toSet(),
+          {'zk_proof_token'});
+    }
+    await expectLater(client.requestSelfApproval(
+      authToken: token, pin: '123456'), throwsStateError);
+  });
+
   test('pending OPAQUE HTTP adapter keeps device and bearer scope', () async {
     setApiClientDeviceId('synthetic_pending_device_1234');
     final sent = <http.Request>[];

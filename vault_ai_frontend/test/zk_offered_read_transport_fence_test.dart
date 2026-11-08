@@ -186,6 +186,37 @@ void main() {
         isFalse);
   });
 
+  test('auth and device offer fences old PIN routes and matches token shape', () {
+    final offered = signedToken(128);
+    final offeredHeaders = <String, String>{
+      'Authorization': 'Bearer $offered',
+    };
+    final response = <String, dynamic>{
+      'session_token': offered,
+      'pin_free_read_offers_signed': true,
+      'pin_free_auth_device_signed': true,
+      'pin_free_legacy_item_read': false,
+      'pin_free_legacy_file_list': false,
+      'pin_free_legacy_file_download': false,
+    };
+    expect(signedOfferTokenMatches(response, requireAuthDeviceOffer: true),
+        isTrue);
+    expect(signedOfferTokenMatches(response), isFalse);
+    for (final path in <String>[
+      '/get-or-create-vault-meta', '/verify-pin', '/rotate-vault-kdf',
+      '/vault-stats', '/devices/request-self-approval',
+      '/devices/finalize-self-approval',
+    ]) {
+      expect(() => assertOfferedReadPinFreeRequest(
+        Uri.parse('https://synthetic.example$path'), offeredHeaders,
+        body: const <String, String>{'pin': '123456'},
+      ), throwsStateError);
+    }
+    assertOfferedReadPinFreeRequest(
+      Uri.parse('https://synthetic.example/vault-stats/zk'), offeredHeaders,
+    );
+  });
+
   test('actual multipart and chunk-init uploads cannot send PIN after offer',
       () async {
     final offeredToken = signedToken(8);

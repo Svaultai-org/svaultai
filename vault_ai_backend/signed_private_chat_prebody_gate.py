@@ -13,6 +13,7 @@ from typing import Awaitable, Callable
 from starlette.responses import JSONResponse
 
 from auth_local import (
+    PIN_FREE_AUTH_DEVICE_OFFER,
     PIN_FREE_BENEFICIARY_OFFER,
     PIN_FREE_FILE_CREATE_OFFER,
     PIN_FREE_FILE_DOWNLOAD_OFFER,
@@ -38,6 +39,11 @@ _OLD_ITEM_READS = {
     "/list-secure-items", "/get-secure-item", "/list-login-names",
     "/get-login", "/login-count", "/manage/list-login-names",
     "/manage/list-secure-items", "/manage/logins-full",
+}
+_OLD_AUTH_DEVICE_ROUTES = {
+    "/get-or-create-vault-meta", "/verify-pin", "/rotate-vault-kdf",
+    "/vault-stats", "/devices/request-self-approval",
+    "/devices/finalize-self-approval",
 }
 
 
@@ -69,6 +75,8 @@ def _signed_offer_bits(headers: list[tuple[bytes, bytes]]) -> int:
 
 def _replaced_pin_route(path: str, offers: int, method: str = "POST") -> str | None:
     path = path.rstrip("/")
+    if offers & PIN_FREE_AUTH_DEVICE_OFFER and path in _OLD_AUTH_DEVICE_ROUTES:
+        return "pin_free_auth_device_required"
     if offers & PIN_FREE_ITEM_READ_OFFER and path in _OLD_ITEM_READS:
         return "pin_free_read_required"
     if (offers & PIN_FREE_FILE_MUTATION_OFFER and
@@ -108,6 +116,7 @@ def _candidate_pin_path(path: str, method: str = "POST") -> bool:
     if method != "POST":
         return False
     return (_replaced_private_chat_path(path) or
+            path in _OLD_AUTH_DEVICE_ROUTES or
             path in _OLD_ITEM_READS or
             path in ("/beneficiary/create", "/beneficiary/link",
                      "/beneficiary/list-mine", "/beneficiary/list-inheritances",

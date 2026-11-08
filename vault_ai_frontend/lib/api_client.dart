@@ -272,13 +272,13 @@ int _signedOfferBits(String token) {
     final wire = base64Url.decode(base64Url.normalize(token));
     if (wire.length == 48 || wire.isEmpty) return 0;
     if (wire[0] == 3) {
-      if (wire.length != 50 || (wire[1] & ~127) != 0) return 127;
+      if (wire.length != 50 || (wire[1] & ~255) != 0) return 255;
       return wire[1];
     }
     if (wire[0] == 4) {
-      if (wire.length != 51) return 639;
+      if (wire.length != 51) return 767;
       final offers = (wire[1] << 8) | wire[2];
-      if ((offers & ~639) != 0 || (offers & 519) != 519) return 639;
+      if ((offers & ~767) != 0 || (offers & 519) != 519) return 767;
       return offers;
     }
     return 0;
@@ -295,6 +295,9 @@ bool signedPasswordAnalysisOfferedForToken(String token) =>
 
 bool signedFileMutationOfferedForToken(String token) =>
     (_signedOfferBits(token) & 32) != 0;
+
+bool signedAuthDeviceOfferedForToken(String token) =>
+    (_signedOfferBits(token) & 128) != 0;
 
 /// An authenticated OPAQUE offer replaces a specific older read route for the
 /// life of that bearer. Keep this check at the HTTP boundary as well as at
@@ -313,6 +316,14 @@ void assertOfferedReadPinFreeRequest(
   final signedOffers = _signedOfferBits(token);
   // FastAPI can redirect a trailing slash while preserving the POST body.
   final path = uri.path.replaceFirst(RegExp(r'/+$'), '');
+  if (signedAuthDeviceOfferedForToken(token) &&
+      const <String>{
+        '/get-or-create-vault-meta', '/verify-pin', '/rotate-vault-kdf',
+        '/vault-stats', '/devices/request-self-approval',
+        '/devices/finalize-self-approval',
+      }.contains(path)) {
+    throw StateError('This action uses the private vault route.');
+  }
   if ((signedOffers & 32) != 0 &&
       (path == '/name-file' || path == '/manage/file' ||
           path == '/manage/file/delete' || path == '/delete-file')) {
@@ -1924,11 +1935,13 @@ class VaultAIClient {
     String? pin,
     String? zkProofToken,
   }) async {
-    if (kEnableZkPrivateOnlyUnlock &&
+    final proofOnly = kEnableZkPrivateOnlyUnlock ||
+        signedAuthDeviceOfferedForToken(authToken);
+    if (proofOnly &&
         (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
       throw StateError('Private device approval requires an OPAQUE proof.');
     }
-    final uri = Uri.parse(kEnableZkPrivateOnlyUnlock
+    final uri = Uri.parse(proofOnly
         ? '$baseUrl/devices/request-self-approval-proof'
         : '$baseUrl/devices/request-self-approval');
     final response = await _sessionHttp.post(
@@ -1962,11 +1975,13 @@ class VaultAIClient {
     String? pin,
     String? zkProofToken,
   }) async {
-    if (kEnableZkPrivateOnlyUnlock &&
+    final proofOnly = kEnableZkPrivateOnlyUnlock ||
+        signedAuthDeviceOfferedForToken(authToken);
+    if (proofOnly &&
         (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
       throw StateError('Private device approval requires an OPAQUE proof.');
     }
-    final uri = Uri.parse(kEnableZkPrivateOnlyUnlock
+    final uri = Uri.parse(proofOnly
         ? '$baseUrl/devices/finalize-self-approval-proof'
         : '$baseUrl/devices/finalize-self-approval');
     final response = await _sessionHttp.post(
