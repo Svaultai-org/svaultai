@@ -128,10 +128,12 @@ PIN_FREE_BENEFICIARY_OFFER = 64
 PIN_FREE_AUTH_DEVICE_OFFER = 128
 PIN_FREE_IMPORT_OFFER = 256
 PIN_FREE_PRIVATE_CHAT_OFFER = 512
+PIN_FREE_MEMORY_OFFER = 1024
 _SIGNED_OFFER_MASK = (31 | PIN_FREE_FILE_MUTATION_OFFER |
                       PIN_FREE_BENEFICIARY_OFFER | PIN_FREE_AUTH_DEVICE_OFFER)
 _SIGNED_WIDE_OFFER_MASK = (_SIGNED_OFFER_MASK | PIN_FREE_IMPORT_OFFER |
-                           PIN_FREE_PRIVATE_CHAT_OFFER)
+                           PIN_FREE_PRIVATE_CHAT_OFFER |
+                           PIN_FREE_MEMORY_OFFER)
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -803,6 +805,10 @@ def require_signed_offer_route(principal: SessionPrincipal, *, path: str) -> Non
             offers & PIN_FREE_PASSWORD_ANALYSIS_OFFER):
         raise HTTPException(status_code=409,
                             detail="pin_free_password_analysis_required")
+    if (path in ("/memory/list", "/memory/create", "/memory/update",
+                "/memory/delete") and offers & PIN_FREE_MEMORY_OFFER):
+        raise HTTPException(status_code=409,
+                            detail="pin_free_memory_required")
     if (path in ("/beneficiary/create", "/beneficiary/link",
                 "/beneficiary/list-mine", "/beneficiary/list-inheritances",
                 "/beneficiary/request-transfer",

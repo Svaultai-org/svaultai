@@ -702,6 +702,8 @@ CORS_ALLOWED_HEADERS = [
     "X-SVaultAI-Pin-Free-Password-Analysis",
     "X-SVaultAI-Pin-Free-Beneficiary",
     "X-SVaultAI-Pin-Free-Auth-Device",
+    "X-SVaultAI-Pin-Free-Import",
+    "X-SVaultAI-Pin-Free-Memory",
     "X-Chat-Request-Id",
     # 2026-07-22 (4) Safari-specific CORS regression follow-up.
     # After the (3) fix landed, the Safari production frontend still

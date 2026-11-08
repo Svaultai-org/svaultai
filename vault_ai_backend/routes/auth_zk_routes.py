@@ -203,6 +203,7 @@ from auth_local import (
     PIN_FREE_AUTH_DEVICE_OFFER,
     PIN_FREE_IMPORT_OFFER,
     PIN_FREE_PRIVATE_CHAT_OFFER,
+    PIN_FREE_MEMORY_OFFER,
     issue_session_token,
     sign_opaque_read_offer_token,
     _vault_meta_snapshot,
@@ -922,6 +923,8 @@ class ZkLoginFinalizeResponse(BaseModel):
     pin_free_auth_device_signed: bool = False
     pin_free_import_signed: bool = False
     pin_free_beneficiary_v2: bool = False
+    pin_free_memory_signed: bool = False
+    pin_free_memory_v2: bool = False
     pin_free_private_chat_signed: bool = False
     # Additive hints: old clients ignore these and keep their existing
     # registration + metadata fetch. False/null always requires fallback.
@@ -1099,6 +1102,46 @@ def _beneficiary_v2_offer_ready(conn, vault_id: str) -> bool:
     return bool(row and row[0] is True)
 
 
+def _signed_memory_negotiation(request: Request, *, signed_reads: bool) -> bool:
+    """An explicit client signal is required before old Memory calls are fenced."""
+    header = request.headers.get("x-svaultai-pin-free-memory", "")
+    if header not in ("", "1"):
+        raise HTTPException(status_code=400, detail="invalid_memory_capability")
+    if header != "1":
+        return False
+    flags = ZkMigrationFlags.from_environment(os.environ)
+    flags.validate_dependencies()
+    if (not signed_reads or not flags.memory_read_enabled or
+            not flags.memory_write_enabled or
+            os.getenv("VAULTAI_SIGNED_MEMORY_OFFER_ENABLED", "false")
+            .strip().lower() != "true"):
+        raise HTTPException(status_code=409, detail="signed_memory_unavailable")
+    return True
+
+
+def _memory_v2_offer_ready(conn, vault_id: str) -> bool:
+    """Offer only if every active Memory row has a private readable copy.
+
+    Older PIN-derived encrypted rows lack a client-owned record id. They
+    cannot be opened with the V2 Memory key and must retain legacy access.
+    """
+    cur = conn.cursor()
+    cur.execute(
+        """SELECT NOT EXISTS (
+             SELECT 1 FROM vault_ai_memory
+              WHERE vault_id = %s AND superseded_at IS NULL
+                AND (memory_record_id IS NULL OR memory_record_id = ''
+                  OR payload_ciphertext IS NULL
+                  OR OCTET_LENGTH(payload_ciphertext) < 29
+                  OR GET_BYTE(payload_ciphertext, 0) <> 1
+                  OR LENGTH(memory_record_id) > 128)
+           )""",
+        (vault_id,),
+    )
+    row = cur.fetchone()
+    return bool(row and row[0] is True)
+
+
 def _signed_offer_token(
     token: str, *, signed_reads: bool, item_read: bool,
     file_list: bool, file_download: bool, file_create: bool,
@@ -1108,11 +1151,12 @@ def _signed_offer_token(
     beneficiary: bool = False,
     auth_device: bool = False,
     import_session: bool = False,
+    memory: bool = False,
 ) -> str:
     if not signed_reads:
         if (file_create or file_mutation or private_chat or
                 password_analysis or beneficiary or auth_device or
-                import_session):
+                import_session or memory):
             raise ValueError("capability requires negotiated session offers")
         return token
     if file_download and not file_list:
@@ -1128,6 +1172,7 @@ def _signed_offer_token(
             (PIN_FREE_BENEFICIARY_OFFER if beneficiary else 0) |
             (PIN_FREE_AUTH_DEVICE_OFFER if auth_device else 0) |
             (PIN_FREE_IMPORT_OFFER if import_session else 0) |
+            (PIN_FREE_MEMORY_OFFER if memory else 0) |
             (PIN_FREE_PRIVATE_CHAT_OFFER if private_chat else 0))
     return sign_opaque_read_offer_token(token, bits)
 
@@ -1312,6 +1357,9 @@ def _zk_login_finalize_sync(
         signed_import_requested = _signed_import_negotiation(
             request, signed_reads=signed_read_offers_requested,
         )
+        signed_memory_requested = _signed_memory_negotiation(
+            request, signed_reads=signed_read_offers_requested,
+        )
         # A re-verification slot must never be exchangeable for a fresh login
         # session through the older finalize endpoint.
         if payload.slot_id.startswith(
@@ -1486,6 +1534,21 @@ def _zk_login_finalize_sync(
                 conn.rollback()
                 beneficiary_capable = False
                 logger.exception("[ZK-LOGIN-FINALIZE] beneficiary offer check failed")
+        memory_capable = (
+            signed_memory_requested and device_trust_complete
+            and vault_row["vault_handle"] is not None
+            and vault_row["wrapped_mvk"] is not None
+        )
+        if memory_capable:
+            try:
+                with _zk_login_phase("metadata"):
+                    memory_capable = _memory_v2_offer_ready(
+                        conn, str(vault_row["vault_id"]),
+                    )
+            except Exception:
+                conn.rollback()
+                memory_capable = False
+                logger.exception("[ZK-LOGIN-FINALIZE] memory offer check failed")
         response_session_token = _signed_offer_token(
             token["token"], signed_reads=signed_read_offers_requested,
             item_read=offer_base, file_list=file_list_offer,
@@ -1498,6 +1561,7 @@ def _zk_login_finalize_sync(
             beneficiary=beneficiary_capable,
             auth_device=signed_auth_device_requested,
             import_session=signed_import_requested,
+            memory=memory_capable,
             private_chat=(signed_private_chat_requested and offer_base and
                           file_list_offer and file_download_offer),
         )
@@ -1523,6 +1587,8 @@ def _zk_login_finalize_sync(
             pin_free_auth_device_signed=signed_auth_device_requested,
             pin_free_import_signed=signed_import_requested,
             pin_free_beneficiary_v2=beneficiary_capable,
+            pin_free_memory_signed=signed_memory_requested,
+            pin_free_memory_v2=memory_capable,
             pin_free_private_chat_signed=(
                 signed_private_chat_requested and offer_base and
                 file_list_offer and file_download_offer

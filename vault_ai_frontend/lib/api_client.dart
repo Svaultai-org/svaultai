@@ -276,11 +276,12 @@ int _signedOfferBits(String token) {
       return wire[1];
     }
     if (wire[0] == 4) {
-      if (wire.length != 51) return 1023;
+      if (wire.length != 51) return 2047;
       final offers = (wire[1] << 8) | wire[2];
-      if ((offers & ~1023) != 0 ||
-          (offers & 256) == 0 && (offers & 512) == 0 ||
-          ((offers & 512) != 0 && (offers & 7) != 7)) return 1023;
+      if ((offers & ~2047) != 0 || offers <= 255 ||
+          ((offers & 512) != 0 && (offers & 7) != 7)) {
+        return 2047;
+      }
       return offers;
     }
     return 0;
@@ -360,6 +361,8 @@ void assertOfferedReadPinFreeRequest(
     '/upload-file/finalize-token' || '/upload-file/abort-token' =>
       (signedOffers & 8) != 0,
     '/security-center/analyze-passwords' => (signedOffers & 16) != 0,
+    '/memory/list' || '/memory/create' || '/memory/update' ||
+    '/memory/delete' => (signedOffers & 1024) != 0,
     '/beneficiary/create' || '/beneficiary/link' ||
     '/beneficiary/list-mine' || '/beneficiary/list-inheritances' ||
     '/beneficiary/request-transfer' ||

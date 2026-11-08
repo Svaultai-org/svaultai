@@ -5514,6 +5514,12 @@ Future<Map<String, dynamic>> _zkHttpPost(
     }
     headers['X-SVaultAI-Pin-Free-Import'] = '1';
   }
+  if (path == '/auth/zk-login-finalize' && kSignedMemoryClientEnabled) {
+    if (!kSignedReadOffersClientEnabled) {
+      throw OpaqueUnavailable('Signed Memory access needs private reads.');
+    }
+    headers['X-SVaultAI-Pin-Free-Memory'] = '1';
+  }
   if (path == '/auth/zk-login-finalize') {
     headers.addAll(strictPinFreeClientHeaders(
       privateOnlyBuild: kPrivateOnlyUnlockEnabled,

@@ -53,6 +53,7 @@ from psycopg2.errors import UniqueViolation
 from psycopg2.extras import RealDictCursor
 
 from auth_local import (
+    PIN_FREE_MEMORY_OFFER,
     SessionPrincipal,
 )
 from device_gate import verify_trusted_device
@@ -69,6 +70,18 @@ router = APIRouter()
 
 
 MAX_CIPHERTEXT_BYTES = 128 * 1024
+
+
+def _memory_v2_route_enabled(principal: SessionPrincipal, *, write: bool) -> bool:
+    # A signed Memory offer is a session promise. Turning off the rollout
+    # flag after login must not strand that session behind fenced old routes.
+    if principal.get("pin_free_read_offers", 0) & PIN_FREE_MEMORY_OFFER:
+        return True
+    flags = ZkMigrationFlags.from_environment(os.environ)
+    flags.validate_dependencies()
+    return flags.memory_write_enabled if write else flags.memory_read_enabled
+
+
 TITLE_LOOKUP_BYTES = 32
 TITLE_LOOKUP_INDEX_NAME = "vault_items_title_lookup_uniq"
 
@@ -809,9 +822,7 @@ def ai_memory_ciphertext_upsert(
         print("BACKEND_MEMORY_V2_WRITE_REQUEST_OBSERVED=true", flush=True)
         print("BACKEND_MEMORY_V2_WRITE_HANDLER_ENTERED=true", flush=True)
     try:
-        memory_flags = ZkMigrationFlags.from_environment(os.environ)
-        memory_flags.validate_dependencies()
-        if not memory_flags.memory_write_enabled:
+        if not _memory_v2_route_enabled(principal, write=True):
             if qa:
                 print("BACKEND_MEMORY_V2_WRITE_RESPONSE_STATUS=404", flush=True)
                 print("BACKEND_MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=feature_disabled", flush=True)
@@ -963,9 +974,7 @@ def ai_memory_ciphertext_list(
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> list[AiMemoryCiphertextReadResponse]:
     """Return opaque memory envelopes only; never legacy plaintext columns."""
-    memory_flags = ZkMigrationFlags.from_environment(os.environ)
-    memory_flags.validate_dependencies()
-    if not memory_flags.memory_read_enabled:
+    if not _memory_v2_route_enabled(principal, write=False):
         raise HTTPException(status_code=404, detail="memory_v2_path_disabled")
     lookup_hash = None
     if memory_lookup_hash is not None:
@@ -1014,9 +1023,7 @@ def ai_memory_ciphertext_delete(
     memory_id: str,
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
-    flags = ZkMigrationFlags.from_environment(os.environ)
-    flags.validate_dependencies()
-    if not flags.memory_write_enabled:
+    if not _memory_v2_route_enabled(principal, write=True):
         raise HTTPException(status_code=404, detail="memory_v2_path_disabled")
     conn = get_db()
     try:
