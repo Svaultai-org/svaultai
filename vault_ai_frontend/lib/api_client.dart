@@ -276,9 +276,11 @@ int _signedOfferBits(String token) {
       return wire[1];
     }
     if (wire[0] == 4) {
-      if (wire.length != 51) return 767;
+      if (wire.length != 51) return 1023;
       final offers = (wire[1] << 8) | wire[2];
-      if ((offers & ~767) != 0 || (offers & 519) != 519) return 767;
+      if ((offers & ~1023) != 0 ||
+          (offers & 256) == 0 && (offers & 512) == 0 ||
+          ((offers & 512) != 0 && (offers & 7) != 7)) return 1023;
       return offers;
     }
     return 0;
@@ -298,6 +300,9 @@ bool signedFileMutationOfferedForToken(String token) =>
 
 bool signedAuthDeviceOfferedForToken(String token) =>
     (_signedOfferBits(token) & 128) != 0;
+
+bool signedImportOfferedForToken(String token) =>
+    (_signedOfferBits(token) & 256) != 0;
 
 /// An authenticated OPAQUE offer replaces a specific older read route for the
 /// life of that bearer. Keep this check at the HTTP boundary as well as at
@@ -323,6 +328,11 @@ void assertOfferedReadPinFreeRequest(
         '/devices/finalize-self-approval',
       }.contains(path)) {
     throw StateError('This action uses the private vault route.');
+  }
+  if ((signedOffers & 256) != 0 &&
+      (path == '/imports/start' ||
+       RegExp(r'^/imports/[^/]+/(cancel|complete)$').hasMatch(path))) {
+    throw StateError('This import action uses the private vault route.');
   }
   if ((signedOffers & 32) != 0 &&
       (path == '/name-file' || path == '/manage/file' ||
@@ -4327,6 +4337,10 @@ class VaultAIClient {
     int totalFiles = 0,
     int totalBytesPlanned = 0,
   }) async {
+    final offeredImport = signedImportOfferedForToken(authToken);
+    if (offeredImport && (!zkSessionOnly || pin != null)) {
+      throw StateError('Signed import requires the PIN-free session route.');
+    }
     if (kEnableZkPrivateOnlyUnlock && !zkSessionOnly) {
       throw StateError('Private import requires an OPAQUE session.');
     }
@@ -4406,6 +4420,10 @@ class VaultAIClient {
     required String importId,
     bool zkSessionOnly = false,
   }) async {
+    final offeredImport = signedImportOfferedForToken(authToken);
+    if (offeredImport && (!zkSessionOnly || pin != null)) {
+      throw StateError('Signed import requires the PIN-free session route.');
+    }
     if (kEnableZkPrivateOnlyUnlock && !zkSessionOnly) {
       throw StateError('Private import requires an OPAQUE session.');
     }
@@ -4450,6 +4468,10 @@ class VaultAIClient {
     int failedCountDelta = 0,
     int skippedDuplicateCountDelta = 0,
   }) async {
+    final offeredImport = signedImportOfferedForToken(authToken);
+    if (offeredImport && (!zkSessionOnly || pin != null)) {
+      throw StateError('Signed import requires the PIN-free session route.');
+    }
     if (kEnableZkPrivateOnlyUnlock && !zkSessionOnly) {
       throw StateError('Private import requires an OPAQUE session.');
     }

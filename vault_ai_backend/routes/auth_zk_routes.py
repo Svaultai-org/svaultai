@@ -201,6 +201,7 @@ from auth_local import (
     PIN_FREE_PASSWORD_ANALYSIS_OFFER,
     PIN_FREE_BENEFICIARY_OFFER,
     PIN_FREE_AUTH_DEVICE_OFFER,
+    PIN_FREE_IMPORT_OFFER,
     PIN_FREE_PRIVATE_CHAT_OFFER,
     issue_session_token,
     sign_opaque_read_offer_token,
@@ -919,6 +920,7 @@ class ZkLoginFinalizeResponse(BaseModel):
     pin_free_password_analysis_signed: bool = False
     pin_free_beneficiary_signed: bool = False
     pin_free_auth_device_signed: bool = False
+    pin_free_import_signed: bool = False
     pin_free_beneficiary_v2: bool = False
     pin_free_private_chat_signed: bool = False
     # Additive hints: old clients ignore these and keep their existing
@@ -1061,6 +1063,23 @@ def _signed_auth_device_negotiation(request: Request, *, signed_reads: bool) -> 
     return True
 
 
+def _signed_import_negotiation(request: Request, *, signed_reads: bool) -> bool:
+    """Offer PIN-free import bookkeeping only when both peers support it."""
+    header = request.headers.get("x-svaultai-pin-free-import", "")
+    if header not in ("", "1"):
+        raise HTTPException(status_code=400, detail="invalid_import_capability")
+    if header != "1":
+        return False
+    if not signed_reads or not request_has_file_v2_reader(request):
+        raise HTTPException(status_code=409, detail="signed_read_offers_required")
+    for flag in ("VAULTAI_SIGNED_IMPORT_OFFER_ENABLED",
+                 "VAULTAI_ZK_IMPORT_SESSION_ACTIONS_ENABLED"):
+        if os.getenv(flag, "false").strip().lower() != "true":
+            raise HTTPException(status_code=409,
+                                detail="signed_import_unavailable")
+    return True
+
+
 def _beneficiary_v2_offer_ready(conn, vault_id: str) -> bool:
     """Avoid fencing a vault that has an older incoming or outgoing link."""
     cur = conn.cursor()
@@ -1086,10 +1105,12 @@ def _signed_offer_token(
     password_analysis: bool = False,
     beneficiary: bool = False,
     auth_device: bool = False,
+    import_session: bool = False,
 ) -> str:
     if not signed_reads:
         if (file_create or file_mutation or private_chat or
-                password_analysis or beneficiary or auth_device):
+                password_analysis or beneficiary or auth_device or
+                import_session):
             raise ValueError("capability requires negotiated session offers")
         return token
     if file_download and not file_list:
@@ -1104,6 +1125,7 @@ def _signed_offer_token(
             (PIN_FREE_PASSWORD_ANALYSIS_OFFER if password_analysis else 0) |
             (PIN_FREE_BENEFICIARY_OFFER if beneficiary else 0) |
             (PIN_FREE_AUTH_DEVICE_OFFER if auth_device else 0) |
+            (PIN_FREE_IMPORT_OFFER if import_session else 0) |
             (PIN_FREE_PRIVATE_CHAT_OFFER if private_chat else 0))
     return sign_opaque_read_offer_token(token, bits)
 
@@ -1283,6 +1305,9 @@ def _zk_login_finalize_sync(
             request, signed_reads=signed_read_offers_requested,
         )
         signed_auth_device_requested = _signed_auth_device_negotiation(
+            request, signed_reads=signed_read_offers_requested,
+        )
+        signed_import_requested = _signed_import_negotiation(
             request, signed_reads=signed_read_offers_requested,
         )
         # A re-verification slot must never be exchangeable for a fresh login
@@ -1470,6 +1495,7 @@ def _zk_login_finalize_sync(
             password_analysis=signed_password_analysis_requested,
             beneficiary=beneficiary_capable,
             auth_device=signed_auth_device_requested,
+            import_session=signed_import_requested,
             private_chat=(signed_private_chat_requested and offer_base and
                           file_list_offer and file_download_offer),
         )
@@ -1493,6 +1519,7 @@ def _zk_login_finalize_sync(
             pin_free_password_analysis_signed=signed_password_analysis_requested,
             pin_free_beneficiary_signed=signed_beneficiary_requested,
             pin_free_auth_device_signed=signed_auth_device_requested,
+            pin_free_import_signed=signed_import_requested,
             pin_free_beneficiary_v2=beneficiary_capable,
             pin_free_private_chat_signed=(
                 signed_private_chat_requested and offer_base and

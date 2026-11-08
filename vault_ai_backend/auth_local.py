@@ -126,10 +126,12 @@ PIN_FREE_PASSWORD_ANALYSIS_OFFER = 16
 PIN_FREE_FILE_MUTATION_OFFER = 32
 PIN_FREE_BENEFICIARY_OFFER = 64
 PIN_FREE_AUTH_DEVICE_OFFER = 128
+PIN_FREE_IMPORT_OFFER = 256
 PIN_FREE_PRIVATE_CHAT_OFFER = 512
 _SIGNED_OFFER_MASK = (31 | PIN_FREE_FILE_MUTATION_OFFER |
                       PIN_FREE_BENEFICIARY_OFFER | PIN_FREE_AUTH_DEVICE_OFFER)
-_SIGNED_WIDE_OFFER_MASK = _SIGNED_OFFER_MASK | PIN_FREE_PRIVATE_CHAT_OFFER
+_SIGNED_WIDE_OFFER_MASK = (_SIGNED_OFFER_MASK | PIN_FREE_IMPORT_OFFER |
+                           PIN_FREE_PRIVATE_CHAT_OFFER)
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -195,10 +197,11 @@ def _parse_token_claims(token: str) -> Optional[tuple[bytes, int]]:
           raw[:1] == _SIGNED_WIDE_OFFER_VERSION):
         offer_bits = int.from_bytes(raw[1:3], "big")
         if (offer_bits & ~_SIGNED_WIDE_OFFER_MASK or
-                not (offer_bits & PIN_FREE_PRIVATE_CHAT_OFFER) or
-                (offer_bits & (PIN_FREE_ITEM_READ_OFFER |
-                               PIN_FREE_FILE_LIST_OFFER |
-                               PIN_FREE_FILE_DOWNLOAD_OFFER)) != 7):
+                not (offer_bits & ~_SIGNED_OFFER_MASK) or
+                (offer_bits & PIN_FREE_PRIVATE_CHAT_OFFER and
+                 (offer_bits & (PIN_FREE_ITEM_READ_OFFER |
+                                PIN_FREE_FILE_LIST_OFFER |
+                                PIN_FREE_FILE_DOWNLOAD_OFFER)) != 7)):
             return None
         payload = raw[:3 + _TOKEN_ID_BYTES]
         token_id_bytes = raw[3:3 + _TOKEN_ID_BYTES]
@@ -229,6 +232,7 @@ def sign_opaque_read_offer_token(token: str, offer_bits: int) -> str:
             offer_bits & ~_SIGNED_WIDE_OFFER_MASK):
         raise ValueError("invalid signed offers")
     private_chat = bool(offer_bits & PIN_FREE_PRIVATE_CHAT_OFFER)
+    wide_offer = offer_bits > 255
     if (private_chat and
             offer_bits & (PIN_FREE_ITEM_READ_OFFER |
                           PIN_FREE_FILE_LIST_OFFER |
@@ -239,10 +243,10 @@ def sign_opaque_read_offer_token(token: str, offer_bits: int) -> str:
         raise ValueError("fresh login bearer required")
     payload = (
         _SIGNED_WIDE_OFFER_VERSION + offer_bits.to_bytes(2, "big") + claims[0]
-        if private_chat else
+        if wide_offer else
         _SIGNED_OFFER_VERSION + bytes([offer_bits]) + claims[0]
     )
-    domain = _SIGNED_WIDE_OFFER_DOMAIN if private_chat else _SIGNED_OFFER_DOMAIN
+    domain = _SIGNED_WIDE_OFFER_DOMAIN if wide_offer else _SIGNED_OFFER_DOMAIN
     sig = hmac.new(_get_secret(), domain + payload, "sha256").digest()
     return _b64url_encode(payload + sig)
 
@@ -787,6 +791,13 @@ def require_signed_offer_route(principal: SessionPrincipal, *, path: str) -> Non
             "/devices/finalize-self-approval")):
         raise HTTPException(status_code=409,
                             detail="pin_free_auth_device_required")
+    if offers & PIN_FREE_IMPORT_OFFER and (
+            path == "/imports/start" or
+            (path.startswith("/imports/") and
+             path.rsplit("/", 1)[-1] in ("cancel", "complete") and
+             path.count("/") == 3)):
+        raise HTTPException(status_code=409,
+                            detail="pin_free_import_required")
     if (path == "/security-center/analyze-passwords" and
             offers & PIN_FREE_PASSWORD_ANALYSIS_OFFER):
         raise HTTPException(status_code=409,

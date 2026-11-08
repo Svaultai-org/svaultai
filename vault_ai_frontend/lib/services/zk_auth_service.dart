@@ -85,6 +85,10 @@ const bool kSignedAuthDeviceClientEnabled = bool.fromEnvironment(
   'VAULTAI_ENABLE_SIGNED_AUTH_DEVICE',
   defaultValue: false,
 );
+const bool kSignedImportClientEnabled = bool.fromEnvironment(
+  'VAULTAI_ENABLE_SIGNED_IMPORT',
+  defaultValue: false,
+);
 
 /// A version signal for the backend's old-client rejection at OPAQUE
 /// finalize. It does not grant any content capability by itself.
@@ -113,7 +117,9 @@ bool hasSignedBeneficiaryOffer(String token) {
     if (wire[0] == 4) {
       if (wire.length != 51) return true;
       final offers = (wire[1] << 8) | wire[2];
-      if ((offers & ~767) != 0 || (offers & 519) != 519) return true;
+      if ((offers & ~1023) != 0 ||
+          ((offers & 256) == 0 && (offers & 512) == 0) ||
+          ((offers & 512) != 0 && (offers & 7) != 7)) return true;
       return (offers & 64) != 0;
     }
     return false;
@@ -131,6 +137,7 @@ bool signedOfferTokenMatches(
   bool requirePasswordAnalysisOffer = false,
   bool requireBeneficiaryOffer = false,
   bool requireAuthDeviceOffer = false,
+  bool requireImportOffer = false,
 }) {
   if (response['pin_free_read_offers_signed'] != true) return false;
   if (requireFileCreateOffer &&
@@ -174,6 +181,12 @@ bool signedOfferTokenMatches(
       response['pin_free_auth_device_signed'] != true) return false;
   if (!requireAuthDeviceOffer &&
       response['pin_free_auth_device_signed'] == true) return false;
+  if (requireImportOffer && response['pin_free_import_signed'] != true) {
+    return false;
+  }
+  if (!requireImportOffer && response['pin_free_import_signed'] == true) {
+    return false;
+  }
   final token = response['session_token'];
   if (token is! String || token.isEmpty) return false;
   try {
@@ -189,10 +202,11 @@ bool signedOfferTokenMatches(
             ? 64
             : 0) |
         (requireAuthDeviceOffer ? 128 : 0) |
+        (requireImportOffer ? 256 : 0) |
         (requirePrivateChatOffer ? 512 : 0);
     if ((expected & 4) != 0 && (expected & 2) == 0) return false;
-    if (requirePrivateChatOffer) {
-      if ((expected & 7) != 7) return false;
+    if (requirePrivateChatOffer || requireImportOffer) {
+      if (requirePrivateChatOffer && (expected & 7) != 7) return false;
       return wire.length == 51 && wire[0] == 4 &&
           ((wire[1] << 8) | wire[2]) == expected;
     }
@@ -1057,7 +1071,8 @@ class ZkAuthService {
             kSignedPrivateChatClientEnabled ||
             kSignedPasswordAnalysisClientEnabled ||
             kSignedBeneficiaryClientEnabled ||
-            kSignedAuthDeviceClientEnabled) &&
+            kSignedAuthDeviceClientEnabled ||
+            kSignedImportClientEnabled) &&
         !signedOfferTokenMatches(
           finalizeResponse,
           requireFileCreateOffer: kSignedFileCreateClientEnabled,
@@ -1066,6 +1081,7 @@ class ZkAuthService {
           requirePasswordAnalysisOffer: kSignedPasswordAnalysisClientEnabled,
           requireBeneficiaryOffer: kSignedBeneficiaryClientEnabled,
           requireAuthDeviceOffer: kSignedAuthDeviceClientEnabled,
+          requireImportOffer: kSignedImportClientEnabled,
         )) {
       throw OpaqueUnavailable('Authenticated session offer unavailable');
     }

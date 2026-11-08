@@ -5506,6 +5506,14 @@ Future<Map<String, dynamic>> _zkHttpPost(
     }
     headers['X-SVaultAI-Pin-Free-Auth-Device'] = '1';
   }
+  if (path == '/auth/zk-login-finalize' && kSignedImportClientEnabled) {
+    if (!kSignedReadOffersClientEnabled || !kEnableFileV2UiRead ||
+        !kEnableZkImportSessionActions) {
+      throw OpaqueUnavailable(
+          'Signed import needs private import bookkeeping.');
+    }
+    headers['X-SVaultAI-Pin-Free-Import'] = '1';
+  }
   if (path == '/auth/zk-login-finalize') {
     headers.addAll(strictPinFreeClientHeaders(
       privateOnlyBuild: kPrivateOnlyUnlockEnabled,
@@ -17007,7 +17015,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       (a) => a.relativePath != null,
     );
     final zkImportSessionOnly =
-        kEnableZkImportSessionActions && app.vaultHandle?.isNotEmpty == true;
+        signedImportOfferedForToken(authToken) ||
+        (kEnableZkImportSessionActions && app.vaultHandle?.isNotEmpty == true);
     if (zkImportSessionOnly && hasFolderContext) {
       throw StateError('Private folder import is not available yet');
     }
