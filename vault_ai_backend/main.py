@@ -1234,11 +1234,15 @@ def _beneficiary_opaque_reauth_enabled() -> bool:
     ).strip().lower() == "true"
 
 
-def _require_beneficiary_proof_route(vault_id: str) -> None:
+def _require_beneficiary_proof_route(principal) -> None:
     from vault_core import is_vault_zk_adopted
 
+    # A signed V2 offer survives a feature-flag change for this session.
+    # Its MAC and pairing readiness were checked at OPAQUE login.
+    if principal.get("pin_free_read_offers", 0) & PIN_FREE_BENEFICIARY_OFFER:
+        return
     if not _beneficiary_opaque_reauth_enabled() or not is_vault_zk_adopted(
-        vault_id
+        principal["vault_id"]
     ):
         raise HTTPException(status_code=404, detail="not_found")
 
@@ -11678,7 +11682,7 @@ async def beneficiary_proof_list_mine_endpoint(
     payload: BeneficiaryProofListRequest,
     principal=Depends(verify_trusted_device),
 ):
-    _require_beneficiary_proof_route(principal["vault_id"])
+    _require_beneficiary_proof_route(principal)
     return await beneficiary_list_mine_endpoint(
         request, BeneficiaryListRequest(zk_proof_token=payload.zk_proof_token),
         principal,
@@ -11692,7 +11696,7 @@ async def beneficiary_proof_list_inheritances_endpoint(
     payload: BeneficiaryProofListRequest,
     principal=Depends(verify_trusted_device),
 ):
-    _require_beneficiary_proof_route(principal["vault_id"])
+    _require_beneficiary_proof_route(principal)
     return await beneficiary_list_inheritances_endpoint(
         request, BeneficiaryListRequest(zk_proof_token=payload.zk_proof_token),
         principal,
@@ -11706,7 +11710,7 @@ async def beneficiary_proof_request_transfer_endpoint(
     payload: BeneficiaryProofActionRequest,
     principal=Depends(verify_trusted_device),
 ):
-    _require_beneficiary_proof_route(principal["vault_id"])
+    _require_beneficiary_proof_route(principal)
     return await beneficiary_request_transfer_endpoint(
         request, TransferActionRequest(
             link_id=payload.link_id, zk_proof_token=payload.zk_proof_token,
@@ -11721,7 +11725,7 @@ async def beneficiary_proof_cancel_transfer_endpoint(
     payload: BeneficiaryProofActionRequest,
     principal=Depends(verify_trusted_device),
 ):
-    _require_beneficiary_proof_route(principal["vault_id"])
+    _require_beneficiary_proof_route(principal)
     return await beneficiary_cancel_transfer_endpoint(
         request, TransferActionRequest(
             link_id=payload.link_id, zk_proof_token=payload.zk_proof_token,
@@ -11736,7 +11740,7 @@ async def beneficiary_proof_delete_endpoint(
     payload: BeneficiaryProofActionRequest,
     principal=Depends(verify_trusted_device),
 ):
-    _require_beneficiary_proof_route(principal["vault_id"])
+    _require_beneficiary_proof_route(principal)
     return await beneficiary_delete_endpoint(
         request, DeleteBeneficiaryRequest(
             link_id=payload.link_id, zk_proof_token=payload.zk_proof_token,

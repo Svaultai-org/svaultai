@@ -76,8 +76,10 @@ def _replaced_pin_route(path: str, offers: int, method: str = "POST") -> str | N
         return "pin_free_file_mutation_required"
     if (offers & PIN_FREE_BENEFICIARY_OFFER and
             path in ("/beneficiary/create", "/beneficiary/link",
+                     "/beneficiary/list-mine", "/beneficiary/list-inheritances",
                      "/beneficiary/request-transfer",
-                     "/beneficiary/claim-transfer")):
+                     "/beneficiary/cancel-transfer",
+                     "/beneficiary/claim-transfer", "/beneficiary/delete")):
         return "pin_free_beneficiary_required"
     if (offers & PIN_FREE_PASSWORD_ANALYSIS_OFFER and
             path == "/security-center/analyze-passwords"):
@@ -108,8 +110,10 @@ def _candidate_pin_path(path: str, method: str = "POST") -> bool:
     return (_replaced_private_chat_path(path) or
             path in _OLD_ITEM_READS or
             path in ("/beneficiary/create", "/beneficiary/link",
+                     "/beneficiary/list-mine", "/beneficiary/list-inheritances",
                      "/beneficiary/request-transfer",
-                     "/beneficiary/claim-transfer") or
+                     "/beneficiary/cancel-transfer",
+                     "/beneficiary/claim-transfer", "/beneficiary/delete") or
             path == "/security-center/analyze-passwords" or
             path in ("/list-files", "/download-file", "/download-file/manifest",
                      "/upload-file", "/upload-file/init",

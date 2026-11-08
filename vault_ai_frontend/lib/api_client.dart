@@ -77,6 +77,10 @@ void _rejectBeneficiaryPin(String authToken, String? pin) {
   }
 }
 
+bool _beneficiaryProofRouteRequired(String authToken) =>
+    kEnableZkPrivateOnlyUnlock || kSignedBeneficiaryClientEnabled ||
+    (_signedOfferBits(authToken) & 64) != 0;
+
 void _rejectLegacyFilePinForActiveZk() {
   if (kRequirePinFreeZkFiles && zk_mvk_store.ZkActiveMvk.current() != null) {
     throw StateError('Private file needs migration before this action.');
@@ -336,8 +340,10 @@ void assertOfferedReadPinFreeRequest(
       (signedOffers & 8) != 0,
     '/security-center/analyze-passwords' => (signedOffers & 16) != 0,
     '/beneficiary/create' || '/beneficiary/link' ||
+    '/beneficiary/list-mine' || '/beneficiary/list-inheritances' ||
     '/beneficiary/request-transfer' ||
-    '/beneficiary/claim-transfer' => (signedOffers & 64) != 0,
+    '/beneficiary/cancel-transfer' || '/beneficiary/claim-transfer' ||
+    '/beneficiary/delete' => (signedOffers & 64) != 0,
     _ => false,
   };
   if (!offered) return;
@@ -2550,7 +2556,7 @@ class VaultAIClient {
     String? clientRequestId,
   }) async {
     _rejectBeneficiaryPin(authToken, pin);
-    if (kEnableZkPrivateOnlyUnlock &&
+    if (_beneficiaryProofRouteRequired(authToken) &&
         (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
       throw StateError('Private inheritance access requires an OPAQUE proof.');
     }
@@ -2562,7 +2568,7 @@ class VaultAIClient {
       headers['X-Client-Request-Id'] = cri;
     }
     final response = await _sessionHttp.post(
-      Uri.parse(kEnableZkPrivateOnlyUnlock
+      Uri.parse(_beneficiaryProofRouteRequired(authToken)
           ? '$baseUrl/beneficiary/proof/list-mine'
           : '$baseUrl/beneficiary/list-mine'),
       headers: headers,
@@ -2619,12 +2625,12 @@ class VaultAIClient {
     required String authToken,
   }) async {
     _rejectBeneficiaryPin(authToken, pin);
-    if (kEnableZkPrivateOnlyUnlock &&
+    if (_beneficiaryProofRouteRequired(authToken) &&
         (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
       throw StateError('Private inheritance access requires an OPAQUE proof.');
     }
     final response = await _sessionHttp.post(
-      Uri.parse(kEnableZkPrivateOnlyUnlock
+      Uri.parse(_beneficiaryProofRouteRequired(authToken)
           ? '$baseUrl/beneficiary/proof/list-inheritances'
           : '$baseUrl/beneficiary/list-inheritances'),
       headers: _defaultHeaders(authToken: authToken, json: true),
@@ -2748,12 +2754,12 @@ class VaultAIClient {
     required String authToken,
   }) async {
     _rejectBeneficiaryPin(authToken, pin);
-    if (kEnableZkPrivateOnlyUnlock &&
+    if (_beneficiaryProofRouteRequired(authToken) &&
         (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
       throw StateError('Private inheritance access requires an OPAQUE proof.');
     }
     final response = await _sessionHttp.post(
-      Uri.parse(kEnableZkPrivateOnlyUnlock
+      Uri.parse(_beneficiaryProofRouteRequired(authToken)
           ? '$baseUrl/beneficiary/proof/cancel-transfer'
           : '$baseUrl/beneficiary/cancel-transfer'),
       headers: _defaultHeaders(authToken: authToken, json: true),
@@ -2783,18 +2789,18 @@ class VaultAIClient {
     required String authToken,
   }) async {
     _rejectBeneficiaryPin(authToken, pin);
-    if (kEnableZkPrivateOnlyUnlock &&
+    if (_beneficiaryProofRouteRequired(authToken) &&
         (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
       throw StateError('Private inheritance access requires an OPAQUE proof.');
     }
     final response = await _sessionHttp.post(
-      Uri.parse(kEnableZkPrivateOnlyUnlock
+      Uri.parse(_beneficiaryProofRouteRequired(authToken)
           ? '$baseUrl/beneficiary/proof/delete'
           : '$baseUrl/beneficiary/delete'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
         'link_id': linkId,
-        if (!kEnableZkPrivateOnlyUnlock) 'vault_name': '',
+        if (!_beneficiaryProofRouteRequired(authToken)) 'vault_name': '',
         ..._pinOrZkProofBody(pin: pin, zkProofToken: zkProofToken),
       }),
     );

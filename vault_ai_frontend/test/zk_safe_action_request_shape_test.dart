@@ -77,6 +77,48 @@ void main() {
         {'link_id', 'zk_proof_token'});
   }, skip: !kEnableZkPrivateOnlyUnlock);
 
+  test('signed beneficiary offer routes list, cancel and delete to proof-only API',
+      () async {
+    final signed = base64UrlEncode(<int>[3, 64, ...List<int>.filled(48, 7)]);
+    st.SessionTermination.instance.bindSession(signed);
+    final requests = <http.Request>[];
+    final client = clientFor(requests);
+    await client.listBeneficiaries(
+      vaultName: 'synthetic private name',
+      zkProofToken: 'proof-one', authToken: signed,
+    );
+    await client.listInheritances(
+      vaultName: 'synthetic private name',
+      zkProofToken: 'proof-two', authToken: signed,
+    );
+    await client.cancelTransfer(
+      linkId: 7, vaultName: 'synthetic private name',
+      zkProofToken: 'proof-three', authToken: signed,
+    );
+    await client.deleteBeneficiary(
+      linkId: 7, vaultName: 'synthetic private name',
+      zkProofToken: 'proof-four', authToken: signed,
+    );
+    expect(requests.map((r) => r.url.path), [
+      '/beneficiary/proof/list-mine',
+      '/beneficiary/proof/list-inheritances',
+      '/beneficiary/proof/cancel-transfer',
+      '/beneficiary/proof/delete',
+    ]);
+    for (final request in requests) {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      expect(body.keys.toSet(), request.url.path.contains('list-')
+          ? {'zk_proof_token'} : {'link_id', 'zk_proof_token'});
+      expect(request.body, isNot(contains('synthetic private name')));
+    }
+    await expectLater(
+      client.listBeneficiaries(vaultName: 'synthetic', pin: '123456',
+          authToken: signed),
+      throwsStateError,
+    );
+    expect(requests, hasLength(4));
+  });
+
   test('legacy file deletion uses one-time proof without raw PIN', () async {
     final requests = <http.Request>[];
     await clientFor(requests).deleteVaultFile(

@@ -86,8 +86,10 @@ def test_v3_v4_bits_keep_password_and_chat_distinct():
             file_download=False, file_create=False, beneficiary=True,
         )
     for path in ("/beneficiary/create", "/beneficiary/link",
+                 "/beneficiary/list-mine", "/beneficiary/list-inheritances",
                  "/beneficiary/request-transfer",
-                 "/beneficiary/claim-transfer", "/beneficiary/create/"):
+                 "/beneficiary/cancel-transfer", "/beneficiary/claim-transfer",
+                 "/beneficiary/delete", "/beneficiary/create/"):
         with pytest.raises(HTTPException) as exc:
             auth_local.require_signed_offer_route(
                 {"pin_free_read_offers": 64}, path=path)
@@ -125,12 +127,28 @@ def test_offered_legacy_actions_are_rejected_before_request_body():
 
     for token in (offered, combined):
         for path in ("/beneficiary/create", "/beneficiary/link",
+                     "/beneficiary/list-mine", "/beneficiary/list-inheritances",
                      "/beneficiary/request-transfer",
-                     "/beneficiary/claim-transfer", "/beneficiary/create/"):
+                     "/beneficiary/cancel-transfer", "/beneficiary/claim-transfer",
+                     "/beneficiary/delete", "/beneficiary/create/"):
             assert asyncio.run(probe(path, token)) == (0, 409)
     assert asyncio.run(probe("/beneficiary/create", original)) == (1, 200)
     assert asyncio.run(probe("/security-center/analyze-passwords", offered)) == (0, 409)
     assert asyncio.run(probe("/chat", combined)) == (0, 409)
+
+
+def test_signed_beneficiary_proof_routes_survive_flag_change(monkeypatch):
+    monkeypatch.setenv("VAULTAI_ZK_BENEFICIARY_PROOF_ENABLED", "false")
+    main._require_beneficiary_proof_route({
+        "vault_id": "synthetic-vault", "pin_free_read_offers": 64,
+    })
+    with mock.patch("vault_core.is_vault_zk_adopted") as adopted:
+        with pytest.raises(HTTPException) as denied:
+            main._require_beneficiary_proof_route({
+                "vault_id": "synthetic-vault", "pin_free_read_offers": 0,
+            })
+        assert denied.value.status_code == 404
+        adopted.assert_not_called()
 
 
 def test_offered_beneficiary_action_consumes_proof_without_pin_check():
