@@ -321,6 +321,16 @@ void assertOfferedReadPinFreeRequest(
   final signedOffers = _signedOfferBits(token);
   // FastAPI can redirect a trailing slash while preserving the POST body.
   final path = uri.path.replaceFirst(RegExp(r'/+$'), '');
+  if ((signedOffers & 1) != 0 &&
+      (const <String>{
+        '/vault-analysis/coverage',
+        '/vault-analysis/drain-text-extraction',
+        '/vault-analysis/backfill-chunked-text-extraction',
+        '/vault-analysis/backfill-archive-signals',
+      }.contains(path) ||
+          RegExp(r'^/vault/file/[^/]+/text$').hasMatch(path))) {
+    throw StateError('This older analysis route is unavailable in private mode.');
+  }
   if (signedAuthDeviceOfferedForToken(token) &&
       const <String>{
         '/get-or-create-vault-meta', '/verify-pin', '/rotate-vault-kdf',

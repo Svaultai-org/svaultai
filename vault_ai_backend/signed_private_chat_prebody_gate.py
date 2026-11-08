@@ -31,6 +31,7 @@ from auth_local import (
 _DEEP_JOB = re.compile(r"^/vault-analysis/deep-answer/[^/]+/(?:poll|debug)$")
 _RELATED_FILE = re.compile(r"^/files/[^/]+/related$")
 _OLD_IMPORT_ACTION = re.compile(r"^/imports/[^/]+/(?:cancel|complete)$")
+_OLD_FILE_TEXT = re.compile(r"^/vault/file/[^/]+/text$")
 _OLD_FILE_MUTATIONS = {
     ("POST", "/name-file"),
     ("PATCH", "/manage/file"),
@@ -51,6 +52,10 @@ _OLD_SIGNED_CLIENT_COMPAT_ROUTES = {
     ("POST", "/crypto/save-sensitive-backup"),
     ("POST", "/crypto/reveal-sensitive-backup"),
     ("POST", "/crypto/save-note"),
+    ("POST", "/vault-analysis/coverage"),
+    ("POST", "/vault-analysis/drain-text-extraction"),
+    ("POST", "/vault-analysis/backfill-chunked-text-extraction"),
+    ("POST", "/vault-analysis/backfill-archive-signals"),
 }
 _OLD_ITEM_READS = {
     "/list-secure-items", "/get-secure-item", "/list-login-names",
@@ -94,7 +99,8 @@ def _signed_offer_bits(headers: list[tuple[bytes, bytes]]) -> int:
 def _replaced_pin_route(path: str, offers: int, method: str = "POST") -> str | None:
     path = path.rstrip("/")
     if (offers & PIN_FREE_ITEM_READ_OFFER and
-            (method, path) in _OLD_SIGNED_CLIENT_COMPAT_ROUTES):
+            ((method, path) in _OLD_SIGNED_CLIENT_COMPAT_ROUTES or
+             (method == "POST" and _OLD_FILE_TEXT.fullmatch(path)))):
         return "pin_free_client_required"
     if offers & PIN_FREE_AUTH_DEVICE_OFFER and path in _OLD_AUTH_DEVICE_ROUTES:
         return "pin_free_auth_device_required"
@@ -145,6 +151,7 @@ def _candidate_pin_path(path: str, method: str = "POST") -> bool:
     if method != "POST":
         return False
     return (_replaced_private_chat_path(path) or
+            _OLD_FILE_TEXT.fullmatch(path) is not None or
             path in _OLD_AUTH_DEVICE_ROUTES or
             path == "/imports/start" or
             _OLD_IMPORT_ACTION.fullmatch(path) is not None or

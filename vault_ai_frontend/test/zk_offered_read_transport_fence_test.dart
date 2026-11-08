@@ -137,6 +137,34 @@ void main() {
     }
   });
 
+  test('signed client blocks unused old file-text and analysis routes', () {
+    final offeredToken = signedToken(1);
+    final offeredHeaders = <String, String>{
+      'Authorization': 'Bearer $offeredToken',
+    };
+    for (final path in <String>[
+      '/vault-analysis/coverage',
+      '/vault-analysis/drain-text-extraction',
+      '/vault-analysis/backfill-chunked-text-extraction',
+      '/vault-analysis/backfill-archive-signals',
+      '/vault/file/synthetic-file/text',
+    ]) {
+      expect(
+        () => assertOfferedReadPinFreeRequest(
+          Uri.parse('https://synthetic.example$path'), offeredHeaders,
+          body: const <String, String>{'vault_name': 'private name'},
+        ),
+        throwsStateError,
+        reason: path,
+      );
+    }
+    assertOfferedReadPinFreeRequest(
+      Uri.parse('https://synthetic.example/vault-analysis/deep-answer'),
+      offeredHeaders,
+      body: const <String, String>{'pin': pinMarker},
+    );
+  });
+
   test('a new bearer does not inherit the old bearer offer', () {
     ZkPinFreeFileSession.instance.bind(
       sessionToken: token,

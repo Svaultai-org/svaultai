@@ -789,9 +789,18 @@ def require_signed_offer_route(principal: SessionPrincipal, *, path: str) -> Non
     if offers & PIN_FREE_ITEM_READ_OFFER and path in (
             "/delete-login", "/manage/login", "/manage/login/delete",
             "/crypto/save-wallet-profile", "/crypto/save-sensitive-backup",
-            "/crypto/reveal-sensitive-backup", "/crypto/save-note"):
+            "/crypto/reveal-sensitive-backup", "/crypto/save-note",
+            "/vault-analysis/coverage",
+            "/vault-analysis/drain-text-extraction",
+            "/vault-analysis/backfill-chunked-text-extraction",
+            "/vault-analysis/backfill-archive-signals"):
         # Signed-read clients have no caller for these older compatibility
         # contracts. Preserve them for unoffered clients during cutover.
+        raise HTTPException(status_code=409,
+                            detail="pin_free_client_required")
+    if (offers & PIN_FREE_ITEM_READ_OFFER and
+            path.startswith("/vault/file/") and path.endswith("/text") and
+            path.count("/") == 4):
         raise HTTPException(status_code=409,
                             detail="pin_free_client_required")
     if (offers & PIN_FREE_AUTH_DEVICE_OFFER and path in (

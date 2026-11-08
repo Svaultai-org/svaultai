@@ -29,6 +29,11 @@ OLD_ROUTES = (
     ("POST", "/crypto/save-sensitive-backup"),
     ("POST", "/crypto/reveal-sensitive-backup"),
     ("POST", "/crypto/save-note"),
+    ("POST", "/vault-analysis/coverage"),
+    ("POST", "/vault-analysis/drain-text-extraction"),
+    ("POST", "/vault-analysis/backfill-chunked-text-extraction"),
+    ("POST", "/vault-analysis/backfill-archive-signals"),
+    ("POST", "/vault/file/synthetic-file/text"),
 )
 
 
@@ -96,6 +101,9 @@ def test_only_reviewed_method_and_path_are_fenced(monkeypatch):
     token = _token(monkeypatch, offered=True)
     for method, path in (("GET", "/manage/login"),
                          ("POST", "/manage/login"),
-                         ("POST", "/crypto/save-note-extra")):
+                         ("POST", "/crypto/save-note-extra"),
+                         ("GET", "/vault/file/synthetic-file/text"),
+                         ("POST", "/vault/file/synthetic-file/text/extra"),
+                         ("POST", "/vault-analysis/coverage-extra")):
         read, status, body = _probe(method, path, token)
         assert read and status == 200 and body == b"passed"
