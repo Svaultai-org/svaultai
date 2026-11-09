@@ -15,6 +15,53 @@ import pytest
 from routes import auth_zk_routes, zk_metadata_inventory_routes
 
 
+def test_folder_path_metadata_is_returned_only_with_explicit_gate(monkeypatch):
+    class Cursor:
+        def execute(self, statement, params):
+            assert "u.relative_path" in statement
+            assert params == ("synthetic-vault", "", 101)
+
+        def fetchall(self):
+            return [{
+                "id": "synthetic-file", "file_size": 5,
+                "storage_mode": "inline", "chunk_size": None,
+                "chunk_count": None, "upload_status": "complete",
+                "needs_naming": False, "autosaved_secret": False,
+                "file_name_ciphertext": b"encrypted-name",
+                "saved_name_ciphertext": None,
+                "content_type_ciphertext": None,
+                "detected_type_ciphertext": None,
+                "detected_service_ciphertext": None,
+                "asset_type_ciphertext": None,
+                "has_inline_ciphertext": True,
+                "relative_path": "Folder/synthetic-file.txt",
+                "created_at": None, "lifecycle_state": None,
+                "verification_state": None, "name_version": None,
+            }]
+
+    class Connection:
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+        def close(self):
+            pass
+
+    monkeypatch.setenv("VAULTAI_ZK_METADATA_INVENTORY_ENABLED", "true")
+    monkeypatch.setattr(zk_metadata_inventory_routes,
+                        "is_vault_zk_adopted", lambda _vault_id: True)
+    monkeypatch.setattr(zk_metadata_inventory_routes,
+                        "get_db", lambda: Connection())
+    kwargs = {"after_file_id": "", "limit": 100,
+              "principal": {"vault_id": "synthetic-vault"}}
+    without_gate = zk_metadata_inventory_routes.file_metadata_inventory(**kwargs)
+    assert without_gate["records"][0]["relative_path"] is None
+    monkeypatch.setenv("VAULTAI_ZK_SIGNED_FOLDER_METADATA_ENABLED", "true")
+    with_gate = zk_metadata_inventory_routes.file_metadata_inventory(**kwargs)
+    assert with_gate["records"][0]["relative_path"] == (
+        "Folder/synthetic-file.txt"
+    )
+
+
 @pytest.mark.skipif(
     not os.getenv("TEST_DATABASE_URL"), reason="disposable PostgreSQL required",
 )
@@ -48,9 +95,10 @@ def test_file_list_offer_and_inventory_match_schema_0056_types(monkeypatch):
             INSERT INTO uploaded_files (
                 id, vault_id, file_size, storage_mode, upload_status,
                 needs_naming, autosaved_secret, file_name_ciphertext,
-                encrypted_file_data, created_at
+                encrypted_file_data, created_at, relative_path
             ) VALUES (%s, %s::uuid, 14, 'inline', 'complete',
-                      true, false, %s, 'ciphertext', NOW())
+                      true, false, %s, 'ciphertext', NOW(),
+                      'Folder/synthetic-file.txt')
         """, ("synthetic-file", vault_id, b"synthetic-encrypted-label"))
         cur.execute("""
             INSERT INTO uploaded_files (
@@ -69,6 +117,10 @@ def test_file_list_offer_and_inventory_match_schema_0056_types(monkeypatch):
     conn.commit()
 
     try:
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is False
+        monkeypatch.setenv("VAULTAI_ZK_SIGNED_FOLDER_METADATA_ENABLED", "true")
         assert auth_zk_routes._pin_free_legacy_file_list_ready(
             conn, vault_id,
         ) is True
@@ -92,6 +144,9 @@ def test_file_list_offer_and_inventory_match_schema_0056_types(monkeypatch):
         )
         assert len(result["records"]) == 1
         assert result["records"][0]["file_id"] == "synthetic-file"
+        assert result["records"][0]["relative_path"] == (
+            "Folder/synthetic-file.txt"
+        )
         assert result["records"][0]["needs_naming"] is True
         assert result["records"][0]["lifecycle_state"] == "file_v2_written"
     finally:
@@ -173,6 +228,16 @@ def test_file_list_offer_rejects_missing_labels_and_new_v2(monkeypatch):
         assert auth_zk_routes._pin_free_legacy_file_list_ready(
             conn, vault_id,
         ) is False
+        monkeypatch.setenv("VAULTAI_ZK_SIGNED_FOLDER_METADATA_ENABLED", "true")
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is True
+        with conn.cursor() as cur:
+            cur.execute("UPDATE uploaded_files SET relative_path='Folder/../file.txt'")
+        assert auth_zk_routes._pin_free_legacy_file_list_ready(
+            conn, vault_id,
+        ) is False
+        monkeypatch.delenv("VAULTAI_ZK_SIGNED_FOLDER_METADATA_ENABLED")
         with conn.cursor() as cur:
             cur.execute("UPDATE uploaded_files SET relative_path=NULL")
         assert auth_zk_routes._pin_free_legacy_file_list_ready(

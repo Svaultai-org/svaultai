@@ -3,7 +3,9 @@
 The response never includes an encrypted value, inline file bytes, plaintext
 filename, or plaintext file type. Legacy item type/service are exposed only
 when no encrypted metadata counterpart exists; those preexisting columns are
-a legacy privacy limit until client-side migration retires them.
+a legacy privacy limit until client-side migration retires them. An optional
+folder cutover returns older server-known relative paths to the owner; new
+V2 folder paths remain encrypted in their file manifests.
 """
 
 from __future__ import annotations
@@ -134,6 +136,7 @@ def file_metadata_inventory(
                    u.content_type_ciphertext, u.detected_type_ciphertext,
                    u.detected_service_ciphertext, u.asset_type_ciphertext,
                    u.encrypted_file_data IS NOT NULL AS has_inline_ciphertext,
+                   u.relative_path,
                    u.created_at, r.lifecycle_state, r.verification_state,
                    r.name_version
               FROM uploaded_files u
@@ -172,6 +175,14 @@ def file_metadata_inventory(
             "name_version": (
                 int(row["name_version"])
                 if row.get("name_version") is not None else None
+            ),
+            # Old folder paths are already server-known. Expose them only to
+            # this trusted owner inventory when the coordinated local-folder
+            # cutover is enabled; new V2 paths stay encrypted in the manifest.
+            "relative_path": (
+                row["relative_path"]
+                if os.getenv("VAULTAI_ZK_SIGNED_FOLDER_METADATA_ENABLED", "false")
+                .strip().lower() == "true" else None
             ),
         }
         for field in (

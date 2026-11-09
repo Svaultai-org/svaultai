@@ -1259,6 +1259,10 @@ def _signed_offer_token(
 
 def _pin_free_legacy_file_list_ready(conn, vault_id: str) -> bool:
     """Offer the metadata list only when its labels cover the old list."""
+    signed_folder_metadata = (
+        os.getenv("VAULTAI_ZK_SIGNED_FOLDER_METADATA_ENABLED", "false")
+        .strip().lower() == "true"
+    )
     cur = conn.cursor()
     cur.execute(
         """
@@ -1280,7 +1284,13 @@ def _pin_free_legacy_file_list_ready(conn, vault_id: str) -> bool:
                  OR OCTET_LENGTH(u.detected_type_ciphertext) > 4096
                  OR OCTET_LENGTH(u.detected_service_ciphertext) > 4096
                  OR OCTET_LENGTH(u.asset_type_ciphertext) > 4096
-                 OR COALESCE(u.relative_path, '') <> ''
+                 OR (COALESCE(u.relative_path, '') <> '' AND NOT %s)
+                 OR LENGTH(u.relative_path) > 4096
+                 OR LEFT(u.relative_path, 1) = '/'
+                 OR RIGHT(u.relative_path, 1) = '/'
+                 OR STRPOS(u.relative_path, '//') > 0
+                 OR STRPOS(u.relative_path, CHR(92)) > 0
+                 OR u.relative_path ~ '(^|/)[.][.]?(/|$)|[[:cntrl:]]'
                )
         ) AND NOT EXISTS (
             SELECT 1 FROM file_v2_records r
@@ -1290,7 +1300,7 @@ def _pin_free_legacy_file_list_ready(conn, vault_id: str) -> bool:
                     OR r.migrating_legacy IS NOT TRUE)
         )
         """,
-        (vault_id, vault_id),
+        (vault_id, signed_folder_metadata, vault_id),
     )
     row = cur.fetchone()
     return bool(row and row[0] is True)
