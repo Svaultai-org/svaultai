@@ -22026,8 +22026,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     var uploadCommitted = false;
 
     try {
-      // The V2 writer uses only the active MVK. A missing MVK fails closed in
-      // _uploadAttachments; never read or forward the cached PIN on this path.
+      // Bind the selected V2 upload to this vault before any await. A missing
+      // or changed key must fail before the shared uploader can select legacy.
+      final privateBinding = privateV2Upload
+          ? zk_upload_guard.requirePrivateV2UploadBinding(
+              activeMvk: zk_mvk_store.ZkActiveMvk.current(),
+              activeKeyVaultId: zk_mvk_store.ZkActiveMvk.currentVaultId(),
+              vaultId: activeVaultId,
+            )
+          : null;
       final pin = privateV2Upload ? '' : await _VaultCrypto.currentPinOrThrow();
 
       final uploadOutcome = await _uploadAttachments(
@@ -22036,7 +22043,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         pin: pin,
         authToken: authToken,
         pendingAttachments: pendingAttachments,
-        accompanyingText: attachmentTitle == null ? text : null,
+        accompanyingText:
+            privateV2Upload ? null : (attachmentTitle == null ? text : null),
+        requiredPrivateMvk: privateBinding?.mvk,
+        requiredPrivateVaultId: privateBinding?.vaultId,
       );
       uploadedFileIds = uploadOutcome.uploadedIds;
       uploadCommitted = uploadedFileIds.isNotEmpty;

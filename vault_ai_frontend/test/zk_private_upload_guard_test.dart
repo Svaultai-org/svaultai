@@ -73,6 +73,54 @@ void main() {
         isNull);
   });
 
+  test('ordinary private send rejects a vanished or switched key', () {
+    for (final missingOrSwitched in <({SecretKey? key, String? keyVaultId})>[
+      (key: null, keyVaultId: null),
+      (key: mvk, keyVaultId: 'vault-b'),
+    ]) {
+      expect(
+          () => requirePrivateV2UploadBinding(
+                activeMvk: missingOrSwitched.key,
+                activeKeyVaultId: missingOrSwitched.keyVaultId,
+                vaultId: 'vault-a',
+              ),
+          throwsStateError);
+    }
+    final binding = requirePrivateV2UploadBinding(
+      activeMvk: mvk,
+      activeKeyVaultId: 'vault-a',
+      vaultId: 'vault-a',
+    );
+    expect(binding.mvk, same(mvk));
+    expect(binding.vaultId, 'vault-a');
+    // The shared uploader also rejects a key that vanishes after binding.
+    expect(
+        () => selectV2UploadKey(
+              activeMvk: null,
+              activeVaultId: null,
+              writerEnabled: true,
+              readerEnabled: true,
+              requiredPrivateMvk: binding.mvk,
+              requiredPrivateVaultId: binding.vaultId,
+            ),
+        throwsStateError);
+  });
+
+  test('ordinary attachment send preserves private upload binding', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    final start = source.indexOf('final privateV2Upload = hadAttachments');
+    final end =
+        source.indexOf('uploadedFileIds = uploadOutcome.uploadedIds;', start);
+    expect(start, greaterThan(0));
+    expect(end, greaterThan(start));
+    final sendBody = source.substring(start, end);
+    expect(sendBody, contains('requirePrivateV2UploadBinding('));
+    expect(sendBody, contains('requiredPrivateMvk: privateBinding?.mvk'));
+    expect(
+        sendBody, contains('requiredPrivateVaultId: privateBinding?.vaultId'));
+    expect(sendBody, contains('privateV2Upload ? null :'));
+  });
+
   test('private attachment call requires V2 and cannot forward prompt', () {
     final source = File('lib/main.dart').readAsStringSync();
     final start = source.indexOf('Future<void> _sendZkPrivateAttachments(');

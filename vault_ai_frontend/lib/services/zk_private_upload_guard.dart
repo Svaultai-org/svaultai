@@ -3,6 +3,20 @@ library;
 
 import 'package:cryptography/cryptography.dart';
 
+({SecretKey mvk, String vaultId}) requirePrivateV2UploadBinding({
+  required SecretKey? activeMvk,
+  required String? activeKeyVaultId,
+  required String? vaultId,
+}) {
+  if (activeMvk == null ||
+      vaultId == null ||
+      vaultId.isEmpty ||
+      activeKeyVaultId != vaultId) {
+    throw StateError('Private upload access changed. Unlock and retry.');
+  }
+  return (mvk: activeMvk, vaultId: vaultId);
+}
+
 SecretKey? selectV2UploadKey({
   required SecretKey? activeMvk,
   required String? activeVaultId,
