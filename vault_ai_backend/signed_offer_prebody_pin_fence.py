@@ -58,7 +58,8 @@ class SignedOfferPrebodyPinFence:
 
     async def __call__(self, scope, receive, send) -> None:
         if (scope.get("type") != "http" or
-                scope.get("method") != "POST" or not enabled()):
+                scope.get("method") not in ("POST", "PATCH", "DELETE") or
+                not enabled()):
             await self.app(scope, receive, send)
             return
         bits = _signed_offer_bits(scope.get("headers", ()))

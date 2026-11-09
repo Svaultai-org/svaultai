@@ -66,6 +66,41 @@ def test_offered_routes_reject_before_read(monkeypatch, path, bits, detail):
     assert b"999991" not in result["messages"][1]["body"]
 
 
+@pytest.mark.parametrize("method,path,bits,detail", [
+    ("PATCH", "/manage/login", 1, "pin_free_client_required"),
+    ("DELETE", "/manage/login", 1, "pin_free_client_required"),
+    ("PATCH", "/manage/file", 32, "pin_free_file_mutation_required"),
+    ("DELETE", "/manage/file", 32, "pin_free_file_mutation_required"),
+    ("DELETE", "/delete-file", 32, "pin_free_file_mutation_required"),
+])
+def test_offered_edit_and_delete_routes_reject_before_read(
+    monkeypatch, method, path, bits, detail,
+):
+    monkeypatch.setenv(FLAG_NAME, "true")
+    result = _exercise(
+        path + "/", method=method, headers=[_bearer(monkeypatch, bits)],
+    )
+    assert not result["downstream"] and not result["body_read"]
+    assert result["messages"][0]["status"] == 409
+    assert json.loads(result["messages"][1]["body"])["detail"] == detail
+    assert b"999991" not in result["messages"][1]["body"]
+
+
+@pytest.mark.parametrize("method,path", [
+    ("PATCH", "/manage/login"),
+    ("DELETE", "/manage/login"),
+    ("PATCH", "/manage/file"),
+    ("DELETE", "/manage/file"),
+    ("DELETE", "/delete-file"),
+])
+def test_unoffered_edit_and_delete_routes_keep_access(monkeypatch, method, path):
+    monkeypatch.setenv(FLAG_NAME, "true")
+    result = _exercise(
+        path, method=method, headers=[_bearer(monkeypatch, None)],
+    )
+    assert result["downstream"] and result["body_read"]
+
+
 def test_default_off_and_unoffered_access_continue(monkeypatch):
     signed = _bearer(monkeypatch, 2)
     monkeypatch.delenv(FLAG_NAME, raising=False)
