@@ -34,10 +34,7 @@ Future<Map<String, dynamic>> _fileManifest({
     'chunk_count': size == 0 ? 0 : 1,
     'encrypted_metadata': metadata,
     if (extractedText != null)
-      'legacy_extra': {
-        'relative_path': null,
-        'extracted_text': extractedText,
-      },
+      'legacy_extra': {'relative_path': null, 'extracted_text': extractedText},
   };
   return <String, dynamic>{
     'file_id': id,
@@ -86,14 +83,15 @@ Future<Map<String, Object?>> _fixture() async {
       'item_type_ciphertext': await _wrap(metadataKey, 'login'),
       'service_ciphertext': await _wrap(metadataKey, 'GitHub account'),
       'payload_ciphertext': await _wrap(
-          metadataKey,
-          jsonEncode({
-            'notes': 'Work account for code hosting',
-            'fields': {
-              'username': 'synthetic-user',
-              'password': 'synthetic-password-must-not-index',
-            },
-          })),
+        metadataKey,
+        jsonEncode({
+          'notes': 'Work account for code hosting',
+          'fields': {
+            'username': 'synthetic-user',
+            'password': 'synthetic-password-must-not-index',
+          },
+        }),
+      ),
     },
   ];
   return {
@@ -104,6 +102,163 @@ Future<Map<String, Object?>> _fixture() async {
 }
 
 void main() {
+  test(
+    'root-level VTT captions search an older video without opening it',
+    () async {
+      const caption = 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n'
+          'We reached the beach at sunrise.\n';
+      final bytes = utf8.encode(caption);
+      final contentKey = await VaultKeyHierarchy(_mvk).fileContentKey();
+      final captionManifest = await _fileManifest(
+        id: 'caption-v2',
+        name: 'holiday.vtt',
+        mime: 'text/vtt',
+        size: bytes.length,
+      );
+      final requests = <String>[];
+      final index = await ZkPrivateChatIndexLoader(
+        mvk: _mvk,
+        accessIsCurrent: () => true,
+        get: (path) async {
+          requests.add(path);
+          if (path == '/vault/ciphertext/vault-items') return [];
+          if (path == '/vault/file-v2') {
+            return {
+              'files': [
+                {
+                  'file_id': 'caption-v2',
+                  'verification_state': 'client_verified',
+                  'lifecycle_state': 'client_v2_ready',
+                },
+              ],
+            };
+          }
+          if (path == '/vault/file-v2/caption-v2/manifest') {
+            return captionManifest;
+          }
+          if (path == '/vault/file-v2/caption-v2/chunk/0') {
+            return {
+              'file_id': 'caption-v2',
+              'chunk_index': 0,
+              'ciphertext': b64urlEncode(await aesGcmWrap(contentKey, bytes)),
+            };
+          }
+          fail('Unexpected private GET: $path');
+        },
+        legacyFileInventory: () async => {
+          'files': [
+            {
+              'id': 'older-video',
+              'upload_status': 'complete',
+              'v2_ready': false,
+              'v2_retired': false,
+              'file_name': 'holiday.mp4',
+              'content_type': 'video/mp4',
+              'storage_mode': 'inline',
+            },
+          ],
+        },
+      ).load();
+      final video = index.files.singleWhere((file) => file.id == 'older-video');
+      expect(video.legacyProofRequired, isTrue);
+      expect(video.searchText, contains('beach at sunrise'));
+      expect(video.searchText, isNot(contains('00:00:01')));
+      expect(requests.where((path) => path.contains('/chunk/')), [
+        '/vault/file-v2/caption-v2/chunk/0',
+      ]);
+      expect(requests.join(' '), isNot(contains('older-video')));
+      expect(requests.join(' '), isNot(contains('pin')));
+      final match = ZkLocalChatRouter.resolve(
+        prompt: 'Find my video at sunrise',
+        savedItems: index.savedItems,
+        files: index.files,
+      );
+      expect(match.selection?.id, 'older-video');
+      expect(match.maySendToGeneralAi, isFalse);
+    },
+  );
+
+  test('caption links do not guess across duplicate or folder media', () async {
+    const caption = 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n'
+        'beach at sunrise\n';
+    final bytes = utf8.encode(caption);
+    final contentKey = await VaultKeyHierarchy(_mvk).fileContentKey();
+    final captionManifest = await _fileManifest(
+      id: 'caption-v2',
+      name: 'holiday.vtt',
+      mime: 'text/vtt',
+      size: bytes.length,
+    );
+    Future<ZkPrivateChatIndex> load(
+      List<Map<String, dynamic>> older, {
+      bool truncated = false,
+    }) =>
+        ZkPrivateChatIndexLoader(
+          mvk: _mvk,
+          accessIsCurrent: () => true,
+          get: (path) async {
+            if (path == '/vault/ciphertext/vault-items') return [];
+            if (path == '/vault/file-v2') {
+              return {
+                'files': [
+                  {
+                    'file_id': 'caption-v2',
+                    'verification_state': 'client_verified',
+                    'lifecycle_state': 'client_v2_ready',
+                  },
+                ],
+              };
+            }
+            if (path == '/vault/file-v2/caption-v2/manifest') {
+              return captionManifest;
+            }
+            if (path == '/vault/file-v2/caption-v2/chunk/0') {
+              return {
+                'file_id': 'caption-v2',
+                'chunk_index': 0,
+                'ciphertext': b64urlEncode(await aesGcmWrap(contentKey, bytes)),
+              };
+            }
+            fail('Unexpected private GET: $path');
+          },
+          legacyFileInventory: () async => {
+            'files': older,
+            'truncated': truncated,
+          },
+        ).load();
+    Map<String, dynamic> video(String id, {String? relativePath}) => {
+          'id': id,
+          'upload_status': 'complete',
+          'v2_ready': false,
+          'v2_retired': false,
+          'file_name': 'holiday.mp4',
+          'content_type': 'video/mp4',
+          'storage_mode': 'inline',
+          if (relativePath != null) 'relative_path': relativePath,
+        };
+    final duplicates = await load([video('old-a'), video('old-b')]);
+    expect(duplicates.incomplete, isTrue);
+    expect(
+      duplicates.files
+          .where((f) => f.id.startsWith('old-'))
+          .every((f) => f.searchText.isEmpty),
+      isTrue,
+    );
+    final folder = await load([
+      video('old-folder', relativePath: 'other/holiday.mp4'),
+    ]);
+    expect(
+      folder.files.singleWhere((f) => f.id == 'old-folder').searchText,
+      isEmpty,
+    );
+    final truncated = await load([video('old-partial')], truncated: true);
+    expect(truncated.incomplete, isTrue);
+    expect(
+      truncated.files.singleWhere((f) => f.id == 'old-partial').searchText,
+      isEmpty,
+    );
+  });
+
   test('MVK decrypts media labels and bounded text only on client', () async {
     final fixture = await _fixture();
     final files = fixture['files'] as Map<String, Map<String, dynamic>>;
@@ -123,14 +278,14 @@ void main() {
                   'verification_state': 'client_verified',
                   'lifecycle_state': id == 'text-1'
                       ? 'client_v2_ready'
-                      : 'legacy_migration_retired'
+                      : 'legacy_migration_retired',
                 },
               {
                 'file_id': 'staged-1',
                 'verification_state': 'pending',
-                'lifecycle_state': 'active'
+                'lifecycle_state': 'active',
               },
-            ]
+            ],
           };
         }
         if (path.endsWith('/manifest')) {
@@ -140,7 +295,7 @@ void main() {
           return {
             'file_id': 'text-1',
             'chunk_index': 0,
-            'ciphertext': fixture['textChunk']
+            'ciphertext': fixture['textChunk'],
           };
         }
         fail('Unexpected private GET: $path');
@@ -152,10 +307,13 @@ void main() {
     expect(index.files, hasLength(4));
     expect(index.files.any((record) => record.id == 'staged-1'), isFalse);
     expect(requested.any((path) => path.contains('/staged-1/')), isFalse);
-    expect(index.savedItems.single.searchText,
-        isNot(contains('synthetic-password-must-not-index')));
-    expect(requested.where((path) => path.contains('/chunk/')),
-        ['/vault/file-v2/text-1/chunk/0']);
+    expect(
+      index.savedItems.single.searchText,
+      isNot(contains('synthetic-password-must-not-index')),
+    );
+    expect(requested.where((path) => path.contains('/chunk/')), [
+      '/vault/file-v2/text-1/chunk/0',
+    ]);
     expect(requested.any((path) => path.contains('pin')), isFalse);
 
     final photo = ZkLocalChatRouter.resolve(
@@ -272,88 +430,108 @@ void main() {
     }
   });
 
-  test('older media names join private search only with a proof reader',
-      () async {
-    final ready = await _fileManifest(
-      id: 'ready-photo', name: 'ready-photo.jpg',
-      mime: 'image/jpeg', size: 0,
-    );
-    final requested = <String>[];
-    var inventoryCalls = 0;
-    final loader = ZkPrivateChatIndexLoader(
-      mvk: _mvk,
-      accessIsCurrent: () => true,
-      fileLimit: 3,
-      get: (path) async {
-        requested.add(path);
-        if (path == '/vault/ciphertext/vault-items') return [];
-        if (path == '/vault/file-v2') {
+  test(
+    'older media names join private search only with a proof reader',
+    () async {
+      final ready = await _fileManifest(
+        id: 'ready-photo',
+        name: 'ready-photo.jpg',
+        mime: 'image/jpeg',
+        size: 0,
+      );
+      final requested = <String>[];
+      var inventoryCalls = 0;
+      final loader = ZkPrivateChatIndexLoader(
+        mvk: _mvk,
+        accessIsCurrent: () => true,
+        fileLimit: 3,
+        get: (path) async {
+          requested.add(path);
+          if (path == '/vault/ciphertext/vault-items') return [];
+          if (path == '/vault/file-v2') {
+            return {
+              'files': [
+                {
+                  'file_id': 'ready-photo',
+                  'verification_state': 'client_verified',
+                  'lifecycle_state': 'client_v2_ready',
+                },
+              ],
+            };
+          }
+          if (path == '/vault/file-v2/ready-photo/manifest') return ready;
+          fail('Unexpected private GET: $path');
+        },
+        legacyFileInventory: () async {
+          inventoryCalls++;
           return {
             'files': [
               {
-                'file_id': 'ready-photo',
-                'verification_state': 'client_verified',
-                'lifecycle_state': 'client_v2_ready',
-              }
-            ]
+                'id': 'ready-photo',
+                'upload_status': 'complete',
+                'v2_ready': true,
+                'file_name': 'ready-photo.jpg',
+                'content_type': 'image/jpeg',
+                'storage_mode': 'inline',
+              },
+              {
+                'id': 'older-photo',
+                'upload_status': 'complete',
+                'v2_ready': false,
+                'v2_retired': false,
+                'file_name': 'red-cloth-black-shoes.jpg',
+                'content_type': 'image/jpeg',
+                'storage_mode': 'inline',
+              },
+              {
+                'id': 'older-video',
+                'upload_status': 'complete',
+                'v2_ready': false,
+                'v2_retired': false,
+                'file_name': 'standing-at-the-beach.mp4',
+                'content_type': 'video/mp4',
+                'storage_mode': 'chunked',
+              },
+              {
+                'id': 'bad-name',
+                'upload_status': 'complete',
+                'file_name': '',
+                'content_type': 'image/jpeg',
+                'storage_mode': 'inline',
+              },
+            ],
           };
-        }
-        if (path == '/vault/file-v2/ready-photo/manifest') return ready;
-        fail('Unexpected private GET: $path');
-      },
-      legacyFileInventory: () async {
-        inventoryCalls++;
-        return {
-          'files': [
-            {
-              'id': 'ready-photo', 'upload_status': 'complete',
-              'v2_ready': true, 'file_name': 'ready-photo.jpg',
-              'content_type': 'image/jpeg', 'storage_mode': 'inline',
-            },
-            {
-              'id': 'older-photo', 'upload_status': 'complete',
-              'v2_ready': false, 'v2_retired': false,
-              'file_name': 'red-cloth-black-shoes.jpg',
-              'content_type': 'image/jpeg', 'storage_mode': 'inline',
-            },
-            {
-              'id': 'older-video', 'upload_status': 'complete',
-              'v2_ready': false, 'v2_retired': false,
-              'file_name': 'standing-at-the-beach.mp4',
-              'content_type': 'video/mp4', 'storage_mode': 'chunked',
-            },
-            {
-              'id': 'bad-name', 'upload_status': 'complete',
-              'file_name': '', 'content_type': 'image/jpeg',
-              'storage_mode': 'inline',
-            },
-          ],
-        };
-      },
-    );
-    final index = await loader.load();
-    expect(inventoryCalls, 1);
-    expect(index.incomplete, isTrue); // Malformed older label was omitted.
-    expect(index.files.map((f) => f.id),
-        ['ready-photo', 'older-photo', 'older-video']);
-    expect(index.files.first.legacyProofRequired, isFalse);
-    expect(index.files[1].legacyProofRequired, isTrue);
-    expect(index.files[2].legacyProofRequired, isTrue);
-    expect(requested.every((path) => path.startsWith('/vault/')), isTrue);
-    expect(requested.join(' '), isNot(contains('red-cloth')));
-    final selected = ZkLocalChatRouter.resolve(
-      prompt: 'Find my video at the beach',
-      savedItems: index.savedItems,
-      files: index.files,
-    );
-    expect(selected.selection?.id, 'older-video');
-    expect(selected.maySendToGeneralAi, isFalse);
-  });
+        },
+      );
+      final index = await loader.load();
+      expect(inventoryCalls, 1);
+      expect(index.incomplete, isTrue); // Malformed older label was omitted.
+      expect(index.files.map((f) => f.id), [
+        'ready-photo',
+        'older-photo',
+        'older-video',
+      ]);
+      expect(index.files.first.legacyProofRequired, isFalse);
+      expect(index.files[1].legacyProofRequired, isTrue);
+      expect(index.files[2].legacyProofRequired, isTrue);
+      expect(requested.every((path) => path.startsWith('/vault/')), isTrue);
+      expect(requested.join(' '), isNot(contains('red-cloth')));
+      final selected = ZkLocalChatRouter.resolve(
+        prompt: 'Find my video at the beach',
+        savedItems: index.savedItems,
+        files: index.files,
+      );
+      expect(selected.selection?.id, 'older-video');
+      expect(selected.maySendToGeneralAi, isFalse);
+    },
+  );
 
   test('older media adapter stays inside the existing file cap', () async {
     final ready = await _fileManifest(
-      id: 'ready-photo', name: 'ready-photo.jpg',
-      mime: 'image/jpeg', size: 0,
+      id: 'ready-photo',
+      name: 'ready-photo.jpg',
+      mime: 'image/jpeg',
+      size: 0,
     );
     final loader = ZkPrivateChatIndexLoader(
       mvk: _mvk,
@@ -368,8 +546,8 @@ void main() {
                 'file_id': 'ready-photo',
                 'verification_state': 'client_verified',
                 'lifecycle_state': 'client_v2_ready',
-              }
-            ]
+              },
+            ],
           };
         }
         if (path == '/vault/file-v2/ready-photo/manifest') return ready;
@@ -378,10 +556,12 @@ void main() {
       legacyFileInventory: () async => {
         'files': [
           {
-            'id': 'older-video', 'upload_status': 'complete',
+            'id': 'older-video',
+            'upload_status': 'complete',
             'file_name': 'standing-at-the-beach.mp4',
-            'content_type': 'video/mp4', 'storage_mode': 'chunked',
-          }
+            'content_type': 'video/mp4',
+            'storage_mode': 'chunked',
+          },
         ],
       },
     );
