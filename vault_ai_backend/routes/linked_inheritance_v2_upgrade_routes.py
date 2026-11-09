@@ -24,6 +24,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey, X25519PublicKey,
 )
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
@@ -42,8 +44,12 @@ KEYCHECK_FLAG_NAME = "VAULTAI_ZK_LINKED_BENEFICIARY_KEYCHECK_ENABLED"
 RELEASE_READBACK_FLAG_NAME = (
     "VAULTAI_ZK_LINKED_BENEFICIARY_RELEASE_READBACK_ENABLED"
 )
+READBACK_PROOF_FLAG_NAME = (
+    "VAULTAI_ZK_LINKED_BENEFICIARY_READBACK_PROOF_ENABLED"
+)
 _KEYCHECK_INFO = b"vaultai.inh-v2-beneficiary-keycheck.v1"
 _CHALLENGE_LIFETIME = timedelta(minutes=5)
+_READBACK_CHALLENGE_LIFETIME = timedelta(minutes=5)
 
 
 class StageLinkedV2Package(BaseModel):
@@ -67,6 +73,26 @@ class CompleteBeneficiaryKeyCheck(BaseModel):
     offer_commitment: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
     challenge_secret: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
     expected_beneficiary_pk_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    zk_proof_token: str = Field(min_length=1, max_length=128)
+
+
+class RegisterOwnerReadbackVerifier(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    beneficiary_link_id: int = Field(gt=0)
+    stage_revision: int = Field(gt=0)
+    offer_commitment: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    expected_beneficiary_pk_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    readback_public_key: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    zk_proof_token: str = Field(min_length=1, max_length=128)
+
+
+class CompleteBeneficiaryReadback(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    beneficiary_link_id: int = Field(gt=0)
+    stage_revision: int = Field(gt=0)
+    offer_commitment: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    challenge_nonce: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    signature: str = Field(pattern=r"^[A-Za-z0-9_-]{86}$")
     zk_proof_token: str = Field(min_length=1, max_length=128)
 
 
@@ -109,6 +135,12 @@ def _keycheck_enabled() -> None:
 def _release_readback_enabled() -> None:
     _keycheck_enabled()
     if os.getenv(RELEASE_READBACK_FLAG_NAME, "false").strip().lower() != "true":
+        raise HTTPException(status_code=404, detail="not_found")
+
+
+def _readback_proof_enabled() -> None:
+    _release_readback_enabled()
+    if os.getenv(READBACK_PROOF_FLAG_NAME, "false").strip().lower() != "true":
         raise HTTPException(status_code=404, detail="not_found")
 
 
@@ -266,7 +298,13 @@ def _current_stage_for_beneficiary(cur, *, link: dict, credential: dict | None,
                   stage_revision,state,beneficiary_challenge_hash,
                   beneficiary_challenge_revision,
                   beneficiary_challenge_expires_at,
-                  beneficiary_keycheck_revision,beneficiary_keycheck_at
+                  beneficiary_keycheck_revision,beneficiary_keycheck_at,
+                  owner_readback_public_key,owner_readback_revision,
+                  owner_readback_commitment,owner_readback_at,
+                  beneficiary_readback_challenge_hash,
+                  beneficiary_readback_challenge_revision,
+                  beneficiary_readback_challenge_expires_at,
+                  beneficiary_readback_revision,beneficiary_readback_at
              FROM beneficiary_link_v2_upgrades WHERE old_link_id=%s
              FOR UPDATE""",
         (link["id"],),
@@ -358,6 +396,31 @@ def _load_releasable_old_link(
     return link, credential, state
 
 
+def _readback_message(
+    *, link_id: int, revision: int, commitment: str,
+    owner_vault_id: str, beneficiary_vault_id: str, nonce: str,
+) -> bytes:
+    return (
+        "svaultai:linked-old-v2-readback:v1:"
+        f"{link_id}:{revision}:{commitment}:"
+        f"{owner_vault_id}:{beneficiary_vault_id}:{nonce}"
+    ).encode("ascii")
+
+
+def _verified_release_stage(cur, *, link: dict, credential: dict) -> dict:
+    pk_hash = hashlib.sha256(
+        _beneficiary_pk(cur, str(link["beneficiary_vault_id"])),
+    ).digest()
+    stage = _current_stage_for_beneficiary(
+        cur, link=link, credential=credential, pk_hash=pk_hash,
+    )
+    if (stage["beneficiary_keycheck_revision"] !=
+            stage["stage_revision"] or
+            stage["beneficiary_keycheck_at"] is None):
+        raise HTTPException(status_code=409, detail="v2_package_not_verified")
+    return stage
+
+
 @router.post("/inheritance/old-link-v2/stage")
 def stage_linked_v2_package(
     payload: StageLinkedV2Package,
@@ -432,7 +495,16 @@ def stage_linked_v2_package(
                           beneficiary_challenge_revision=NULL,
                           beneficiary_challenge_expires_at=NULL,
                           beneficiary_keycheck_revision=NULL,
-                          beneficiary_keycheck_at=NULL,updated_at=NOW()
+                          beneficiary_keycheck_at=NULL,
+                          owner_readback_public_key=NULL,
+                          owner_readback_revision=NULL,
+                          owner_readback_commitment=NULL,
+                          owner_readback_at=NULL,
+                          beneficiary_readback_challenge_hash=NULL,
+                          beneficiary_readback_challenge_revision=NULL,
+                          beneficiary_readback_challenge_expires_at=NULL,
+                          beneficiary_readback_revision=NULL,
+                          beneficiary_readback_at=NULL,updated_at=NOW()
                     WHERE old_link_id=%s AND owner_vault_id=%s
                       AND stage_revision=%s AND state='staged'
                     RETURNING stage_revision""",
@@ -612,6 +684,9 @@ def readback_linked_v2_package(
             raise HTTPException(status_code=409, detail="old_link_or_key_changed")
         return {
             **_stage_response(link_id, row, snapshot, pk_hash),
+            "owner_vault_id": str(link["passer_vault_id"]),
+            "beneficiary_vault_id": str(link["beneficiary_vault_id"]),
+            "offer_commitment": _offer_commitment(link_id, row),
             **{name: _b64(bytes(row[name])) for name in _ENVELOPE_FIELDS},
         }
     finally:
@@ -649,7 +724,9 @@ def read_released_linked_v2_package(
                       encrypted_payload,payload_nonce,wrapped_key,
                       wrapping_ephemeral_pk,wrapping_nonce,
                       stage_revision,state,beneficiary_keycheck_revision,
-                      beneficiary_keycheck_at
+                      beneficiary_keycheck_at,owner_readback_public_key,
+                      owner_readback_revision,owner_readback_commitment,
+                      owner_readback_at
                  FROM beneficiary_link_v2_upgrades
                 WHERE old_link_id=%s FOR UPDATE""",
             (link_id,),
@@ -666,6 +743,19 @@ def read_released_linked_v2_package(
                 stage["stage_revision"] or
                 stage["beneficiary_keycheck_at"] is None):
             raise HTTPException(status_code=409, detail="v2_package_not_verified")
+        # If the readback-proof ceremony is enabled, the owner must register
+        # its verifier while the old link is still idle. Otherwise the first
+        # release could strand this stage in a state where registration is
+        # forbidden and the beneficiary could never complete the proof.
+        if (os.getenv(READBACK_PROOF_FLAG_NAME, "false").strip().lower() ==
+                "true" and
+                (stage.get("owner_readback_public_key") is None or
+                 stage.get("owner_readback_revision") !=
+                 stage["stage_revision"] or
+                 stage.get("owner_readback_commitment") !=
+                 _offer_commitment(link_id, stage) or
+                 stage.get("owner_readback_at") is None)):
+            raise HTTPException(status_code=409, detail="readback_verifier_required")
         enforce_export_rate_limit(vault_id=str(principal["vault_id"]))
         released_at = credential.get("released_at")
         if state != "released":
@@ -713,3 +803,219 @@ def read_released_linked_v2_package(
             metadata={"beneficiary_link_id": link_id},
         )
     return result
+
+
+@router.post("/inheritance/old-link-v2/readback-verifier")
+def register_owner_readback_verifier(
+    payload: RegisterOwnerReadbackVerifier,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    """Store a stage-bound public verifier derived on the owner's device."""
+    _readback_proof_enabled()
+    require_content_write(principal)
+    public_key = _decode(payload.readback_public_key, low=32, high=32)
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        link, credential = _load_old_link(
+            cur, link_id=payload.beneficiary_link_id,
+            owner_vault_id=principal["vault_id"], lock=True,
+        )
+        pk_hash = hashlib.sha256(
+            _beneficiary_pk(cur, str(link["beneficiary_vault_id"])),
+        ).digest()
+        stage = _current_stage_for_beneficiary(
+            cur, link=link, credential=credential, pk_hash=pk_hash,
+        )
+        if (payload.stage_revision != stage["stage_revision"] or
+                payload.offer_commitment !=
+                _offer_commitment(payload.beneficiary_link_id, stage) or
+                payload.expected_beneficiary_pk_sha256 != pk_hash.hex()):
+            raise HTTPException(status_code=409, detail="stage_revision_changed")
+        prior = stage.get("owner_readback_public_key")
+        if prior is not None and (
+                bytes(prior) != public_key or
+                stage.get("owner_readback_revision") !=
+                payload.stage_revision or
+                stage.get("owner_readback_commitment") !=
+                payload.offer_commitment):
+            raise HTTPException(status_code=409, detail="readback_verifier_changed")
+        consume_recent_zk_proof_on_cursor(payload.zk_proof_token, principal, cur)
+        if prior is None:
+            cur.execute(
+                """UPDATE beneficiary_link_v2_upgrades
+                      SET owner_readback_public_key=%s,
+                          owner_readback_revision=%s,
+                          owner_readback_commitment=%s,
+                          owner_readback_at=NOW(),updated_at=NOW()
+                    WHERE old_link_id=%s AND stage_revision=%s
+                      AND state='staged' AND owner_readback_public_key IS NULL
+                    RETURNING stage_revision""",
+                (public_key, payload.stage_revision,
+                 payload.offer_commitment,
+                 payload.beneficiary_link_id, payload.stage_revision),
+            )
+            if not cur.fetchone():
+                raise HTTPException(status_code=409, detail="stage_revision_changed")
+        conn.commit()
+        return {
+            "beneficiary_link_id": payload.beneficiary_link_id,
+            "stage_revision": payload.stage_revision,
+            "offer_commitment": payload.offer_commitment,
+            "owner_readback_verifier_registered": True,
+            "package_decryption_verified": False,
+            "legacy_link_unchanged": True,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@router.post("/inheritance/old-link-v2/{link_id}/readback-challenge")
+def issue_beneficiary_readback_challenge(
+    link_id: int,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    """Issue a fresh challenge only after the old release state is final."""
+    _readback_proof_enabled()
+    if link_id <= 0:
+        raise HTTPException(status_code=404, detail="not_found")
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        link, credential, state = _load_releasable_old_link(
+            cur, link_id=link_id,
+            beneficiary_vault_id=principal["vault_id"],
+        )
+        if state != "released":
+            raise HTTPException(status_code=409, detail="release_not_complete")
+        stage = _verified_release_stage(cur, link=link, credential=credential)
+        revision = int(stage["stage_revision"])
+        if (stage.get("owner_readback_public_key") is None or
+                stage.get("owner_readback_revision") != revision or
+                stage.get("owner_readback_commitment") !=
+                _offer_commitment(link_id, stage) or
+                stage.get("owner_readback_at") is None or
+                stage.get("beneficiary_readback_revision") is not None):
+            raise HTTPException(status_code=409, detail="readback_proof_unavailable")
+        enforce_export_rate_limit(vault_id=str(principal["vault_id"]))
+        nonce = secrets.token_bytes(32)
+        expires_at = datetime.now(timezone.utc) + _READBACK_CHALLENGE_LIFETIME
+        cur.execute(
+            """UPDATE beneficiary_link_v2_upgrades
+                  SET beneficiary_readback_challenge_hash=%s,
+                      beneficiary_readback_challenge_revision=%s,
+                      beneficiary_readback_challenge_expires_at=%s,
+                      updated_at=NOW()
+                WHERE old_link_id=%s AND stage_revision=%s AND state='staged'""",
+            (hashlib.sha256(nonce).digest(), revision, expires_at,
+             link_id, revision),
+        )
+        conn.commit()
+        return {
+            "beneficiary_link_id": link_id,
+            "stage_revision": revision,
+            "offer_commitment": _offer_commitment(link_id, stage),
+            "owner_vault_id": str(link["passer_vault_id"]),
+            "beneficiary_vault_id": str(link["beneficiary_vault_id"]),
+            "readback_public_key": _b64(
+                bytes(stage["owner_readback_public_key"]),
+            ),
+            "challenge_nonce": _b64(nonce),
+            "expires_at": expires_at.isoformat(),
+            "package_decryption_verified": False,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@router.post("/inheritance/old-link-v2/readback-proof")
+def complete_beneficiary_readback_proof(
+    payload: CompleteBeneficiaryReadback,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    """Verify MVK-derived signature; retain the legacy package unchanged."""
+    _readback_proof_enabled()
+    nonce = _decode(payload.challenge_nonce, low=32, high=32)
+    signature = _decode(payload.signature, low=64, high=64)
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        link, credential, state = _load_releasable_old_link(
+            cur, link_id=payload.beneficiary_link_id,
+            beneficiary_vault_id=principal["vault_id"],
+        )
+        if state != "released":
+            raise HTTPException(status_code=409, detail="release_not_complete")
+        stage = _verified_release_stage(cur, link=link, credential=credential)
+        revision = int(stage["stage_revision"])
+        commitment = _offer_commitment(payload.beneficiary_link_id, stage)
+        expires_at = stage.get("beneficiary_readback_challenge_expires_at")
+        challenge_hash = stage.get("beneficiary_readback_challenge_hash")
+        public_key = stage.get("owner_readback_public_key")
+        if (payload.stage_revision != revision or
+                payload.offer_commitment != commitment or
+                public_key is None or
+                stage.get("owner_readback_revision") != revision or
+                stage.get("owner_readback_commitment") != commitment or
+                stage.get("owner_readback_at") is None or
+                stage.get("beneficiary_readback_revision") is not None or
+                challenge_hash is None or
+                stage.get("beneficiary_readback_challenge_revision") != revision or
+                expires_at is None or
+                expires_at <= datetime.now(timezone.utc) or
+                not hmac.compare_digest(
+                    bytes(challenge_hash), hashlib.sha256(nonce).digest(),
+                )):
+            raise HTTPException(status_code=409, detail="readback_challenge_invalid")
+        message = _readback_message(
+            link_id=payload.beneficiary_link_id, revision=revision,
+            commitment=commitment,
+            owner_vault_id=str(link["passer_vault_id"]),
+            beneficiary_vault_id=str(link["beneficiary_vault_id"]),
+            nonce=payload.challenge_nonce,
+        )
+        try:
+            Ed25519PublicKey.from_public_bytes(bytes(public_key)).verify(
+                signature, message,
+            )
+        except (InvalidSignature, ValueError) as exc:
+            raise HTTPException(
+                status_code=409, detail="readback_signature_invalid",
+            ) from exc
+        consume_recent_zk_proof_on_cursor(payload.zk_proof_token, principal, cur)
+        cur.execute(
+            """UPDATE beneficiary_link_v2_upgrades
+                  SET beneficiary_readback_revision=%s,
+                      beneficiary_readback_at=NOW(),
+                      beneficiary_readback_challenge_hash=NULL,
+                      beneficiary_readback_challenge_revision=NULL,
+                      beneficiary_readback_challenge_expires_at=NULL,
+                      updated_at=NOW()
+                WHERE old_link_id=%s AND stage_revision=%s AND state='staged'
+                  AND beneficiary_readback_revision IS NULL
+                RETURNING beneficiary_readback_at""",
+            (revision, payload.beneficiary_link_id, revision),
+        )
+        recorded = cur.fetchone()
+        if not recorded:
+            raise HTTPException(status_code=409, detail="stage_revision_changed")
+        conn.commit()
+        return {
+            "beneficiary_link_id": payload.beneficiary_link_id,
+            "stage_revision": revision,
+            "offer_commitment": commitment,
+            "package_decryption_verified": True,
+            "legacy_package_preserved": True,
+            "readback_at": recorded["beneficiary_readback_at"].isoformat(),
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()

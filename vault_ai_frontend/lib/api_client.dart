@@ -34,6 +34,8 @@ import 'services/linked_inheritance_v2_stage.dart' as linked_inh_stage;
 import 'services/linked_inheritance_v2_keycheck.dart' as linked_inh_keycheck;
 import 'services/linked_inheritance_v2_release_readback.dart'
     as linked_inh_release;
+import 'services/linked_inheritance_v2_readback_proof.dart'
+    as linked_inh_proof;
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/private_content_pin_guard.dart' as private_content_guard;
 
@@ -3028,6 +3030,7 @@ class VaultAIClient {
     void checkAccess() {
       _requireSavedItemKey(ownerMvk);
       if (zk_mvk_store.ZkActiveMvk.currentVaultId() != ownerVaultId ||
+          !identical(zk_mvk_store.ZkActiveMvk.current(), ownerMvk) ||
           responseIsCurrent?.call() == false) {
         throw StateError('Private inheritance access changed');
       }
@@ -3215,6 +3218,164 @@ class VaultAIClient {
         }
         return decoded;
       },
+      accessIsCurrent: () {
+        try {
+          checkAccess();
+          return true;
+        } catch (_) {
+          return false;
+        }
+      },
+    );
+  }
+
+  /// Register a public proof verifier derived locally from the owner MVK.
+  /// The old linked package and release state remain unchanged.
+  Future<linked_inh_proof.LinkedReadbackVerifier>
+      registerLinkedOldInheritanceReadbackVerifier({
+    required String authToken,
+    required linked_inh_stage.StagedLinkedInheritanceV2 staged,
+    required String ownerVaultId,
+    required SecretKey ownerMvk,
+    required String zkProofToken,
+    bool Function()? responseIsCurrent,
+  }) async {
+    const enabled = bool.fromEnvironment(
+      'VAULTAI_ENABLE_LINKED_INHERITANCE_READBACK_PROOF',
+      defaultValue: false,
+    );
+    if (!enabled) {
+      throw StateError('Linked inheritance readback proof is unavailable');
+    }
+    void checkAccess() {
+      _requireSavedItemKey(ownerMvk);
+      if (zk_mvk_store.ZkActiveMvk.currentVaultId() != ownerVaultId ||
+          !identical(zk_mvk_store.ZkActiveMvk.current(), ownerMvk) ||
+          responseIsCurrent?.call() == false) {
+        throw StateError('Owner vault access changed');
+      }
+    }
+
+    Future<Map<String, dynamic>> request(
+      String method, String path, [Map<String, dynamic>? body]
+    ) async {
+      checkAccess();
+      final transport = _sessionHttpWithGuard(checkAccess);
+      final uri = Uri.parse('$baseUrl$path');
+      final response = method == 'POST'
+          ? await transport.post(
+              uri,
+              headers: _defaultHeaders(authToken: authToken, json: true),
+              body: jsonEncode(body ?? <String, dynamic>{}),
+            )
+          : await transport.get(
+              uri, headers: _defaultHeaders(authToken: authToken),
+            );
+      checkAccess();
+      if (response.statusCode != 200) {
+        _throwIfAuthExpired(response.statusCode, response.body);
+        _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        throw StateError('Owner readback verifier unavailable');
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Invalid readback verifier response');
+      }
+      return decoded;
+    }
+
+    checkAccess();
+    return linked_inh_proof.registerLinkedReadbackVerifier(
+      staged: staged,
+      ownerVaultId: ownerVaultId,
+      ownerMvk: ownerMvk,
+      zkProofToken: zkProofToken,
+      fetchReadback: (id) => request(
+        'GET', '/inheritance/old-link-v2/$id/readback',
+      ),
+      submitVerifier: (body) => request(
+        'POST', '/inheritance/old-link-v2/readback-verifier', body,
+      ),
+      accessIsCurrent: () {
+        try {
+          checkAccess();
+          return true;
+        } catch (_) {
+          return false;
+        }
+      },
+    );
+  }
+
+  /// Prove local owner-MVK decryption after the existing release gate opens.
+  /// The proof body contains only a challenge signature, never the MVK.
+  Future<linked_inh_proof.LinkedReadbackReceipt>
+      proveReleasedLinkedOldInheritanceReadback({
+    required String authToken,
+    required int linkId,
+    required String beneficiaryVaultId,
+    required SecretKey beneficiaryPrivateKey,
+    required String zkProofToken,
+    bool Function()? responseIsCurrent,
+  }) async {
+    const enabled = bool.fromEnvironment(
+      'VAULTAI_ENABLE_LINKED_INHERITANCE_READBACK_PROOF',
+      defaultValue: false,
+    );
+    if (!enabled) {
+      throw StateError('Linked inheritance readback proof is unavailable');
+    }
+    void checkAccess() {
+      if (zk_sk_store.ZkActiveSkVault.currentVaultId() !=
+              beneficiaryVaultId ||
+          !identical(zk_sk_store.ZkActiveSkVault.current(),
+              beneficiaryPrivateKey) ||
+          responseIsCurrent?.call() == false) {
+        throw StateError('Beneficiary vault access changed');
+      }
+    }
+
+    Future<Map<String, dynamic>> post(
+      String path, [Map<String, dynamic>? body]
+    ) async {
+      checkAccess();
+      final response = await _sessionHttpWithGuard(checkAccess).post(
+        Uri.parse('$baseUrl$path'),
+        headers: _defaultHeaders(authToken: authToken, json: true),
+        body: jsonEncode(body ?? <String, dynamic>{}),
+      );
+      checkAccess();
+      if (response.statusCode != 200) {
+        _throwIfAuthExpired(response.statusCode, response.body);
+        _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        throw StateError('Beneficiary readback proof unavailable');
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Invalid beneficiary readback response');
+      }
+      return decoded;
+    }
+
+    checkAccess();
+    final released = await readReleasedLinkedOldInheritanceV2(
+      authToken: authToken,
+      linkId: linkId,
+      beneficiaryVaultId: beneficiaryVaultId,
+      beneficiaryPrivateKey: beneficiaryPrivateKey,
+      responseIsCurrent: responseIsCurrent,
+    );
+    checkAccess();
+    return linked_inh_proof.proveLinkedReadback(
+      released: released,
+      beneficiaryVaultId: beneficiaryVaultId,
+      zkProofToken: zkProofToken,
+      fetchChallenge: (id) => post(
+        '/inheritance/old-link-v2/$id/readback-challenge',
+      ),
+      submitProof: (body) => post(
+        '/inheritance/old-link-v2/readback-proof', body,
+      ),
       accessIsCurrent: () {
         try {
           checkAccess();

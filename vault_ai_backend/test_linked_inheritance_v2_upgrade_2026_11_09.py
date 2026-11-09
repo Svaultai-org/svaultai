@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey, X25519PublicKey,
 )
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
@@ -122,6 +123,15 @@ class FakeCursor:
                 "beneficiary_challenge_expires_at": None,
                 "beneficiary_keycheck_revision": None,
                 "beneficiary_keycheck_at": None,
+                "owner_readback_public_key": None,
+                "owner_readback_revision": None,
+                "owner_readback_commitment": None,
+                "owner_readback_at": None,
+                "beneficiary_readback_challenge_hash": None,
+                "beneficiary_readback_challenge_revision": None,
+                "beneficiary_readback_challenge_expires_at": None,
+                "beneficiary_readback_revision": None,
+                "beneficiary_readback_at": None,
             }
             self.value = {"stage_revision": 1}
         elif normalized.startswith("UPDATE BENEFICIARY_LINK_V2_UPGRADES") and \
@@ -144,6 +154,39 @@ class FakeCursor:
                 "beneficiary_challenge_revision": None,
                 "beneficiary_challenge_expires_at": None,
             })
+        elif normalized.startswith("UPDATE BENEFICIARY_LINK_V2_UPGRADES") and \
+                "SET OWNER_READBACK_PUBLIC_KEY=%S" in normalized:
+            public_key, revision, commitment, link_id, current_revision = params
+            assert (link_id, current_revision) == (41, self.db.stage["stage_revision"])
+            self.db.stage.update({
+                "owner_readback_public_key": public_key,
+                "owner_readback_revision": revision,
+                "owner_readback_commitment": commitment,
+                "owner_readback_at": datetime.now(timezone.utc),
+            })
+            self.value = {"stage_revision": revision}
+        elif normalized.startswith("UPDATE BENEFICIARY_LINK_V2_UPGRADES") and \
+                "SET BENEFICIARY_READBACK_CHALLENGE_HASH=%S" in normalized:
+            digest, revision, expiry, link_id, current_revision = params
+            assert (link_id, current_revision) == (41, self.db.stage["stage_revision"])
+            self.db.stage.update({
+                "beneficiary_readback_challenge_hash": digest,
+                "beneficiary_readback_challenge_revision": revision,
+                "beneficiary_readback_challenge_expires_at": expiry,
+            })
+        elif normalized.startswith("UPDATE BENEFICIARY_LINK_V2_UPGRADES") and \
+                "SET BENEFICIARY_READBACK_REVISION=%S" in normalized:
+            revision, link_id, current_revision = params
+            assert (link_id, current_revision) == (41, self.db.stage["stage_revision"])
+            now = datetime.now(timezone.utc)
+            self.db.stage.update({
+                "beneficiary_readback_revision": revision,
+                "beneficiary_readback_at": now,
+                "beneficiary_readback_challenge_hash": None,
+                "beneficiary_readback_challenge_revision": None,
+                "beneficiary_readback_challenge_expires_at": None,
+            })
+            self.value = {"beneficiary_readback_at": now}
         elif normalized.startswith("UPDATE BENEFICIARY_LINK_V2_UPGRADES"):
             (snapshot, pk_hash, encrypted, nonce, wrapped, eph, wrap_nonce,
              link_id, owner_id, expected_revision) = params
@@ -164,6 +207,15 @@ class FakeCursor:
                 "beneficiary_challenge_expires_at": None,
                 "beneficiary_keycheck_revision": None,
                 "beneficiary_keycheck_at": None,
+                "owner_readback_public_key": None,
+                "owner_readback_revision": None,
+                "owner_readback_commitment": None,
+                "owner_readback_at": None,
+                "beneficiary_readback_challenge_hash": None,
+                "beneficiary_readback_challenge_revision": None,
+                "beneficiary_readback_challenge_expires_at": None,
+                "beneficiary_readback_revision": None,
+                "beneficiary_readback_at": None,
             })
             self.value = {"stage_revision": self.db.stage["stage_revision"]}
         elif normalized.startswith("UPDATE INHERITANCE_CREDENTIALS"):
@@ -572,3 +624,178 @@ def test_completed_cooldown_can_release_without_old_credential_retrieval(
     released = upgrade.read_released_linked_v2_package(41, BENEFICIARY)
     assert released["pairing_state"] == "released"
     assert db.link["pairing_state"] == "released"
+
+
+def _registered_readback(ready, monkeypatch):
+    db, proof, _, limiter, _ = _keychecked_release_ready(
+        ready, monkeypatch,
+    )
+    monkeypatch.setenv(upgrade.READBACK_PROOF_FLAG_NAME, "true")
+    private = Ed25519PrivateKey.generate()
+    public = private.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+    )
+    commitment = upgrade._offer_commitment(41, db.stage)
+    register = upgrade.RegisterOwnerReadbackVerifier(
+        beneficiary_link_id=41,
+        stage_revision=1,
+        offer_commitment=commitment,
+        expected_beneficiary_pk_sha256=hashlib.sha256(db.pk).hexdigest(),
+        readback_public_key=_b64(public),
+        zk_proof_token="synthetic-owner-proof",
+    )
+    result = upgrade.register_owner_readback_verifier(register, OWNER)
+    assert result["owner_readback_verifier_registered"] is True
+    assert result["package_decryption_verified"] is False
+    assert db.stage["owner_readback_public_key"] == public
+    return db, proof, limiter, private, register
+
+
+def test_readback_public_key_derivation_matches_client_vector():
+    context = "41:2:" + "A" * 43 + ":synthetic-owner:synthetic-beneficiary"
+    seed = HKDF(
+        algorithm=hashes.SHA256(), length=32,
+        salt=b"svaultai:linked-old-v2-readback-salt:v1",
+        info=("svaultai:linked-old-v2-readback-seed:v1:" + context)
+        .encode("ascii"),
+    ).derive(bytes([27] * 32))
+    public = Ed25519PrivateKey.from_private_bytes(seed).public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+    )
+    assert _b64(public) == "L3zXtTlNHP2GsXNfzt7wKbEWHO-aeX_IRb5UkCx2VQk"
+
+
+def test_readback_proof_off_by_default_and_rejects_raw_key_fields(
+        ready, monkeypatch):
+    db, _ = ready
+    upgrade.stage_linked_v2_package(_payload(), OWNER)
+    commitment = upgrade._offer_commitment(41, db.stage)
+    register = upgrade.RegisterOwnerReadbackVerifier(
+        beneficiary_link_id=41, stage_revision=1,
+        offer_commitment=commitment,
+        expected_beneficiary_pk_sha256=hashlib.sha256(db.pk).hexdigest(),
+        readback_public_key=_b64(b"p" * 32),
+        zk_proof_token="synthetic-proof",
+    )
+    with pytest.raises(HTTPException) as off:
+        upgrade.register_owner_readback_verifier(register, OWNER)
+    assert off.value.status_code == 404
+    with pytest.raises(ValidationError):
+        upgrade.RegisterOwnerReadbackVerifier(**{
+            **register.model_dump(), "owner_mvk": "synthetic-secret",
+        })
+    with pytest.raises(ValidationError):
+        upgrade.CompleteBeneficiaryReadback(
+            beneficiary_link_id=41, stage_revision=1,
+            offer_commitment=commitment,
+            challenge_nonce=_b64(b"n" * 32),
+            signature=_b64(b"s" * 64),
+            zk_proof_token="synthetic-proof", pin="123456",
+        )
+
+
+def test_proof_mode_requires_owner_verifier_before_new_release(
+        ready, monkeypatch):
+    db, _, _, _, _ = _keychecked_release_ready(ready, monkeypatch)
+    monkeypatch.setenv(upgrade.READBACK_PROOF_FLAG_NAME, "true")
+    db.link["pairing_state"] = "approved"
+    db.link["decision_at"] = datetime.now(timezone.utc)
+    db.credential["state"] = "approved"
+    with pytest.raises(HTTPException) as missing:
+        upgrade.read_released_linked_v2_package(41, BENEFICIARY)
+    assert missing.value.status_code == 409
+    assert db.link["pairing_state"] == db.credential["state"] == "approved"
+
+
+def test_registered_offer_commitment_rejects_changed_stage_ciphertext(
+        ready, monkeypatch):
+    db, _, _, _, _ = _registered_readback(ready, monkeypatch)
+    db.stage["encrypted_payload"] = b"different-stage-ciphertext"
+    db.link["pairing_state"] = "approved"
+    db.link["decision_at"] = datetime.now(timezone.utc)
+    db.credential["state"] = "approved"
+    with pytest.raises(HTTPException) as changed:
+        upgrade.read_released_linked_v2_package(41, BENEFICIARY)
+    assert changed.value.status_code == 409
+    assert db.link["pairing_state"] == db.credential["state"] == "approved"
+
+
+def test_readback_receipt_requires_release_and_valid_stage(
+        ready, monkeypatch):
+    db, _, limiter, private, register = _registered_readback(
+        ready, monkeypatch,
+    )
+    old_key = db.link["wrapped_vault_key"]
+    old_ciphertext = db.credential["encrypted_payload"]
+    with pytest.raises(HTTPException) as early:
+        upgrade.issue_beneficiary_readback_challenge(41, BENEFICIARY)
+    assert early.value.status_code == 409
+    assert db.stage["beneficiary_readback_challenge_hash"] is None
+    db.link["pairing_state"] = "approved"
+    db.link["decision_at"] = datetime.now(timezone.utc)
+    db.credential["state"] = "approved"
+    upgrade.read_released_linked_v2_package(41, BENEFICIARY)
+    with pytest.raises(HTTPException) as outsider:
+        upgrade.issue_beneficiary_readback_challenge(41, OWNER)
+    assert outsider.value.status_code == 404
+    challenge = upgrade.issue_beneficiary_readback_challenge(41, BENEFICIARY)
+    assert challenge["readback_public_key"] == register.readback_public_key
+    assert challenge["package_decryption_verified"] is False
+    message = upgrade._readback_message(
+        link_id=41, revision=1,
+        commitment=register.offer_commitment,
+        owner_vault_id=OWNER["vault_id"],
+        beneficiary_vault_id=BENEFICIARY_ID,
+        nonce=challenge["challenge_nonce"],
+    )
+    payload = upgrade.CompleteBeneficiaryReadback(
+        beneficiary_link_id=41, stage_revision=1,
+        offer_commitment=register.offer_commitment,
+        challenge_nonce=challenge["challenge_nonce"],
+        signature=_b64(private.sign(message)),
+        zk_proof_token="synthetic-beneficiary-proof",
+    )
+    receipt = upgrade.complete_beneficiary_readback_proof(payload, BENEFICIARY)
+    assert receipt["package_decryption_verified"] is True
+    assert receipt["legacy_package_preserved"] is True
+    assert db.stage["beneficiary_readback_revision"] == 1
+    assert db.stage["beneficiary_readback_challenge_hash"] is None
+    assert db.link["wrapped_vault_key"] == old_key
+    assert db.credential["encrypted_payload"] == old_ciphertext
+    assert db.link["pairing_state"] == db.credential["state"] == "released"
+    with pytest.raises(HTTPException) as replay:
+        upgrade.complete_beneficiary_readback_proof(payload, BENEFICIARY)
+    assert replay.value.status_code == 409
+    assert limiter.call_count == 2  # Released package, then challenge.
+
+
+def test_readback_proof_rejects_bad_signature_expiry_and_changed_source(
+        ready, monkeypatch):
+    db, proof, _, _, register = _registered_readback(ready, monkeypatch)
+    db.link["pairing_state"] = "approved"
+    db.link["decision_at"] = datetime.now(timezone.utc)
+    db.credential["state"] = "approved"
+    upgrade.read_released_linked_v2_package(41, BENEFICIARY)
+    challenge = upgrade.issue_beneficiary_readback_challenge(41, BENEFICIARY)
+    payload = upgrade.CompleteBeneficiaryReadback(
+        beneficiary_link_id=41, stage_revision=1,
+        offer_commitment=register.offer_commitment,
+        challenge_nonce=challenge["challenge_nonce"],
+        signature=_b64(Ed25519PrivateKey.generate().sign(b"wrong")),
+        zk_proof_token="synthetic-beneficiary-proof",
+    )
+    prior_proofs = proof.call_count
+    with pytest.raises(HTTPException) as invalid:
+        upgrade.complete_beneficiary_readback_proof(payload, BENEFICIARY)
+    assert invalid.value.status_code == 409
+    assert proof.call_count == prior_proofs
+    db.stage["beneficiary_readback_challenge_expires_at"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=1)
+    )
+    with pytest.raises(HTTPException) as expired:
+        upgrade.complete_beneficiary_readback_proof(payload, BENEFICIARY)
+    assert expired.value.status_code == 409
+    db.credential["encrypted_payload"] = b"changed-old-source"
+    with pytest.raises(HTTPException) as changed:
+        upgrade.issue_beneficiary_readback_challenge(41, BENEFICIARY)
+    assert changed.value.status_code == 409
