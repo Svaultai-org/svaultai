@@ -30,6 +30,7 @@ from routes.file_v2_routes import (
 )
 from subscription_entitlement import require_content_write
 from vault_core import MAX_VAULT_BYTES, get_db, is_vault_zk_adopted
+from file_private_conflict_index import inspect_and_reserve_new_file
 from routes.auth_zk_routes import (
     consume_recent_zk_proof,
     consume_recent_zk_proof_on_cursor,
@@ -56,6 +57,12 @@ class PublishNewFile(BaseModel):
         default=None, pattern=r"^[0-9a-f]{64}$",
     )
     zk_proof_token: str | None = Field(default=None, min_length=1, max_length=128)
+    # MVK-keyed tags bind the whole-file digest and effective name(s), scoped
+    # to the encrypted folder path. Optional fields preserve the default-off
+    # gate's 409 response for clients that do not yet supply them.
+    content_token: str | None = Field(default=None, max_length=64)
+    name_tokens: list[str] | None = Field(default=None, max_length=2)
+    duplicate_action: str = Field(default="prompt", max_length=16)
 
 
 class DeleteNewFile(BaseModel):
@@ -87,6 +94,31 @@ def _file_id(value: str) -> str:
     if str(parsed) != value.lower():
         raise HTTPException(400, detail="new_file_id_invalid")
     return value
+
+
+def _blind_token(value: str | None) -> bytes:
+    if value is None or re.fullmatch(r"[A-Za-z0-9_-]{43}", value) is None:
+        raise HTTPException(400, detail="private_file_conflict_token_invalid")
+    try:
+        token = base64.urlsafe_b64decode(value + "=")
+    except (ValueError, binascii.Error):
+        raise HTTPException(400, detail="private_file_conflict_token_invalid") from None
+    if (len(token) != 32 or
+            base64.urlsafe_b64encode(token).decode("ascii").rstrip("=") != value):
+        raise HTTPException(400, detail="private_file_conflict_token_invalid")
+    return token
+
+
+def _publish_conflict_tags(payload: PublishNewFile) -> tuple[bytes, tuple[bytes, ...]]:
+    if payload.duplicate_action not in ("prompt", "skip", "keep_both"):
+        raise HTTPException(400, detail="private_file_duplicate_action_invalid")
+    if payload.name_tokens is None or not 1 <= len(payload.name_tokens) <= 2:
+        raise HTTPException(400, detail="private_file_conflict_token_invalid")
+    content = _blind_token(payload.content_token)
+    names = tuple(_blind_token(token) for token in payload.name_tokens)
+    if len(set(names)) != len(names):
+        raise HTTPException(400, detail="private_file_conflict_token_invalid")
+    return content, names
 
 
 def _validate_framing(record: dict, chunks: list) -> None:
@@ -196,6 +228,7 @@ def publish_new_file(
     vault_id = principal["vault_id"]
     if not is_vault_zk_adopted(vault_id):
         raise HTTPException(409, detail="zk_vault_required")
+    content_token, name_tokens = _publish_conflict_tags(payload)
 
     conn = get_db()
     try:
@@ -274,12 +307,46 @@ def publish_new_file(
                 "limit_bytes": limit,
             })
 
+        conflict = inspect_and_reserve_new_file(
+            cur, vault_id=vault_id, file_id=file_id, file_size=total,
+            content_token=content_token, name_tokens=name_tokens,
+            keep_content_duplicate=payload.duplicate_action == "keep_both",
+        )
+        if conflict.kind == "duplicate":
+            if payload.duplicate_action == "skip":
+                # An unverified stage has no visible file or quota charge.
+                # Drop it with its ciphertext chunks inside this transaction
+                # rather than leaving duplicate uploads to accumulate.
+                cur.execute(
+                    "DELETE FROM file_v2_records WHERE file_id=%s AND vault_id=%s "
+                    "AND lifecycle_state='file_v2_written' "
+                    "AND verification_state='not_verified'",
+                    (file_id, vault_id),
+                )
+                if cur.rowcount != 1:
+                    raise HTTPException(409, detail="file_v2_stage_changed")
+                conn.commit()
+                return {"file_id": file_id, "status": "skipped_duplicate",
+                        "duplicate_of_file_id": conflict.existing_file_id}
+            raise HTTPException(409, detail={
+                "code": "duplicate_found",
+                "existing_file_id": conflict.existing_file_id,
+            })
+        if conflict.kind == "name_conflict":
+            # A client can decrypt its inventory, choose a versioned name,
+            # prepare a fresh encrypted manifest and retry. The stage stays
+            # unverified; no server-generated plaintext name is possible.
+            raise HTTPException(409, detail={
+                "code": "name_conflict",
+                "existing_file_id": conflict.existing_file_id,
+            })
+        if conflict.kind != "available":
+            raise HTTPException(409, detail="private_file_conflict_unknown")
+
         # The release state authorizes the beneficiary to copy the source;
         # publishing a new destination file also requires a fresh proof of
-        # control of this beneficiary vault. Consume it in this transaction so
-        # a failed quota or framing check does not waste the one-use proof.
-        # The already-published retry above is read-only and does not consume
-        # a second proof after a lost response.
+        # control of this beneficiary vault. Consume it only after quota and
+        # conflict checks, in the same transaction as the marker insert.
         if payload.inheritance_link_id is not None:
             consume_recent_zk_proof_on_cursor(
                 payload.zk_proof_token, principal, cur,
@@ -290,9 +357,9 @@ def publish_new_file(
         cur.execute(
             "INSERT INTO uploaded_files "
             "(id,vault_id,file_name,content_type,file_size,encrypted_file_data,"
-            "storage_mode,upload_status) "
-            "VALUES (%s,%s,NULL,NULL,%s,NULL,'inline','complete')",
-            (file_id, vault_id, total),
+            "storage_mode,upload_status,duplicate_of_file_id) "
+            "VALUES (%s,%s,NULL,NULL,%s,NULL,'inline','complete',%s)",
+            (file_id, vault_id, total, conflict.existing_file_id),
         )
         cur.execute(
             "UPDATE file_v2_records SET lifecycle_state='client_v2_ready', "

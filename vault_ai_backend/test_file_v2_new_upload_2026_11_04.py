@@ -13,6 +13,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from file_private_conflict_index import FileConflict
 from routes import file_v2_new_upload_routes as route
 from routes import file_v2_routes as staging
 
@@ -69,8 +70,9 @@ class _Cursor:
             self.result = {"used": self.db.vault_bytes}
             return
         if statement.startswith("insert into uploaded_files"):
-            file_id, vault_id, size = params
+            file_id, vault_id, size, duplicate_of = params
             assert file_id == FILE and vault_id == self.db.owner
+            assert duplicate_of is None
             if self.db.marker is not None:
                 raise AssertionError("duplicate marker insert")
             self.db.marker = {"file_size": size, "has_legacy": False,
@@ -180,6 +182,10 @@ def harness(monkeypatch):
     monkeypatch.setattr(route, "require_content_write", mock.Mock())
     monkeypatch.setattr(route, "is_vault_zk_adopted", lambda _: True)
     monkeypatch.setattr(route, "_account_quota", lambda *_: (1000, db.account_bytes))
+    monkeypatch.setattr(route, "_publish_conflict_tags",
+                        lambda *_: (b"c" * 32, (b"n" * 32,)))
+    monkeypatch.setattr(route, "inspect_and_reserve_new_file",
+                        lambda *_args, **_kwargs: FileConflict("available"))
     monkeypatch.setattr(route, "consume_recent_zk_proof", proof)
     return db, proof
 

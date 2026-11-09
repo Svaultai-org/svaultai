@@ -1,10 +1,10 @@
-"""Inactive foundation for atomic MVK-blinded file conflict decisions.
+"""Default-off foundation for atomic MVK-blinded file conflict decisions.
 
 An unlocked client must derive 32-byte, vault-keyed tokens for whole-file
 content and for each effective (relative path, filename/saved name) pair.
 This module never receives readable names, content, PINs, or the vault key.
 The caller must keep the same transaction open through the V2 marker INSERT.
-No HTTP route calls this module yet; the new-file release gate stays closed.
+The new-file release gate stays closed until client and old-file parity exist.
 """
 
 from __future__ import annotations
@@ -127,6 +127,7 @@ def mark_index_complete(cur, *, vault_id: str) -> int:
 def inspect_and_reserve_new_file(
     cur, *, vault_id: str, file_id: str, file_size: int,
     content_token: bytes, name_tokens: tuple[bytes, ...],
+    keep_content_duplicate: bool = False,
 ) -> FileConflict:
     """Make the conflict decision while holding the state row to commit.
 
@@ -144,15 +145,22 @@ def inspect_and_reserve_new_file(
         "SELECT ci.file_id FROM file_private_conflict_index ci "
         "JOIN uploaded_files uf ON uf.vault_id=ci.vault_id AND uf.id=ci.file_id "
         "WHERE ci.vault_id=%s AND ci.content_token=%s AND ci.file_size=%s "
-        "AND uf.upload_status='complete' ORDER BY uf.created_at LIMIT 1",
+        "AND uf.upload_status='complete' "
+        "ORDER BY (uf.duplicate_of_file_id IS NOT NULL), uf.created_at, uf.id "
+        "LIMIT 1",
         (vault_id, content_token, file_size),
     )
     row = cur.fetchone()
-    if row is not None:
+    duplicate_id = row["file_id"] if row is not None else None
+    if duplicate_id is not None and not keep_content_duplicate:
         return FileConflict("duplicate", row["file_id"])
+    # The older keep-both path versions the name server-side. The private
+    # server cannot read the name, so even a kept duplicate must arrive with
+    # a nonconflicting client-selected name before it can be published.
     cur.execute(
         "SELECT cn.file_id FROM file_private_conflict_names cn "
-        "JOIN uploaded_files uf ON uf.vault_id=cn.vault_id AND uf.id=cn.file_id "
+        "JOIN uploaded_files uf ON uf.vault_id=cn.vault_id "
+        "AND uf.id=cn.file_id "
         "WHERE cn.vault_id=%s AND cn.name_token=ANY(%s) "
         "AND uf.upload_status='complete' ORDER BY uf.created_at LIMIT 1",
         (vault_id, list(names)),
@@ -171,4 +179,4 @@ def inspect_and_reserve_new_file(
             "(vault_id,file_id,name_token) VALUES (%s,%s,%s)",
             (vault_id, file_id, token),
         )
-    return FileConflict("available")
+    return FileConflict("available", duplicate_id)
