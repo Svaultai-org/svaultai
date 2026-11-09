@@ -12998,8 +12998,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<void> _beneficiaryImportLinkedOldItems({
     required int linkId,
     required String passerLabel,
+    required String pairingState,
   }) async {
-    if (!kEnableLinkedOldInheritanceBeneficiaryUi) return;
+    if (!kEnableLinkedOldInheritanceBeneficiaryUi ||
+        pairingState != 'released') return;
     final app = context.read<AppState>();
     final token = app.sessionToken;
     final vaultId = app.vaultId;
@@ -14298,7 +14300,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                       label: const Text('Check private key'),
                                     ),
                                   if (kEnableLinkedOldInheritanceBeneficiaryUi &&
-                                      !isZkV2 && credentialsSaved && showReveal &&
+                                      !isZkV2 && credentialsSaved &&
+                                      pairingState == 'released' &&
                                       _privateBeneficiarySession(
                                           app, app.sessionToken ?? ''))
                                     FilledButton.icon(
@@ -14307,6 +14310,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                           _beneficiaryImportLinkedOldItems(
                                         linkId: id,
                                         passerLabel: label,
+                                        pairingState: pairingState,
                                       ),
                                       icon: const Icon(Icons.copy_outlined,
                                           size: 18),
