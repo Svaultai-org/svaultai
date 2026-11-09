@@ -342,6 +342,48 @@ void main() {
     expect(requested, ['/vault/file-v2']);
   });
 
+  test('related files compare older document names without a PIN request',
+      () async {
+    final requested = <String>[];
+    final envelope = await loadZkLocalRelatedFilesEnvelope(
+      fileId: 'older-passport-front',
+      mvk: _mvk,
+      accessIsCurrent: () => true,
+      get: (path) async {
+        requested.add(path);
+        expect(path, '/vault/file-v2');
+        return <String, dynamic>{'files': <Map<String, dynamic>>[]};
+      },
+      legacyFileInventory: () async => <String, dynamic>{
+        'files': <Map<String, dynamic>>[
+          {
+            'id': 'older-passport-front',
+            'saved_name': 'Passport front page.pdf',
+            'file_name': 'scan-front.pdf',
+            'content_type': 'application/pdf',
+            'storage_mode': 'inline',
+            'upload_status': 'complete',
+          },
+          {
+            'id': 'older-passport-back',
+            'saved_name': 'Passport back page.pdf',
+            'file_name': 'scan-back.pdf',
+            'content_type': 'application/pdf',
+            'storage_mode': 'inline',
+            'upload_status': 'complete',
+          },
+        ],
+      },
+    );
+    final relationships = envelope['relationships'] as List;
+    expect(relationships, hasLength(1));
+    final file = relationships.single['file'] as Map;
+    expect(file['file_id'], 'older-passport-back');
+    expect(file.containsKey('zk_private_chat_v2'), isFalse);
+    expect(envelope['is_complete'], true);
+    expect(requested, ['/vault/file-v2']);
+  });
+
   test('encrypted media index and chat follow-ups stay on device', () async {
     final fixture = await _fixture();
     final manifests = fixture['files'] as Map<String, Map<String, dynamic>>;

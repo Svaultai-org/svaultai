@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/services/session_termination.dart';
+import 'package:vault_ai_frontend/services/private_content_pin_guard.dart';
 import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart';
 import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
 import 'package:vault_ai_frontend/services/zk_pin_free_file_session.dart';
@@ -13,6 +14,10 @@ import 'package:vault_ai_frontend/services/zk_pin_free_file_session.dart';
 void main() {
   String signedListToken() => base64Url
       .encode(<int>[3, 2, ...List<int>.filled(48, 7)])
+      .replaceAll('=', '');
+
+  String signedListAndDownloadToken() => base64Url
+      .encode(<int>[3, 6, ...List<int>.filled(48, 7)])
       .replaceAll('=', '');
 
   setUp(() {
@@ -25,6 +30,28 @@ void main() {
     ZkPinFreeFileSession.instance.clear();
     ZkActiveMvk.clear();
     SessionTermination.instance.resetForTests();
+  });
+
+  test('signed file offers reject old related request before HTTP', () async {
+    final token = signedListAndDownloadToken();
+    SessionTermination.instance.bindSession(token);
+    final sent = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        sent.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+    await expectLater(
+      client.fetchRelatedFiles(
+        fileId: 'older-file',
+        pin: 'synthetic-raw-pin',
+        authToken: token,
+      ),
+      throwsA(isA<PrivateContentSearchUnavailable>()),
+    );
+    expect(sent, isEmpty);
   });
 
   test(

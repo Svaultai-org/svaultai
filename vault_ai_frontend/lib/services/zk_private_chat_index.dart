@@ -55,6 +55,7 @@ class ZkPrivateChatIndexLoader {
   final bool indexTextContent;
   final bool indexPhotoColors;
   final bool indexPhotoDescriptions;
+  final bool includeLegacyDocumentsForRelations;
   final int fileLimit;
   final int textFileLimit;
   final int textFileByteLimit;
@@ -78,6 +79,7 @@ class ZkPrivateChatIndexLoader {
     this.indexTextContent = true,
     this.indexPhotoColors = false,
     this.indexPhotoDescriptions = false,
+    this.includeLegacyDocumentsForRelations = false,
     this.fileLimit = maxFiles,
     this.textFileLimit = maxTextFiles,
     this.textFileByteLimit = maxTextFileBytes,
@@ -472,7 +474,8 @@ class ZkPrivateChatIndexLoader {
           continue;
         }
         final kind = _mediaKind(mime as String?, name);
-        if (kind != ZkLocalMediaKind.photo &&
+        if (!includeLegacyDocumentsForRelations &&
+            kind != ZkLocalMediaKind.photo &&
             kind != ZkLocalMediaKind.video &&
             kind != ZkLocalMediaKind.audio) {
           continue;
@@ -651,19 +654,23 @@ class ZkPrivateChatIndexLoader {
   }
 }
 
-/// Suggest V2 files by decrypting their names only on the current device.
+/// Suggest verified V2 files and, when offered, older files by comparing
+/// their saved names only on the current device.
 /// No PIN, query, MVK, filename, or decrypted content is sent to the server.
 Future<Map<String, dynamic>> loadZkLocalRelatedFilesEnvelope({
   required String fileId,
   required SecretKey mvk,
   required ZkPrivateChatGet get,
   required bool Function() accessIsCurrent,
+  ZkPrivateLegacyFileInventory? legacyFileInventory,
 }) async {
   if (fileId.trim().isEmpty) throw ArgumentError('Missing file ID');
   final index = await ZkPrivateChatIndexLoader(
     mvk: mvk,
     get: get,
     accessIsCurrent: accessIsCurrent,
+    legacyFileInventory: legacyFileInventory,
+    includeLegacyDocumentsForRelations: true,
     includeSavedItems: false,
     indexTextContent: false,
   ).load();

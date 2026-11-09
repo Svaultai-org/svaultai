@@ -7563,6 +7563,10 @@ class VaultAIClient {
   }) async {
     if (kPrivateOnlyTransportRejectPin ||
         signedPrivateChatOfferedForToken(authToken) ||
+        signedFileListOfferedForToken(authToken) ||
+        signedFileDownloadOfferedForToken(authToken) ||
+        ZkPinFreeFileSession.instance.listOfferedForToken(authToken) ||
+        ZkPinFreeFileSession.instance.downloadOfferedForToken(authToken) ||
         private_content_guard.blocksZkRelatedFilesPinRoute(
         vaultHandle: vaultHandle)) {
       throw const private_content_guard.PrivateContentSearchUnavailable(

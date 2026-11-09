@@ -534,7 +534,7 @@ class ZkLocalFileRelations {
               'file_id': file.id,
               'file_name': file.title,
               'mime_type': file.mimeType ?? '',
-              'zk_private_chat_v2': true,
+              if (!file.legacyProofRequired) 'zk_private_chat_v2': true,
             },
             'relationship_type': 'similar_saved_name',
             'confidence_label': 'weak',

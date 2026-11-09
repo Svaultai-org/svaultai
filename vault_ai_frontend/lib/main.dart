@@ -18588,12 +18588,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (token == null || app.vaultId == null) {
       throw Exception('Session expired.');
     }
+    final fileListOffered = signedFileListOfferedForToken(token) ||
+        ZkPinFreeFileSession.instance.listOfferedForToken(token);
+    final fileDownloadOffered = signedFileDownloadOfferedForToken(token) ||
+        ZkPinFreeFileSession.instance.downloadOfferedForToken(token);
     if (private_content_guard.blocksZkRelatedFilesPinRoute(
             vaultHandle: app.vaultHandle) ||
-        signedPrivateChatOfferedForToken(token)) {
+        signedPrivateChatOfferedForToken(token) ||
+        fileListOffered || fileDownloadOffered) {
       if (!kEnableZkPrivateChat &&
           !private_content_guard.kEnableZkLocalRelatedFiles &&
-          !signedPrivateChatOfferedForToken(token)) {
+          !signedPrivateChatOfferedForToken(token) &&
+          !(fileListOffered && fileDownloadOffered)) {
         throw const private_content_guard.PrivateContentSearchUnavailable(
           private_content_guard.relatedFilesPrivateMessage,
         );
@@ -18619,6 +18625,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         fileId: fileId,
         mvk: mvk!,
         accessIsCurrent: currentAccess,
+        legacyFileInventory: fileListOffered && fileDownloadOffered
+            ? () => client.listZkFileMetadata(
+                  authToken: token,
+                  requireLegacyComplete: true,
+                  maxPages: 5,
+                )
+            : null,
         get: (path) => client.zkPrivateChatCiphertextGet(
           authToken: token,
           path: path,
