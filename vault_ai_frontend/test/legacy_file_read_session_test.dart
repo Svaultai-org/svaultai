@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -93,8 +94,18 @@ void main() {
         isTrue);
     expect(proofCount, 1);
     expect(pageCount, 12);
+    Uint8List? rejectedBytes;
+    await expectLater(
+      reader.readFileWith('file-0', (opened) async {
+        rejectedBytes = opened.bytes;
+        throw const FormatException('Source metadata changed');
+      }),
+      throwsFormatException,
+    );
+    expect(rejectedBytes, isNotNull);
+    expect(rejectedBytes, everyElement(0));
     reader.close();
     await expectLater(reader.readFile('file-0'), throwsStateError);
-    expect(pageCount, 12);
+    expect(pageCount, 13);
   });
 }

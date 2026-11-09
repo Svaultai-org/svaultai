@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +9,7 @@ import 'package:vault_ai_frontend/services/private_content_pin_guard.dart';
 import 'package:vault_ai_frontend/services/zk_private_chat.dart';
 import 'package:vault_ai_frontend/services/zk_private_chat_flow.dart';
 import 'package:vault_ai_frontend/services/zk_private_chat_index.dart';
+import 'package:vault_ai_frontend/services/zk_private_credential_scan.dart';
 
 final SecretKey _mvk = SecretKey(List<int>.filled(32, 37));
 
@@ -1293,5 +1295,43 @@ void main() {
     );
     expect(result.disposition, ZkLocalChatDisposition.needsPrivateIndex);
     expect(result.maySendToGeneralAi, isFalse);
+  });
+
+  test('proof-only older text is searched locally and its bytes are cleared',
+      () async {
+    final bytes = Uint8List.fromList(utf8.encode('Recovery codes for my login'));
+    final opened = <String>[];
+    final index = await ZkPrivateChatIndexLoader(
+      mvk: _mvk,
+      includeSavedItems: false,
+      includeLegacyDocumentsForRelations: true,
+      accessIsCurrent: () => true,
+      get: (path) async {
+        expect(path, '/vault/file-v2');
+        return <String, dynamic>{'files': <Map<String, dynamic>>[]};
+      },
+      legacyFileInventory: () async => <String, dynamic>{
+        'files': <Map<String, dynamic>>[
+          {
+            'id': 'old-note',
+            'saved_name': 'quiet-notes.txt',
+            'file_name': 'quiet-notes.txt',
+            'content_type': 'text/plain',
+            'storage_mode': 'inline',
+            'upload_status': 'complete',
+            'file_size': bytes.length,
+          },
+        ],
+      },
+      legacyFileTextReader: (row) async {
+        opened.add(row['id'] as String);
+        return bytes;
+      },
+    ).load();
+    final result = ZkPrivateCredentialScan.scan(index);
+    expect(opened, ['old-note']);
+    expect(result.matches.single.id, 'old-note');
+    expect(result.textFilesChecked, 1);
+    expect(bytes.every((value) => value == 0), isTrue);
   });
 }

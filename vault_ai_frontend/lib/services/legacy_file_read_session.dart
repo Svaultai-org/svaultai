@@ -42,6 +42,7 @@ final class LegacyFileReadSession {
     final release = Completer<void>();
     _tail = release.future;
     await previous;
+    Uint8List? decodedBytes;
     try {
       _requireCurrent();
       final records = _records ??= await _export.listFiles();
@@ -71,6 +72,7 @@ final class LegacyFileReadSession {
         throw const FormatException('Older file changed during download');
       }
       final bytes = await _codec.decodeLegacyFileBytes(source.ciphertext);
+      decodedBytes = bytes;
       _requireCurrent();
       if (bytes.length != declaredSize) {
         throw const FormatException('Older file size did not match');
@@ -81,6 +83,9 @@ final class LegacyFileReadSession {
       _requireCurrent();
       return inspected;
     } catch (_) {
+      if (decodedBytes != null) {
+        decodedBytes.fillRange(0, decodedBytes.length, 0);
+      }
       // A response could have committed despite a dropped connection. Never
       // retry its page number or cached inventory under the same grant.
       invalidate();

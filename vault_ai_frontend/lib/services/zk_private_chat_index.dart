@@ -7,6 +7,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
@@ -19,6 +20,9 @@ import 'zk_local_photo_description.dart';
 
 typedef ZkPrivateChatGet = Future<Object?> Function(String path);
 typedef ZkPrivateLegacyFileInventory = Future<Map<String, dynamic>> Function();
+typedef ZkPrivateLegacyTextRead = Future<Uint8List> Function(
+  Map<String, dynamic> listed,
+);
 typedef ZkPrivateLegacyItemInventory = Future<List<Map<String, dynamic>>>
     Function();
 
@@ -71,6 +75,13 @@ class ZkPrivateChatIndexLoader {
   /// when this bearer can open older files through the proof-only reader.
   final ZkPrivateLegacyFileInventory? legacyFileInventory;
 
+  /// An owner-approved, proof-only reader for small older text files. It must
+  /// compare the opened source with [listed] and must never send a raw PIN.
+  /// The returned bytes are cleared immediately after decoding. An absent
+  /// reader keeps the existing filename-only behavior.
+  final ZkPrivateLegacyTextRead? legacyFileTextReader;
+  final int legacyTextFileLimit;
+
   /// Trusted-session metadata only. Older item values are never requested or
   /// indexed; a title match cannot claim to answer about the item's contents.
   final ZkPrivateLegacyItemInventory? legacyItemInventory;
@@ -92,6 +103,8 @@ class ZkPrivateChatIndexLoader {
     this.totalTextByteLimit = maxTotalTextBytes,
     this.allowPartialFileListing = false,
     this.legacyFileInventory,
+    this.legacyFileTextReader,
+    this.legacyTextFileLimit = 4,
     this.legacyItemInventory,
   });
 
@@ -252,6 +265,7 @@ class ZkPrivateChatIndexLoader {
     }
     final fileRows = listing['files'] as List;
     if (fileLimit < 1 ||
+        legacyTextFileLimit < 0 ||
         textFileLimit < 0 ||
         textFileByteLimit < 0 ||
         extractedTextByteLimit < 0 ||
@@ -282,6 +296,7 @@ class ZkPrivateChatIndexLoader {
     var textFiles = 0;
     var textBytes = 0;
     var contentIndexedFiles = 0;
+    var legacyTextFiles = 0;
     var inspectedPhotos = 0;
     var inspectedPhotoBytes = 0;
     var mediaScanIncomplete = false;
@@ -490,11 +505,54 @@ class ZkPrivateChatIndexLoader {
           incomplete = true;
           break;
         }
+        var olderText = '';
+        final declaredSize = raw['file_size'];
+        final canReadOlderText = indexTextContent &&
+            legacyFileTextReader != null &&
+            _isTextFile(mime, name) &&
+            mode == 'inline' &&
+            declaredSize is int &&
+            declaredSize >= 0 &&
+            declaredSize <= textFileByteLimit;
+        if (canReadOlderText) {
+          if (legacyTextFiles >= legacyTextFileLimit ||
+              textFiles >= textFileLimit ||
+              textBytes + declaredSize > totalTextByteLimit) {
+            incomplete = true;
+          } else {
+            Uint8List? opened;
+            try {
+              _checkAccess();
+              opened = await legacyFileTextReader!(raw);
+              _checkAccess();
+              if (opened.length != declaredSize ||
+                  opened.length > textFileByteLimit ||
+                  textBytes + opened.length > totalTextByteLimit) {
+                throw const FormatException('Older text file changed');
+              }
+              olderText = utf8.decode(opened);
+              legacyTextFiles++;
+              textFiles++;
+              textBytes += opened.length;
+              contentIndexedFiles++;
+            } catch (_) {
+              _checkAccess();
+              incomplete = true;
+            } finally {
+              if (opened != null) opened.fillRange(0, opened.length, 0);
+            }
+          }
+        } else if (indexTextContent &&
+            legacyFileTextReader != null &&
+            _isTextFile(mime, name)) {
+          incomplete = true;
+        }
         files.add(
           ZkLocalChatRecord(
             kind: ZkLocalChatKind.file,
             id: id,
             title: name,
+            searchText: olderText,
             mimeType: mime,
             mediaKind: kind,
             legacyProofRequired: true,
@@ -537,8 +595,7 @@ class ZkPrivateChatIndexLoader {
       }
       final at = positions.single;
       final media = files[at];
-      if (media.mediaKind == ZkLocalMediaKind.audio &&
-          !indexAudioTranscripts) {
+      if (media.mediaKind == ZkLocalMediaKind.audio && !indexAudioTranscripts) {
         continue;
       }
       final caption = entry.value.single;

@@ -19427,6 +19427,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     final vaultId = app.vaultId;
+    final vaultHandle = app.vaultHandle;
     final epoch = app._sessionEpoch;
     final foregroundEpoch = app._sessionProbeEpoch;
     final termination = st.SessionTermination.instance.generation;
@@ -19435,6 +19436,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         app.unlocked &&
         app.sessionToken == token &&
         app.vaultId == vaultId &&
+        app.vaultHandle == vaultHandle &&
         app._sessionEpoch == epoch &&
         app._sessionProbeEpoch == foregroundEpoch &&
         app._sessionForeground &&
@@ -19460,32 +19462,119 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   ZkPinFreeFileSession.instance.listOfferedForToken(token)) &&
               (signedFileDownloadOfferedForToken(token) ||
                   ZkPinFreeFileSession.instance.downloadOfferedForToken(token));
-      final index = await zk_chat_index.ZkPrivateChatIndexLoader(
-        mvk: mvk!,
-        accessIsCurrent: currentAccess,
-        includeSavedItems: false,
-        includeLegacyDocumentsForRelations: legacyFileInventory,
-        fileLimit: 500,
-        textFileLimit: 128,
-        textFileByteLimit: 256 * 1024,
-        extractedTextByteLimit: 256 * 1024,
-        totalTextByteLimit: 4 * 1024 * 1024,
-        allowPartialFileListing: true,
-        legacyFileInventory: legacyFileInventory
-            ? () => client.listZkFileMetadata(
-                  authToken: token,
-                  requireLegacyComplete: true,
-                  maxPages: 5,
-                )
-            : null,
-        get: (path) => client.zkPrivateChatCiphertextGet(
-          authToken: token,
-          path: path,
-          accessGuard: () {
-            if (!currentAccess()) throw StateError('Vault access changed');
-          },
-        ),
-      ).load();
+      ephemeral_file.EphemeralLegacyFileAction? olderTextAction;
+      legacy_file_read.LegacyFileReadSession? olderTextReader;
+      var olderTextUnavailable = false;
+      Future<Uint8List> readOlderText(Map<String, dynamic> listed) async {
+        if (olderTextUnavailable || !currentAccess() ||
+            !legacyFileInventory || vaultId == null || mvk == null) {
+          throw StateError('Private text scan access changed');
+        }
+        final fileId = listed['id'];
+        if (fileId is! String || fileId.isEmpty ||
+            listed['storage_mode'] != 'inline') {
+          throw const FormatException('Older text file is unavailable');
+        }
+        if (olderTextReader == null) {
+          final action = ephemeral_file.EphemeralLegacyFileAction(
+            promptPin: () => _promptForActionPin(
+              context, 'Verify private text scan',
+            ),
+            verifyPin: (pin) {
+              if (!currentAccess()) throw StateError('Vault session changed');
+              return _zkActionProof(app, token, pin);
+            },
+            deriveKey: (pin) => _ephemeralLegacyContentKey(
+              app: app, token: token, vaultId: vaultId, pin: pin,
+              accessIsCurrent: currentAccess,
+            ),
+            accessIsCurrent: currentAccess,
+          );
+          olderTextAction = action;
+          try {
+            final key = await action.open();
+            if (!currentAccess()) throw StateError('Vault session changed');
+            Future<Map<String, dynamic>> post(
+                String path, Map<String, dynamic> body) async {
+              if (path != '/vault/legacy-ciphertext/export/start' &&
+                  path != '/vault/legacy-ciphertext/export/page') {
+                throw StateError('Unsupported private text scan route');
+              }
+              if (!currentAccess()) throw StateError('Vault session changed');
+              final result = await _zkHttpPost(path, body, bearerToken: token);
+              if (!currentAccess()) throw StateError('Vault session changed');
+              return result;
+            }
+            olderTextReader = legacy_file_read.LegacyFileReadSession(
+              export: legacy_export.LegacyCiphertextExportClient(
+                post: post, proofProvider: action.proof,
+              ),
+              codec: legacy_codec.LegacyCiphertextMigrationCodec(
+                legacyKey: key, mvk: mvk,
+              ),
+              isCurrent: currentAccess,
+            );
+          } catch (_) {
+            olderTextUnavailable = true;
+            action.close();
+            rethrow;
+          }
+        }
+        late final ({Uint8List bytes, Map<String, dynamic> sourceMetadata}) opened;
+        try {
+          opened = await olderTextReader!.readFileWith(
+            fileId,
+            (opened) async {
+              requireUnchangedLegacyFileMetadata(
+                listed, opened.sourceMetadata, sourceIsExport: true,
+              );
+              return opened;
+            },
+          );
+        } catch (_) {
+          olderTextUnavailable = true;
+          rethrow;
+        }
+        if (!currentAccess()) {
+          opened.bytes.fillRange(0, opened.bytes.length, 0);
+          throw StateError('Vault session changed');
+        }
+        return opened.bytes;
+      }
+      late final zk_chat_index.ZkPrivateChatIndex index;
+      try {
+        index = await zk_chat_index.ZkPrivateChatIndexLoader(
+          mvk: mvk!,
+          accessIsCurrent: currentAccess,
+          includeSavedItems: false,
+          includeLegacyDocumentsForRelations: legacyFileInventory,
+          fileLimit: 500,
+          textFileLimit: 128,
+          textFileByteLimit: 256 * 1024,
+          extractedTextByteLimit: 256 * 1024,
+          totalTextByteLimit: 4 * 1024 * 1024,
+          allowPartialFileListing: true,
+          legacyFileInventory: legacyFileInventory
+              ? () => client.listZkFileMetadata(
+                    authToken: token,
+                    requireLegacyComplete: true,
+                    maxPages: 5,
+                  )
+              : null,
+          legacyFileTextReader: legacyFileInventory ? readOlderText : null,
+          legacyTextFileLimit: 4,
+          get: (path) => client.zkPrivateChatCiphertextGet(
+            authToken: token,
+            path: path,
+            accessGuard: () {
+              if (!currentAccess()) throw StateError('Vault access changed');
+            },
+          ),
+        ).load();
+      } finally {
+        olderTextReader?.close();
+        olderTextAction?.close();
+      }
       if (!currentAccess()) return;
       final scan = zk_credential_scan.ZkPrivateCredentialScan.scan(index);
       setState(() {
