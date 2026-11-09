@@ -782,6 +782,11 @@ class AiMemoryCiphertextRequest(BaseModel):
     )
     payload_ciphertext: str = Field(..., min_length=1)
     replace_existing: bool = False
+    # Decimal text avoids precision loss in browser JSON numbers. An active
+    # client obtains this around its complete, paginated private inventory.
+    expected_memory_generation: Optional[str] = Field(
+        default=None, pattern=r"^(0|[1-9][0-9]{0,18})$",
+    )
     # Legacy plaintext guardrail.
     memory_key: Optional[str] = None
     memory_value: Optional[str] = None
@@ -806,6 +811,53 @@ class AiMemoryCiphertextReadResponse(BaseModel):
     memory_type: str
     payload_ciphertext: str
     memory_lookup_hash: str
+
+
+def _verify_memory_inventory_generation(
+    cur, vault_id: str, expected: Optional[str], *, own_advances: int,
+    signed_memory: bool,
+) -> None:
+    """Fence a V2 write after its row trigger, before transaction commit.
+
+    Both the V2 write and every older Memory/copy writer lock the vault's
+    generation row through the database trigger. Checking after the mutation
+    keeps the lock order consistent with older writers and makes a stale
+    inventory a rolled-back 409 rather than a persisted duplicate title.
+    """
+    active_copies = (
+        os.getenv("VAULTAI_ZK_LEGACY_MEMORY_ACTIVE_ENABLED", "false")
+        .strip().lower() == "true"
+    )
+    if expected is None and not (active_copies and signed_memory):
+        return
+    cur.execute(
+        "SELECT memory_inventory_generation FROM vaults "
+        "WHERE vault_id=%s FOR UPDATE",
+        (vault_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="vault_not_found")
+    if expected is not None:
+        if int(row["memory_inventory_generation"]) != int(expected) + own_advances:
+            raise HTTPException(status_code=409, detail="memory_inventory_changed")
+        return
+    # A previously signed native-only client can still write a native-only
+    # vault. If an older row now exists, it cannot safely check that title.
+    cur.execute(
+        """SELECT 1 FROM vault_ai_memory WHERE vault_id=%s
+             AND superseded_at IS NULL
+             AND (payload_ciphertext IS NULL
+               OR OCTET_LENGTH(payload_ciphertext) < 29
+               OR GET_BYTE(payload_ciphertext,0) <> 1
+               OR memory_record_id IS NULL)
+             LIMIT 1""",
+        (vault_id,),
+    )
+    if cur.fetchone() is not None:
+        raise HTTPException(
+            status_code=409, detail="memory_inventory_generation_required",
+        )
 
 
 @router.post(
@@ -863,6 +915,15 @@ def ai_memory_ciphertext_upsert(
                 # The vault-scoped keyed record id represents the same
                 # normalized fact and value. Do not rewrite its ciphertext or
                 # pretend that an identical retry created another memory.
+                _verify_memory_inventory_generation(
+                    cur, principal["vault_id"],
+                    payload.expected_memory_generation,
+                    own_advances=0,
+                    signed_memory=bool(
+                        principal.get("pin_free_read_offers", 0)
+                        & PIN_FREE_MEMORY_OFFER
+                    ),
+                )
                 return AiMemoryCiphertextResponse(
                     memory_id=str(prev["id"]),
                     superseded_id=int(prev["id"]),
@@ -924,6 +985,15 @@ def ai_memory_ciphertext_upsert(
                     )
                     winner = cur.fetchone()
                     if winner is not None and str(winner["memory_record_id"]) == payload.memory_id:
+                        _verify_memory_inventory_generation(
+                            cur, principal["vault_id"],
+                            payload.expected_memory_generation,
+                            own_advances=0,
+                            signed_memory=bool(
+                                principal.get("pin_free_read_offers", 0)
+                                & PIN_FREE_MEMORY_OFFER
+                            ),
+                        )
                         return AiMemoryCiphertextResponse(
                             memory_id=str(winner["id"]),
                             superseded_id=int(winner["id"]),
@@ -933,6 +1003,15 @@ def ai_memory_ciphertext_upsert(
                 new_id = int(inserted["id"])
             if prev is not None:
                 superseded_id = int(prev["id"])
+            _verify_memory_inventory_generation(
+                cur, principal["vault_id"],
+                payload.expected_memory_generation,
+                own_advances=1,
+                signed_memory=bool(
+                    principal.get("pin_free_read_offers", 0)
+                    & PIN_FREE_MEMORY_OFFER
+                ),
+            )
             conn.commit()
         finally:
             conn.close()

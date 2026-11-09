@@ -33,6 +33,9 @@ void main() {
       httpClient: MockClient((request) async {
         paths.add('${request.method} ${request.url.path}');
         expect(request.method, 'GET');
+        if (request.url.path == '/vault/memory/legacy-copy/generation') {
+          return http.Response('{"generation":"42"}', 200);
+        }
         if (request.url.path == '/vault/ciphertext/vault-ai-memory') {
           return http.Response('[]', 200);
         }
@@ -66,10 +69,14 @@ void main() {
       throwsA(isA<MemoryInventoryIncompleteException>()),
     );
     expect(paths, [
+      'GET /vault/memory/legacy-copy/generation',
       'GET /vault/ciphertext/vault-ai-memory',
       'GET /vault/memory/legacy-copy/list',
+      'GET /vault/memory/legacy-copy/generation',
+      'GET /vault/memory/legacy-copy/generation',
       'GET /vault/ciphertext/vault-ai-memory',
       'GET /vault/memory/legacy-copy/list',
+      'GET /vault/memory/legacy-copy/generation',
     ]);
   }, skip: !kEnableLegacyMemoryV2ActiveRead);
 
@@ -82,7 +89,11 @@ void main() {
         methods.add(request.method);
         if (request.method == 'POST') {
           expect(request.url.path, '/vault/ciphertext/vault-ai-memory');
+          expect(jsonDecode(request.body)['expected_memory_generation'], '42');
           return http.Response('{"memory_id":"synthetic"}', 200);
+        }
+        if (request.url.path == '/vault/memory/legacy-copy/generation') {
+          return http.Response('{"generation":"42"}', 200);
         }
         if (request.url.path == '/vault/ciphertext/vault-ai-memory') {
           return http.Response('[]', 200);
@@ -103,6 +114,69 @@ void main() {
       authToken: token,
       data: {'title': 'New synthetic memory', 'value': 'Synthetic only'},
     );
-    expect(methods, ['GET', 'GET', 'POST']);
+    expect(methods, ['GET', 'GET', 'GET', 'GET', 'POST']);
+  }, skip: !kEnableLegacyMemoryV2ActiveRead);
+
+  test('changed generation during a paginated read blocks a write', () async {
+    var generationReads = 0;
+    final methods = <String>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.invalid',
+      httpClient: MockClient((request) async {
+        methods.add(request.method);
+        expect(request.method, 'GET');
+        if (request.url.path == '/vault/memory/legacy-copy/generation') {
+          generationReads++;
+          return http.Response(
+            '{"generation":"${generationReads == 1 ? 42 : 43}"}', 200);
+        }
+        if (request.url.path == '/vault/ciphertext/vault-ai-memory') {
+          return http.Response('[]', 200);
+        }
+        return http.Response(jsonEncode({
+          'copies': [], 'unavailable_count': 0,
+          'has_more': false, 'next_after_memory_id': 0,
+        }), 200);
+      }),
+    );
+
+    await expectLater(
+      client.upsertZkMemory(
+        authToken: token,
+        data: {'title': 'New synthetic memory', 'value': 'Synthetic only'},
+      ),
+      throwsA(isA<MemoryInventoryIncompleteException>()),
+    );
+    expect(methods, ['GET', 'GET', 'GET', 'GET']);
+  }, skip: !kEnableLegacyMemoryV2ActiveRead);
+
+  test('server generation rejection is not shown as a duplicate title',
+      () async {
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.invalid',
+      httpClient: MockClient((request) async {
+        if (request.method == 'POST') {
+          return http.Response(
+            '{"detail":"memory_inventory_changed"}', 409);
+        }
+        if (request.url.path == '/vault/memory/legacy-copy/generation') {
+          return http.Response('{"generation":"42"}', 200);
+        }
+        if (request.url.path == '/vault/ciphertext/vault-ai-memory') {
+          return http.Response('[]', 200);
+        }
+        return http.Response(jsonEncode({
+          'copies': [], 'unavailable_count': 0,
+          'has_more': false, 'next_after_memory_id': 0,
+        }), 200);
+      }),
+    );
+    await expectLater(
+      client.upsertZkMemory(
+        authToken: token,
+        data: {'title': 'New synthetic memory', 'value': 'Synthetic only'},
+      ),
+      throwsA(isA<MemoryInventoryIncompleteException>()),
+    );
   }, skip: !kEnableLegacyMemoryV2ActiveRead);
 }

@@ -45,6 +45,9 @@ void main() {
       httpClient: MockClient((request) async {
         requested.add(request.url.toString());
         expect(request.method, 'GET');
+        if (request.url.path == '/vault/memory/legacy-copy/generation') {
+          return http.Response('{"generation":"42"}', 200);
+        }
         if (request.url.path == '/vault/ciphertext/vault-ai-memory') {
           expect(request.headers['X-SVaultAI-Memory-Active-Copy'], '1');
           return http.Response(jsonEncode([{
@@ -86,7 +89,8 @@ void main() {
     final inventory = await client.listZkMemories(
       authToken: token, limit: 0,
     );
-    expect(requested, hasLength(3));
+    expect(requested, hasLength(5));
+    expect(inventory['generation'], '42');
     expect(inventory['unavailable_count'], 19);
     expect((inventory['items'] as List).map((row) => row['id']).toList(), [
       'native-1', 'memory-migrated-42', 'memory-migrated-62',
@@ -100,6 +104,9 @@ void main() {
     final client = VaultAIClient(
       baseUrl: 'https://synthetic.invalid',
       httpClient: MockClient((request) async {
+        if (request.url.path == '/vault/memory/legacy-copy/generation') {
+          return http.Response('{"generation":"42"}', 200);
+        }
         if (request.url.path == '/vault/ciphertext/vault-ai-memory') {
           return http.Response('[]', 200);
         }

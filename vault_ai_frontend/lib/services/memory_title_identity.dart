@@ -12,8 +12,8 @@ class MemoryTitleConflictException implements Exception {
 }
 
 const String kMemoryInventoryIncompleteMessage =
-    'Some older memories changed or could not be opened. Refresh Memory '
-    'before saving a new title.';
+    'Your memories changed or could not all be opened. Refresh Memory '
+    'before saving.';
 
 class MemoryInventoryIncompleteException implements Exception {
   const MemoryInventoryIncompleteException();

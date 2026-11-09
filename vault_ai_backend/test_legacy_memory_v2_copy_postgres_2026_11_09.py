@@ -384,10 +384,15 @@ def test_owner_copy_is_source_bound_and_keeps_legacy_active(monkeypatch):
         assert third_legacy_ct != changed_ciphertext
         third_v2_ct = b"\x01" + secrets.token_bytes(12 + 32 + 16)
         third_v2_encoded = base64.urlsafe_b64encode(third_v2_ct).decode().rstrip("=")
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute("SELECT memory_inventory_generation FROM vaults "
+                        "WHERE vault_id=%s", (vault_id,))
+            edit_generation = cur.fetchone()[0]
         edit_body = {
             "source_snapshot": snapshot2, "memory_type": "note",
             "legacy_payload_ciphertext": third_legacy_ct.decode(),
             "payload_ciphertext": third_v2_encoded,
+            "expected_memory_generation": str(edit_generation),
             "zk_proof_token": "edit-proof", "client_verified_source": True,
         }
         assert client.post(path + "/edit", json={**edit_body,
@@ -397,6 +402,22 @@ def test_owner_copy_is_source_bound_and_keeps_legacy_active(monkeypatch):
         with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
             cur.execute("INSERT INTO qa_memory_proofs(proof,vault_id) "
                         "VALUES(%s,%s)", ("edit-proof", vault_id))
+            # Another old-client write after the owner's title preflight
+            # must roll back both ciphertext formats and preserve the proof.
+            cur.execute("UPDATE vault_ai_memory SET updated_at=NOW() "
+                        "WHERE id=%s", (empty_id,))
+        stale_edit = client.post(path + "/edit", json=edit_body)
+        assert stale_edit.status_code == 409
+        assert stale_edit.json()["detail"] == "memory_inventory_changed"
+        assert client.get(path + "/readback").json()["source_snapshot"] == snapshot2
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM qa_memory_proofs "
+                        "WHERE proof='edit-proof'")
+            assert cur.fetchone()[0] == 1
+            cur.execute("SELECT memory_inventory_generation FROM vaults "
+                        "WHERE vault_id=%s", (vault_id,))
+            edit_body["expected_memory_generation"] = str(cur.fetchone()[0])
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
             cur.execute("""CREATE OR REPLACE FUNCTION qa_reject_memory_copy_insert()
                           RETURNS trigger LANGUAGE plpgsql AS $$
                           BEGIN RAISE EXCEPTION 'synthetic_copy_failure';

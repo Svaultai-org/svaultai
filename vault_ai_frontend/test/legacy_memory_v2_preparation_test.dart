@@ -231,6 +231,7 @@ void main() {
         expect(body.containsKey('pin'), false);
         if (path.endsWith('/edit')) {
           expect(body['source_snapshot'], snapshot);
+          expect(body['expected_memory_generation'], '42');
           expect(body['zk_proof_token'], 'synthetic-action-proof');
           legacyCiphertext = body['legacy_payload_ciphertext'] as String;
           copyCiphertext = body['payload_ciphertext'] as String;
@@ -271,7 +272,8 @@ void main() {
     );
     await action.edit(current: {
       'legacy_memory_id': 42, 'source_snapshot': snapshot,
-    }, updated: {'value': 'Synthetic edited memory'});
+    }, updated: {'value': 'Synthetic edited memory'},
+        expectedMemoryGeneration: '42');
     expect(deleted, false);
     await action.delete({
       'legacy_memory_id': 42, 'source_snapshot': nextSnapshot,

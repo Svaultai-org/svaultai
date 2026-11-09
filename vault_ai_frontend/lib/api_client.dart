@@ -70,6 +70,17 @@ class ZkLegacyFileListChangedException implements Exception {
   String toString() => 'Files changed. Sign in once to refresh access.';
 }
 
+bool _memoryGenerationConflict(String body) {
+  try {
+    final decoded = jsonDecode(body);
+    return decoded is Map &&
+        (decoded['detail'] == 'memory_inventory_changed' ||
+            decoded['detail'] == 'memory_inventory_generation_required');
+  } catch (_) {
+    return false;
+  }
+}
+
 // The private-only unlock build cannot use inheritance routes that require
 // the server to derive a content key from a raw PIN. The OPAQUE-proof
 // beneficiary actions use separate methods and remain available.
@@ -6499,7 +6510,7 @@ class VaultAIClient {
     );
     final resolvedMemoryId =
         'memory-${vault_key_hierarchy.b64urlEncode(recordHash)}';
-    await _checkMemoryTitleAvailable(
+    final memoryInventoryGeneration = await _checkMemoryTitleAvailable(
       authToken: authToken,
       title: memoryKey,
       editingMemoryId: privateReadback ? resolvedMemoryId : null,
@@ -6516,10 +6527,17 @@ class VaultAIClient {
         'memory_type': memoryType,
         'memory_lookup_hash': vault_key_hierarchy.b64urlEncode(lookupHash),
         'payload_ciphertext': vault_key_hierarchy.b64urlEncode(payloadCt),
+        if (memoryInventoryGeneration != null)
+          'expected_memory_generation': memoryInventoryGeneration,
       }),
     );
     _assertMemoryAccessCurrent(mvk, memoryGeneration);
-    if (resp.statusCode == 409) throw const MemoryTitleConflictException();
+    if (resp.statusCode == 409) {
+      if (_memoryGenerationConflict(resp.body)) {
+        throw const MemoryInventoryIncompleteException();
+      }
+      throw const MemoryTitleConflictException();
+    }
     if (resp.statusCode != 200) return false;
     if (privateReadback) {
       try {
@@ -6545,6 +6563,35 @@ class VaultAIClient {
     return true;
   }
 
+  Future<String> _readMemoryInventoryGeneration({
+    required String authToken,
+    required Object mvk,
+    required int sessionGeneration,
+  }) async {
+    final uri = Uri.parse('$baseUrl/vault/memory/legacy-copy/generation');
+    final response = await _sessionHttpWithGuard(
+            () => _assertMemoryAccessCurrent(mvk, sessionGeneration))
+        .get(uri, headers: _defaultHeaders(authToken: authToken))
+        .timeout(const Duration(seconds: 12));
+    _assertMemoryAccessCurrent(mvk, sessionGeneration);
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Memory inventory check failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final body = jsonDecode(response.body);
+    final generation = body is Map ? body['generation'] : null;
+    if (generation is! String ||
+        !RegExp(r'^(0|[1-9][0-9]{0,18})$').hasMatch(generation)) {
+      throw const FormatException('Invalid Memory inventory generation');
+    }
+    return generation;
+  }
+
   /// Fetches opaque ZK memory envelopes and decrypts them only on the client.
   Future<Map<String, dynamic>> listZkMemories({
     required String authToken,
@@ -6553,6 +6600,13 @@ class VaultAIClient {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) throw StateError('Vault encryption key is unavailable');
     final memoryGeneration = st.SessionTermination.instance.generation;
+    final inventoryGeneration = kEnableLegacyMemoryV2ActiveRead
+        ? await _readMemoryInventoryGeneration(
+            authToken: authToken,
+            mvk: mvk,
+            sessionGeneration: memoryGeneration,
+          )
+        : null;
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
     final response = await _sessionHttpWithGuard(
             () => _assertMemoryAccessCurrent(mvk, memoryGeneration))
@@ -6652,6 +6706,14 @@ class VaultAIClient {
         if (!hasMore) break;
       }
     }
+    if (inventoryGeneration != null &&
+        inventoryGeneration != await _readMemoryInventoryGeneration(
+          authToken: authToken,
+          mvk: mvk,
+          sessionGeneration: memoryGeneration,
+        )) {
+      throw const MemoryInventoryIncompleteException();
+    }
     final memoryKey =
         await vault_key_hierarchy.VaultKeyHierarchy(mvk).memoryKey();
     final items = <Map<String, dynamic>>[];
@@ -6704,10 +6766,11 @@ class VaultAIClient {
       'counts': counts,
       'engine': 'ciphertext',
       'unavailable_count': unavailableCount,
+      if (inventoryGeneration != null) 'generation': inventoryGeneration,
     };
   }
 
-  Future<void> _checkMemoryTitleAvailable({
+  Future<String?> _checkMemoryTitleAvailable({
     required String authToken,
     required String title,
     String? editingMemoryId,
@@ -6730,6 +6793,12 @@ class VaultAIClient {
     )) {
       throw const MemoryTitleConflictException();
     }
+    if (!kEnableLegacyMemoryV2ActiveRead) return null;
+    final generation = inventory['generation'];
+    if (generation is! String) {
+      throw const MemoryInventoryIncompleteException();
+    }
+    return generation;
   }
 
   void _assertMemoryAccessCurrent(Object mvk, int generation) {
@@ -6797,7 +6866,7 @@ class VaultAIClient {
     );
     final resolvedMemoryId =
         memoryId ?? 'memory-${vault_key_hierarchy.b64urlEncode(recordHash)}';
-    await _checkMemoryTitleAvailable(
+    final memoryInventoryGeneration = await _checkMemoryTitleAvailable(
       authToken: authToken,
       title: lookupText,
       editingMemoryId: memoryId ?? (privateReadback ? resolvedMemoryId : null),
@@ -6814,10 +6883,15 @@ class VaultAIClient {
         'memory_lookup_hash': vault_key_hierarchy.b64urlEncode(lookupHash),
         'payload_ciphertext': vault_key_hierarchy.b64urlEncode(envelope),
         'replace_existing': memoryId != null,
+        if (memoryInventoryGeneration != null)
+          'expected_memory_generation': memoryInventoryGeneration,
       }),
     );
     _assertMemoryAccessCurrent(mvk, memoryGeneration);
     if (response.statusCode == 409) {
+      if (_memoryGenerationConflict(response.body)) {
+        throw const MemoryInventoryIncompleteException();
+      }
       throw const MemoryTitleConflictException();
     }
     if (response.statusCode != 200) {

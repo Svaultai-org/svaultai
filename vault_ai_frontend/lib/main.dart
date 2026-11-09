@@ -5816,6 +5816,25 @@ Future<void> _mutatePreparedLegacyMemory({
   }
   final token = app.sessionToken;
   if (token == null) throw StateError('Unlock your vault');
+  String? expectedMemoryGeneration;
+  if (updated != null) {
+    final inventory = await VaultAIClient(baseUrl: backendBaseUrl)
+        .listZkMemories(authToken: token, limit: 0);
+    if (inventory['unavailable_count'] != 0 ||
+        inventory['generation'] is! String) {
+      throw const MemoryInventoryIncompleteException();
+    }
+    if (memoryTitleConflicts(
+      title: '${updated['title'] ?? updated['memory_key'] ?? ''}',
+      memories: ((inventory['items'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row)),
+      editingMemoryId: '${current['id'] ?? ''}',
+    )) {
+      throw const MemoryTitleConflictException();
+    }
+    expectedMemoryGeneration = inventory['generation'] as String;
+  }
   final source = await createLocalLegacyPasswordSourceForActiveVault(
     app,
     promptPin: () {
@@ -5860,7 +5879,11 @@ Future<void> _mutatePreparedLegacyMemory({
     if (updated == null) {
       await action.delete(current);
     } else {
-      await action.edit(current: current, updated: updated);
+      await action.edit(
+        current: current,
+        updated: updated,
+        expectedMemoryGeneration: expectedMemoryGeneration!,
+      );
     }
   } finally {
     source.close();

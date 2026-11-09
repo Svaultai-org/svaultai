@@ -19,6 +19,7 @@ from auth_local import SessionPrincipal
 from device_gate import verify_trusted_device
 from legacy_source_snapshot import MEMORY_SOURCE_FIELDS, source_snapshot
 from routes.auth_zk_routes import consume_recent_zk_proof_on_cursor
+from routes.vault_ciphertext_write_routes import _verify_memory_inventory_generation
 from subscription_entitlement import require_content_write
 from taxonomy import ALLOWED_MEMORY_TYPES
 from vault_core import get_db
@@ -63,6 +64,9 @@ class LegacyMemoryCopyEditRequest(BaseModel):
     memory_type: str = Field(..., min_length=1, max_length=64)
     legacy_payload_ciphertext: str = Field(..., min_length=40, max_length=174764)
     payload_ciphertext: str = Field(..., min_length=39, max_length=174764)
+    expected_memory_generation: str = Field(
+        ..., pattern=r"^(0|[1-9][0-9]{0,18})$",
+    )
     zk_proof_token: str = Field(..., min_length=1, max_length=128)
     client_verified_source: bool = False
 
@@ -282,6 +286,30 @@ def list_active_legacy_memory_copies(
             "next_after_memory_id": next_after_memory_id}
 
 
+@router.get("/vault/memory/legacy-copy/generation")
+def active_memory_inventory_generation(
+    http_response: Response,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    """Return an opaque counter around a multi-request private inventory."""
+    _require_active_enabled()
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT memory_inventory_generation FROM vaults WHERE vault_id=%s",
+            (principal["vault_id"],),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="vault_not_found")
+        generation = str(row[0])
+    finally:
+        conn.close()
+    http_response.headers["Cache-Control"] = "no-store"
+    return {"generation": generation}
+
+
 @router.post("/vault/memory/legacy-copy/{memory_id}/edit")
 def edit_active_legacy_memory_copy(
     memory_id: int,
@@ -331,6 +359,14 @@ def edit_active_legacy_memory_copy(
                VALUES (%s,%s,%s,%s,%s,%s)""",
             (memory_id, principal["vault_id"], snapshot,
              f"memory-migrated-{memory_id}", payload.memory_type, new_ct),
+        )
+        # The source UPDATE, 0064 copy invalidation, and replacement copy
+        # INSERT each advance generation once. A concurrent older write to
+        # any other Memory makes this comparison fail and rolls back both
+        # ciphertext formats plus the consumed proof.
+        _verify_memory_inventory_generation(
+            cur, principal["vault_id"], payload.expected_memory_generation,
+            own_advances=3, signed_memory=True,
         )
         conn.commit()
         return {"memory_id": memory_id, "source_snapshot": snapshot,

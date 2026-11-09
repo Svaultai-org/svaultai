@@ -176,7 +176,12 @@ class LegacyMemoryV2Preparation {
   Future<void> edit({
     required Map<String, dynamic> current,
     required Map<String, dynamic> updated,
+    required String expectedMemoryGeneration,
   }) async {
+    if (!RegExp(r'^(0|[1-9][0-9]{0,18})$')
+        .hasMatch(expectedMemoryGeneration)) {
+      throw const FormatException('Invalid Memory inventory generation');
+    }
     final verified = await _verifyCurrent(current);
     final old = jsonDecode(verified.plaintext);
     if (old is! Map<String, dynamic>) {
@@ -215,6 +220,7 @@ class LegacyMemoryV2Preparation {
       'memory_type': type,
       'legacy_payload_ciphertext': legacyCiphertext,
       'payload_ciphertext': v2Ciphertext,
+      'expected_memory_generation': expectedMemoryGeneration,
       'zk_proof_token': proof,
       'client_verified_source': true,
     });
