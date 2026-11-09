@@ -1289,6 +1289,11 @@ class VaultAIClient {
     String? newService,
     Map<String, dynamic>? fields,
   })? legacyZkItemUpdater;
+  final Future<void> Function({
+    required int itemId,
+    required String itemType,
+    required String service,
+  })? legacyZkItemDeleter;
 
   /// Captured key/session lease used only by the new registered-asset client.
   /// Existing clients omit this and retain their normal request behavior.
@@ -1303,6 +1308,7 @@ class VaultAIClient {
     this.authMeTimeout = const Duration(seconds: 12),
     this.legacyZkItemReader,
     this.legacyZkItemUpdater,
+    this.legacyZkItemDeleter,
     http.Client? httpClient,
   }) : _httpClient = httpClient;
 
@@ -6712,47 +6718,9 @@ class VaultAIClient {
           'Legacy saved-item editing is unavailable until migration.');
     }
 
-    final uri = Uri.parse('$baseUrl/update-secure-item');
-    final body = <String, dynamic>{
-      'vault_name': '',
-      'old_service': oldService,
-      'item_type': itemType,
-      'pin': pin,
-      if (itemId != null) 'item_id': itemId,
-      if (createOnly) 'create_only': true,
-    };
-    if (newService != null && newService.trim().isNotEmpty) {
-      body['new_service'] = newService.trim();
-    }
-    if (fields != null && fields.isNotEmpty) {
-      body['fields'] = fields;
-    }
-
-    final response = await _sessionHttpWithGuard(
-      () => _requireSavedItemMutationIdentity(authToken, null),
-    ).post(
-      uri,
-      headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode(body),
-    );
-    _requireSavedItemMutationIdentity(authToken, null);
-
-    if (response.statusCode != 200) {
-      throwIfSavedItemUpdateRequired(response.statusCode, response.body);
-      if (response.statusCode == 409) {
-        throw SavedItemConflictException(duplicate: createOnly);
-      }
-      _throwIfAuthExpired(response.statusCode, response.body);
-      _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLockOrFrozen(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'Could not update saved item',
-        statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
-    }
-
-    return jsonDecode(response.body) as Map<String, dynamic>;
+    // A current client cannot turn a missing OPAQUE key into a raw-PIN edit.
+    // Legacy-only recovery requires a separate, explicit migration build.
+    throw StateError('Unlock your vault before editing a saved item.');
   }
 
   /// ZK ciphertext-first vault-item upsert helper. Called by
@@ -7590,41 +7558,33 @@ class VaultAIClient {
         }
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
+      if ((kEnableKeylessLegacySavedItemDelete ||
+              signedSavedItemMutationOfferedForToken(authToken)) &&
+          existing?['storage_engine'] == 'legacy_compatibility') {
+        final exactId = int.tryParse(itemId ?? '');
+        final deleter = legacyZkItemDeleter;
+        if (exactId == null || exactId <= 0 || deleter == null ||
+            existing?['id'] != exactId ||
+            existing?['item_type'] != itemType ||
+            existing?['service'] != service) {
+          throw StateError('Private saved-item deletion is unavailable');
+        }
+        await deleter(
+          itemId: exactId,
+          itemType: itemType,
+          service: service,
+        );
+        _requireSavedItemKey(mvk);
+        _requireSavedItemMutationIdentity(authToken, mvk);
+        return <String, dynamic>{'status': 'deleted', 'item_id': exactId};
+      }
       // No ciphertext row matched. A ZK operation must not fall through to
       // the legacy PIN-bearing delete endpoint.
       throw StateError(
           'Legacy saved-item deletion is unavailable until migration.');
     }
-    final uri = Uri.parse('$baseUrl/delete-secure-item');
-
-    final response = await _sessionHttpWithGuard(
-      () => _requireSavedItemMutationIdentity(authToken, null),
-    ).post(
-      uri,
-      headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode({
-        'vault_name': '',
-        'service': service,
-        'item_type': itemType,
-        'pin': pin,
-        if (itemId != null) 'item_id': itemId,
-      }),
-    );
-    _requireSavedItemMutationIdentity(authToken, null);
-
-    if (response.statusCode != 200) {
-      if (response.statusCode == 409) throw const SavedItemConflictException();
-      _throwIfAuthExpired(response.statusCode, response.body);
-      _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLockOrFrozen(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'Could not delete saved item',
-        statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
-    }
-
-    return jsonDecode(response.body) as Map<String, dynamic>;
+    // Never retry a saved-item delete with a PIN after a key/session loss.
+    throw StateError('Unlock your vault before deleting a saved item.');
   }
 
   Future<Map<String, dynamic>> deleteVaultFile({

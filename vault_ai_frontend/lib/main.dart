@@ -6413,6 +6413,17 @@ VaultAIClient _savedItemClient(AppState app) => VaultAIClient(
                 fields: fields,
               )
           : null,
+      legacyZkItemDeleter: (kEnableKeylessLegacySavedItemDelete ||
+              (app.sessionToken != null &&
+                  signedSavedItemMutationOfferedForToken(app.sessionToken!)))
+          ? ({required itemId, required itemType, required service}) =>
+              _deleteLegacyZkSavedItem(
+                app,
+                itemId: itemId,
+                itemType: itemType,
+                service: service,
+              )
+          : null,
     );
 
 bool _privateZkSavedItemSession(AppState app) =>

@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/services/session_termination.dart';
+import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart';
 import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
 import 'package:vault_ai_frontend/services/zk_pin_free_item_read_session.dart';
 
@@ -238,7 +239,75 @@ void main() {
     expect(requests, isEmpty);
   }, skip: !kEnableKeylessSavedItemRead);
 
-  test('unoffered legacy-only bearer retains its old edit and delete routes',
+  test('signed legacy deletion uses its proof-bound helper without a PIN body',
+      () async {
+    final offered = base64UrlEncode(<int>[
+      4, 8, 1, ...List<int>.filled(48, 7),
+    ]);
+    SessionTermination.instance.bindSession(offered);
+    ZkPinFreeItemReadSession.instance.bind(
+      sessionToken: offered,
+      offered: true,
+      privateVaultSession: true,
+      privateVaultId: 'synthetic-vault',
+      privateVaultHandle: 'synthetic-handle',
+    );
+    final key = await VaultKeyHierarchy(mvk).metadataKey();
+    Future<String> wrap(String value) async =>
+        b64urlEncode(await aesGcmWrap(key, utf8.encode(value)));
+    final requests = <http.Request>[];
+    var deleted = false;
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        expect(request.method, 'GET');
+        expect(request.body, isNot(contains(pin)));
+        if (request.url.path == '/vault/ciphertext/vault-items') {
+          return http.Response('[]', 200);
+        }
+        if (request.url.path == '/vault/items/metadata') {
+          return http.Response(jsonEncode(<String, dynamic>{
+            'records': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'item_id': 42,
+                'item_type_ciphertext': await wrap('login'),
+                'service_ciphertext': await wrap('Synthetic account'),
+                'is_legacy': true,
+                'has_v2_payload': false,
+              },
+            ],
+            'has_more': false,
+            'next_after_item_id': 42,
+          }), 200);
+        }
+        fail('Unexpected route ${request.url.path}');
+      }),
+      legacyZkItemDeleter: ({required itemId, required itemType,
+          required service}) async {
+        expect(itemId, 42);
+        expect(itemType, 'login');
+        expect(service, 'Synthetic account');
+        deleted = true;
+      },
+    );
+    final result = await client.deleteVaultSecureItem(
+      vaultName: 'Synthetic vault',
+      service: 'Synthetic account',
+      itemType: 'login',
+      pin: pin,
+      authToken: offered,
+      itemId: '42',
+    );
+    expect(deleted, isTrue);
+    expect(result, <String, dynamic>{'status': 'deleted', 'item_id': 42});
+    expect(requests.map((request) => request.url.path), <String>[
+      '/vault/ciphertext/vault-items',
+      '/vault/items/metadata',
+    ]);
+  });
+
+  test('missing OPAQUE key cannot revive old edit and delete routes',
       () async {
     ZkActiveMvk.clear();
     final requests = <http.Request>[];
@@ -246,10 +315,7 @@ void main() {
       baseUrl: 'https://synthetic.example',
       httpClient: MockClient((request) async {
         requests.add(request);
-        final body = jsonDecode(request.body) as Map<String, dynamic>;
-        expect(body['pin'], pin);
-        expect(request.headers['authorization'], 'Bearer $token');
-        return http.Response('{"status":"ok"}', 200);
+        fail('Missing-key mutation reached ${request.url.path}');
       }),
     );
     expect(
@@ -261,27 +327,22 @@ void main() {
           payload: const <String, dynamic>{},
         ),
         isNull);
-    final edited = await client.updateVaultSecureItem(
+    await expectLater(client.updateVaultSecureItem(
       vaultName: 'Older vault',
       oldService: 'Synthetic account',
       itemType: 'login',
       pin: pin,
       authToken: token,
       itemId: '42',
-    );
-    final deleted = await client.deleteVaultSecureItem(
+    ), throwsStateError);
+    await expectLater(client.deleteVaultSecureItem(
       vaultName: 'Older vault',
       service: 'Synthetic account',
       itemType: 'login',
       pin: pin,
       authToken: token,
       itemId: '42',
-    );
-    expect(edited['status'], 'ok');
-    expect(deleted['status'], 'ok');
-    expect(requests.map((request) => request.url.path), <String>[
-      '/update-secure-item',
-      '/delete-secure-item',
-    ]);
+    ), throwsStateError);
+    expect(requests, isEmpty);
   });
 }
