@@ -62,7 +62,9 @@ def test_active_memory_routes_flag_off_before_database(monkeypatch):
     monkeypatch.delenv("VAULTAI_ZK_LEGACY_MEMORY_ACTIVE_ENABLED", raising=False)
     monkeypatch.setattr(copy, "get_db", lambda: pytest.fail("database opened"))
     with pytest.raises(HTTPException) as exc:
-        copy.list_active_legacy_memory_copies(None, {"vault_id": str(uuid4())})
+        copy.list_active_legacy_memory_copies(
+            None, principal={"vault_id": str(uuid4())},
+        )
     assert exc.value.status_code == 404
 
 
@@ -77,6 +79,7 @@ def test_active_memory_header_allowed_for_browser_preflight():
 
 
 def test_signed_memory_offer_requires_exact_active_source_copy(monkeypatch):
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_MEMORY_COPY_ENABLED", "true")
     monkeypatch.setenv("VAULTAI_ZK_LEGACY_MEMORY_ACTIVE_ENABLED", "true")
     vault_id = str(uuid4())
     row = {
@@ -208,9 +211,11 @@ def test_owner_copy_is_source_bound_and_keeps_legacy_active(monkeypatch):
         other_memory_id = cur.fetchone()[0]
         cur.execute(
             "INSERT INTO vault_ai_memory(vault_id,memory_type,memory_key,"
-            "memory_value,payload_ciphertext) VALUES(%s,'note',NULL,NULL,%s)",
+            "memory_value,payload_ciphertext) VALUES(%s,'note',NULL,NULL,%s) "
+            "RETURNING id",
             (vault_id, b""),
         )
+        empty_id = cur.fetchone()[0]
         cur.execute(
             "INSERT INTO vault_ai_memory(vault_id,memory_type,memory_key,"
             "memory_value,payload_ciphertext) VALUES(%s,'note',NULL,NULL,%s)",
@@ -287,6 +292,23 @@ def test_owner_copy_is_source_bound_and_keeps_legacy_active(monkeypatch):
                 "payload_ciphertext": encoded_copy,
             }],
             "unavailable_count": 1,
+            "has_more": False,
+            "next_after_memory_id": empty_id,
+        }
+        first_page = client.get("/vault/memory/legacy-copy/list?limit=1")
+        assert first_page.status_code == 200
+        assert first_page.json() == {
+            "copies": listed_copies.json()["copies"],
+            "unavailable_count": 0,
+            "has_more": True,
+            "next_after_memory_id": memory_id,
+        }
+        second_page = client.get(
+            f"/vault/memory/legacy-copy/list?limit=1&after_memory_id={memory_id}",
+        )
+        assert second_page.json() == {
+            "copies": [], "unavailable_count": 1,
+            "has_more": False, "next_after_memory_id": empty_id,
         }
         native_v2 = v2_memory.ai_memory_ciphertext_list(
             request=Request({"type": "http", "headers": [
@@ -328,7 +350,10 @@ def test_owner_copy_is_source_bound_and_keeps_legacy_active(monkeypatch):
         assert changed.status_code == 404
         assert changed.json()["detail"] == "memory_copy_not_found"
         listed_copies = client.get("/vault/memory/legacy-copy/list")
-        assert listed_copies.json() == {"copies": [], "unavailable_count": 2}
+        assert listed_copies.json() == {
+            "copies": [], "unavailable_count": 2,
+            "has_more": False, "next_after_memory_id": empty_id,
+        }
         with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
             cur.execute("SELECT payload_ciphertext FROM vault_ai_memory "
                         "WHERE id=%s", (memory_id,))
@@ -433,6 +458,7 @@ def test_owner_copy_is_source_bound_and_keeps_legacy_active(monkeypatch):
         assert client.get(path + "/readback").status_code == 404
         assert client.get("/vault/memory/legacy-copy/list").json() == {
             "copies": [], "unavailable_count": 1,
+            "has_more": False, "next_after_memory_id": empty_id,
         }
         with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
             cur.execute("SELECT payload_ciphertext,superseded_at "

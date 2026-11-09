@@ -1172,6 +1172,8 @@ def _memory_v2_offer_ready(
     cannot be opened with the V2 Memory key and must retain legacy access.
     """
     if (allow_prepared and
+            os.getenv("VAULTAI_ZK_LEGACY_MEMORY_COPY_ENABLED", "false")
+            .strip().lower() == "true" and
             os.getenv("VAULTAI_ZK_LEGACY_MEMORY_ACTIVE_ENABLED", "false")
             .strip().lower() == "true"):
         cur = conn.cursor(cursor_factory=RealDictCursor)

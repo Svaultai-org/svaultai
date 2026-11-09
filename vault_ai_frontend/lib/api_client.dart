@@ -6112,36 +6112,74 @@ class VaultAIClient {
     final prepared = <Map<String, dynamic>>[];
     var sourceUnavailable = 0;
     if (kEnableLegacyMemoryV2ActiveRead) {
-      final preparedResponse = await _sessionHttpWithGuard(
-              () => _assertMemoryAccessCurrent(mvk, memoryGeneration))
-          .get(
-            Uri.parse('$baseUrl/vault/memory/legacy-copy/list'),
-            headers: _defaultHeaders(authToken: authToken),
-          )
-          .timeout(const Duration(seconds: 12));
-      _assertMemoryAccessCurrent(mvk, memoryGeneration);
-      if (preparedResponse.statusCode != 200) {
-        _throwIfAuthExpired(preparedResponse.statusCode, preparedResponse.body);
-        _throwIfDeviceNotTrusted(
-            preparedResponse.statusCode, preparedResponse.body);
-        throw Exception(_formatBackendError(
-          prefix: 'Older Memory list failed',
-          statusCode: preparedResponse.statusCode,
-          responseBody: preparedResponse.body,
-        ));
-      }
-      final body = jsonDecode(preparedResponse.body);
-      if (body is! Map || body['copies'] is! List ||
-          body['unavailable_count'] is! int) {
-        throw const FormatException('Invalid older Memory list');
-      }
-      sourceUnavailable = body['unavailable_count'] as int;
-      if (sourceUnavailable < 0 || sourceUnavailable > 5000) {
-        throw const FormatException('Invalid older Memory count');
-      }
-      for (final raw in body['copies'] as List) {
-        if (raw is! Map) throw const FormatException('Invalid older Memory copy');
-        prepared.add(Map<String, dynamic>.from(raw));
+      const pageSize = 20;
+      var cursor = 0;
+      var processed = 0;
+      var encodedBytes = 0;
+      final seen = <int>{};
+      while (true) {
+        final uri = Uri.parse('$baseUrl/vault/memory/legacy-copy/list')
+            .replace(queryParameters: <String, String>{
+          'after_memory_id': '$cursor', 'limit': '$pageSize',
+        });
+        final preparedResponse = await _sessionHttpWithGuard(
+                () => _assertMemoryAccessCurrent(mvk, memoryGeneration))
+            .get(uri, headers: _defaultHeaders(authToken: authToken))
+            .timeout(const Duration(seconds: 12));
+        _assertMemoryAccessCurrent(mvk, memoryGeneration);
+        if (preparedResponse.statusCode != 200) {
+          _throwIfAuthExpired(preparedResponse.statusCode,
+              preparedResponse.body);
+          _throwIfDeviceNotTrusted(
+              preparedResponse.statusCode, preparedResponse.body);
+          throw Exception(_formatBackendError(
+            prefix: 'Older Memory list failed',
+            statusCode: preparedResponse.statusCode,
+            responseBody: preparedResponse.body,
+          ));
+        }
+        final body = jsonDecode(preparedResponse.body);
+        if (body is! Map || body['copies'] is! List ||
+            body['unavailable_count'] is! int ||
+            body['next_after_memory_id'] is! int ||
+            body['has_more'] is! bool) {
+          throw const FormatException('Invalid older Memory list');
+        }
+        final batch = body['copies'] as List;
+        final unavailable = body['unavailable_count'] as int;
+        final next = body['next_after_memory_id'] as int;
+        final hasMore = body['has_more'] as bool;
+        final batchCount = batch.length + unavailable;
+        if (unavailable < 0 || batchCount > pageSize ||
+            (batchCount > 0 && next <= cursor) ||
+            (batchCount == 0 && next != cursor) ||
+            (hasMore && batchCount != pageSize)) {
+          throw const FormatException('Invalid older Memory page');
+        }
+        processed += batchCount;
+        if (processed > 5000) {
+          throw const FormatException('Too many older Memories');
+        }
+        sourceUnavailable += unavailable;
+        for (final raw in batch) {
+          if (raw is! Map) {
+            throw const FormatException('Invalid older Memory copy');
+          }
+          final copy = Map<String, dynamic>.from(raw);
+          final id = copy['legacy_memory_id'];
+          final envelope = copy['payload_ciphertext'];
+          if (id is! int || id <= cursor || id > next || !seen.add(id) ||
+              envelope is! String || envelope.isEmpty) {
+            throw const FormatException('Invalid older Memory copy');
+          }
+          encodedBytes += envelope.length;
+          if (encodedBytes > 64 * 1024 * 1024) {
+            throw const FormatException('Older Memory list is too large');
+          }
+          prepared.add(copy);
+        }
+        cursor = next;
+        if (!hasMore) break;
       }
     }
     final memoryKey =

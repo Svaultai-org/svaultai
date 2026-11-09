@@ -750,7 +750,9 @@ class _MemoryPageState extends State<MemoryPage> {
 
   Future<void> _deleteMemory(Map<String, dynamic> row) async {
     final pinProvider = widget.pinProvider;
-    if (pinProvider == null) {
+    // A prepared old record uses its proof-bound owner callback below. Do not
+    // route it through a legacy PIN source, even when no cached PIN exists.
+    if (row['legacy_memory_id'] is! int && pinProvider == null) {
       _showSnack('Unlock your vault to delete memories');
       return;
     }
