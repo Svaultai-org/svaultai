@@ -23,6 +23,20 @@ from vault_core import decrypt_message, encrypt_message, get_db
 logger = logging.getLogger(__name__)
 
 
+_OWNER_V2_EDIT_CONFLICT = "memory_v2_owner_edit_conflict"
+_OWNER_V2_EDIT_REPLY = (
+    "This Memory was updated in a newer app. Open that app to change it."
+)
+
+
+def _is_owner_v2_edit_conflict(exc: Exception) -> bool:
+    return (
+        getattr(exc, "pgcode", None) == "23514"
+        and getattr(getattr(exc, "diag", None), "constraint_name", None)
+        == "memory_v2_verified_edit_fence"
+    )
+
+
 _MAX_MESSAGE_LEN = 2000
 _MAX_FIELD_LEN = 500
 _MAX_TITLE_LEN = 120
@@ -1730,6 +1744,8 @@ def _save_memory(
                 conn.rollback()
         except Exception:
             pass
+        if _is_owner_v2_edit_conflict(exc):
+            return _OWNER_V2_EDIT_REPLY
         logger.warning(
             "personal memory save failed vault=%s error_type=%s",
             (vault_id or "")[:8],
@@ -2088,6 +2104,9 @@ def save_memory_payload(
         intent,
         source_message_id=source_message_id,
     )
+    if reply == _OWNER_V2_EDIT_REPLY:
+        return {"ok": False, "conflict": _OWNER_V2_EDIT_CONFLICT,
+                "message": reply}
     if reply.startswith("I couldn't"):
         return {"ok": False, "message": reply}
     item = get_memory_by_lookup(vault_id=vault_id, key=key, intent=intent)
@@ -2205,6 +2224,9 @@ def update_memory_item(
                 conn.rollback()
         except Exception:
             pass
+        if _is_owner_v2_edit_conflict(exc):
+            return {"ok": False, "conflict": _OWNER_V2_EDIT_CONFLICT,
+                    "message": _OWNER_V2_EDIT_REPLY}
         logger.warning(
             "personal memory update failed vault=%s error_type=%s",
             (vault_id or "")[:8],
@@ -2245,6 +2267,9 @@ def delete_memory_item(
                 conn.rollback()
         except Exception:
             pass
+        if _is_owner_v2_edit_conflict(exc):
+            return {"ok": False, "conflict": _OWNER_V2_EDIT_CONFLICT,
+                    "message": _OWNER_V2_EDIT_REPLY}
         logger.warning(
             "personal memory delete failed vault=%s error_type=%s",
             (vault_id or "")[:8],

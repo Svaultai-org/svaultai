@@ -258,6 +258,8 @@ async def memory_create_endpoint(
             source_message_id=payload.proposal_id,
             is_correction=True,
         )
+        if result.get("conflict") == "memory_v2_owner_edit_conflict":
+            raise HTTPException(status_code=409, detail="memory_updated_in_newer_app")
         if not result.get("ok"):
             raise HTTPException(status_code=500, detail="Memory save failed")
         return result
@@ -298,6 +300,8 @@ async def memory_update_endpoint(
             memory_id=memory_id,
             payload=build_payload_from_request(body),
         )
+        if result.get("conflict") == "memory_v2_owner_edit_conflict":
+            raise HTTPException(status_code=409, detail="memory_updated_in_newer_app")
         if not result.get("ok"):
             raise HTTPException(status_code=404, detail="Memory not found")
         return result
@@ -329,6 +333,8 @@ async def memory_delete_endpoint(
             key=key,
             memory_id=payload.id,
         )
+        if result.get("conflict") == "memory_v2_owner_edit_conflict":
+            raise HTTPException(status_code=409, detail="memory_updated_in_newer_app")
         if not result.get("ok"):
             raise HTTPException(status_code=404, detail="Memory not found")
         return result

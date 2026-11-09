@@ -159,12 +159,13 @@ def stage_legacy_memory_copy(
                  payload_ciphertext=EXCLUDED.payload_ciphertext,
                  prepared_at=NOW()
                WHERE memory_v2_prepared_copies.vault_id=EXCLUDED.vault_id
+                 AND NOT memory_v2_prepared_copies.owner_verified_edit
                RETURNING legacy_memory_id""",
             (memory_id, principal["vault_id"], snapshot,
              f"memory-migrated-{memory_id}", row["memory_type"], copy),
         )
         if cur.fetchone() is None:
-            raise HTTPException(status_code=409, detail="memory_owner_changed")
+            raise HTTPException(status_code=409, detail="memory_copy_protected")
         conn.commit()
         return {"memory_id": memory_id, "prepared": True,
                 "active_legacy_unchanged": True}
@@ -335,9 +336,17 @@ def edit_active_legacy_memory_copy(
         if old_copy["source_snapshot"] != payload.source_snapshot:
             raise HTTPException(status_code=409, detail="legacy_memory_changed")
         consume_recent_zk_proof_on_cursor(payload.zk_proof_token, principal, cur)
-        # 0064 removes the prior prepared copy on this UPDATE. Reinsert the
-        # new source-bound copy in the same transaction; a failure rolls both
-        # back, including the original old-client row and its prior copy.
+        # Hold the source-row lock while replacing its copy. Removing the old
+        # copy first permits this owner-verified dual write through the 0071
+        # guard; rollback restores it if either ciphertext write fails.
+        cur.execute(
+            """DELETE FROM memory_v2_prepared_copies
+                WHERE vault_id=%s AND legacy_memory_id=%s
+                  AND source_snapshot=%s RETURNING legacy_memory_id""",
+            (principal["vault_id"], memory_id, payload.source_snapshot),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=409, detail="legacy_memory_changed")
         cur.execute(
             """UPDATE vault_ai_memory
                   SET payload_ciphertext=%s,memory_type=%s,updated_at=NOW()
@@ -355,13 +364,13 @@ def edit_active_legacy_memory_copy(
         cur.execute(
             """INSERT INTO memory_v2_prepared_copies
                  (legacy_memory_id,vault_id,source_snapshot,memory_record_id,
-                  memory_type,payload_ciphertext)
-               VALUES (%s,%s,%s,%s,%s,%s)""",
+                  memory_type,payload_ciphertext,owner_verified_edit)
+               VALUES (%s,%s,%s,%s,%s,%s,TRUE)""",
             (memory_id, principal["vault_id"], snapshot,
              f"memory-migrated-{memory_id}", payload.memory_type, new_ct),
         )
-        # The source UPDATE, 0064 copy invalidation, and replacement copy
-        # INSERT each advance generation once. A concurrent older write to
+        # The prior copy DELETE, source UPDATE, and replacement copy INSERT
+        # each advance generation once. A concurrent older write to
         # any other Memory makes this comparison fail and rolls back both
         # ciphertext formats plus the consumed proof.
         _verify_memory_inventory_generation(
@@ -400,13 +409,21 @@ def delete_active_legacy_memory_copy(
             raise HTTPException(status_code=409, detail="legacy_memory_changed")
         consume_recent_zk_proof_on_cursor(payload.zk_proof_token, principal, cur)
         cur.execute(
+            """DELETE FROM memory_v2_prepared_copies
+                WHERE vault_id=%s AND legacy_memory_id=%s
+                  AND source_snapshot=%s RETURNING legacy_memory_id""",
+            (principal["vault_id"], memory_id, payload.source_snapshot),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=409, detail="legacy_memory_changed")
+        cur.execute(
             """UPDATE vault_ai_memory SET superseded_at=NOW(),updated_at=NOW()
                 WHERE id=%s AND vault_id=%s AND superseded_at IS NULL""",
             (memory_id, principal["vault_id"]),
         )
         if cur.rowcount != 1:
             raise HTTPException(status_code=409, detail="legacy_memory_changed")
-        # The 0064 trigger removes the prepared copy. Check in transaction.
+        # The copy was removed in this same transaction. Check before commit.
         cur.execute(
             "SELECT 1 FROM memory_v2_prepared_copies WHERE legacy_memory_id=%s",
             (memory_id,),
