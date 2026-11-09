@@ -4820,6 +4820,19 @@ class VaultAIClient {
     }
   }
 
+  void _requireSavedItemMutationIdentity(String authToken, Object? expected) {
+    final itemRead = ZkPinFreeItemReadSession.instance;
+    if (itemRead.wasOfferedForToken(authToken) &&
+        (!itemRead.activeForToken(authToken) || expected == null)) {
+      throw StateError('Private saved-item access needs a fresh vault unlock.');
+    }
+    if (signedSavedItemMutationOfferedForToken(authToken) &&
+        !itemRead.privateVaultForToken(authToken)) {
+      throw StateError('Private saved-item mutation session is unavailable.');
+    }
+    _requirePrivateSavedItemIdentity(authToken, expected);
+  }
+
   Future<Map<String, dynamic>> uploadVaultFile({
     required String vaultName,
     required String pin,
@@ -6578,12 +6591,13 @@ class VaultAIClient {
     String? itemId,
     bool createOnly = false,
   }) async {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    _requireSavedItemMutationIdentity(authToken, mvk);
     // ZK ciphertext-first fast path. When an unlocked MVK is active
     // (i.e. this is a ZK/adopted vault), the item is written to
     // /vault/ciphertext/vault-items instead of /update-secure-item —
     // no readable item_type / service / payload leaves the client.
-    if (zk_mvk_store.ZkActiveMvk.current() != null) {
-      final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk != null) {
       int? existingItemId;
       final existing = await _resolveSavedItem(
         vaultName: vaultName,
@@ -6595,6 +6609,7 @@ class VaultAIClient {
         creating: createOnly,
       );
       _requireSavedItemKey(mvk);
+      _requireSavedItemMutationIdentity(authToken, mvk);
       if (createOnly && existing != null) {
         throw const SavedItemConflictException(duplicate: true);
       }
@@ -6621,6 +6636,7 @@ class VaultAIClient {
             if (fields != null) 'fields': fields,
           },
         );
+        _requireSavedItemMutationIdentity(authToken, mvk);
         if (zkResp != null) return zkResp;
         // The MVK vanished during the request. Never send the supplied PIN to
         // the legacy route as a fallback from a ZK operation.
@@ -6634,13 +6650,15 @@ class VaultAIClient {
             existing['service'] != oldService) {
           throw StateError('Private saved-item editor is unavailable');
         }
-        return updater(
+        final updated = await updater(
           itemId: exactId,
           itemType: itemType,
           oldService: oldService,
           newService: newService,
           fields: fields,
         );
+        _requireSavedItemMutationIdentity(authToken, mvk);
+        return updated;
       }
       throw StateError(
           'Legacy saved-item editing is unavailable until migration.');
@@ -6662,11 +6680,14 @@ class VaultAIClient {
       body['fields'] = fields;
     }
 
-    final response = await _sessionHttp.post(
+    final response = await _sessionHttpWithGuard(
+      () => _requireSavedItemMutationIdentity(authToken, null),
+    ).post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
     );
+    _requireSavedItemMutationIdentity(authToken, null);
 
     if (response.statusCode != 200) {
       throwIfSavedItemUpdateRequired(response.statusCode, response.body);
@@ -7291,12 +7312,21 @@ class VaultAIClient {
       throw ArgumentError('A saved-item edit requires a valid existing ID');
     }
     final mvk = zk_mvk_store.ZkActiveMvk.current();
-    if (mvk == null) return null;
+    if (mvk == null) {
+      _requireSavedItemMutationIdentity(authToken, null);
+      return null;
+    }
+    void checkMutationKey() {
+      _requireSavedItemKey(mvk);
+      _requireSavedItemMutationIdentity(authToken, mvk);
+    }
+    checkMutationKey();
     final indexedWrite =
         kEnableKeylessSavedItemWrite && kEnableKeylessSavedItemRead;
     int? titleRevision = expectedTitleRevision;
     if (indexedWrite && existingItemId != null && titleRevision == null) {
       final current = await _listZkVaultItems(authToken: authToken);
+      checkMutationKey();
       final rows = (current['items'] as List? ?? const [])
           .whereType<Map>()
           .where((row) => row['id'] == existingItemId)
@@ -7322,7 +7352,7 @@ class VaultAIClient {
       metaKey,
       utf8.encode(jsonEncode(payload)),
     );
-    _requireSavedItemKey(mvk);
+    checkMutationKey();
     final body = <String, dynamic>{
       if (existingItemId != null) 'item_id': existingItemId,
       'mutation_intent': existingItemId == null ? 'create' : 'edit',
@@ -7334,14 +7364,12 @@ class VaultAIClient {
       'payload_ciphertext': vault_key_hierarchy.b64urlEncode(pyCt),
     };
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items');
-    final resp = await _sessionHttpWithGuard(
-      () => _requireSavedItemKey(mvk),
-    ).post(
+    final resp = await _sessionHttpWithGuard(checkMutationKey).post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
     );
-    _requireSavedItemKey(mvk);
+    checkMutationKey();
     if (resp.statusCode != 200) {
       // Fail closed for ZK — a broken ciphertext write must NOT
       // silently fall back to plaintext.
@@ -7474,8 +7502,9 @@ class VaultAIClient {
     required String authToken,
     String? itemId,
   }) async {
-    if (zk_mvk_store.ZkActiveMvk.current() != null) {
-      final mvk = zk_mvk_store.ZkActiveMvk.current();
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    _requireSavedItemMutationIdentity(authToken, mvk);
+    if (mvk != null) {
       final existing = await _resolveSavedItem(
         vaultName: vaultName,
         pin: pin,
@@ -7485,15 +7514,23 @@ class VaultAIClient {
         itemId: itemId,
       );
       _requireSavedItemKey(mvk);
+      _requireSavedItemMutationIdentity(authToken, mvk);
       itemId = existing?['id']?.toString() ?? itemId;
       if (existing?['storage_engine'] == 'ciphertext' && itemId != null) {
         final uri = Uri.parse(
           '$baseUrl/vault/ciphertext/vault-items/$itemId',
         );
-        final response = await _sessionHttp.delete(
+        final response = await _sessionHttpWithGuard(
+          () {
+            _requireSavedItemKey(mvk);
+            _requireSavedItemMutationIdentity(authToken, mvk);
+          },
+        ).delete(
           uri,
           headers: _defaultHeaders(authToken: authToken),
         );
+        _requireSavedItemKey(mvk);
+        _requireSavedItemMutationIdentity(authToken, mvk);
         if (response.statusCode != 200) {
           _throwIfAuthExpired(response.statusCode, response.body);
           _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -7512,7 +7549,9 @@ class VaultAIClient {
     }
     final uri = Uri.parse('$baseUrl/delete-secure-item');
 
-    final response = await _sessionHttp.post(
+    final response = await _sessionHttpWithGuard(
+      () => _requireSavedItemMutationIdentity(authToken, null),
+    ).post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -7523,6 +7562,7 @@ class VaultAIClient {
         if (itemId != null) 'item_id': itemId,
       }),
     );
+    _requireSavedItemMutationIdentity(authToken, null);
 
     if (response.statusCode != 200) {
       if (response.statusCode == 409) throw const SavedItemConflictException();
