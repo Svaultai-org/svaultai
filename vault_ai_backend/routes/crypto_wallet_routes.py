@@ -1074,6 +1074,32 @@ def _wallet_receive_source(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _wallet_v2_update_required(
+    record: dict[str, Any], asset: str, network: str | None = None,
+) -> dict[str, Any] | None:
+    """Older encrypted-secret routes cannot read an MVK-wrapped V2 wallet.
+
+    The record has already been selected for this vault and account slot by
+    its caller. Never report that a verified private wallet is empty or needs
+    recreation just because it has no older encryptedWalletSecret field.
+    """
+    if (record.get("schema") != "crypto_wallet_account_v2" or
+            record.get("backupStatus") != "wallet_v2_encrypted" or
+            record.get("migrationState") != "v2_verified" or
+            not record.get("walletRecordId")):
+        return None
+    return {
+        "status": "client_update_required",
+        "wallet_engine": "client_update_required",
+        "asset": asset,
+        **({"network": network} if network is not None else {}),
+        "message": (
+            "Update SVaultAI to use this private wallet. "
+            "Its encrypted backup remains saved."
+        ),
+    }
+
+
 @router.get("/crypto/wallet/asset-catalog")
 def get_asset_catalog(principal=Depends(require_crypto_entitlement)):
     from verified_assets import build_asset_catalog
@@ -2210,6 +2236,9 @@ def get_encrypted_wallet_secret(
 
     secret = record.get("encryptedWalletSecret")
     if not isinstance(secret, str) or not secret:
+        update = _wallet_v2_update_required(record, norm)
+        if update is not None:
+            return update
                                                          
         return {
             "status":  "no_account",
@@ -5418,6 +5447,11 @@ def get_encrypted_wallet_secret_network(
             }
         secret = record.get("encryptedWalletSecret")
         if not secret:
+            update = _wallet_v2_update_required(
+                record, norm, "Ethereum Mainnet",
+            )
+            if update is not None:
+                return update
             return {
                 "status":  "no_account",
                 "asset":   norm,
@@ -5877,6 +5911,9 @@ def _solana_encrypted_secret(
         }
     secret = record.get("encryptedWalletSecret")
     if not isinstance(secret, str) or not secret:
+        update = _wallet_v2_update_required(record, norm, _SOLANA_NETWORK_LABEL)
+        if update is not None:
+            return update
         return {
             "wallet_engine": "no_encrypted_secret",
             "asset":         norm,
@@ -7337,6 +7374,9 @@ def _tron_encrypted_secret(
         }
     secret = record.get("encryptedWalletSecret")
     if not isinstance(secret, str) or not secret:
+        update = _wallet_v2_update_required(record, norm, _TRON_NETWORK_LABEL)
+        if update is not None:
+            return update
         return {
             "wallet_engine": "no_encrypted_secret",
             "asset":         norm,
