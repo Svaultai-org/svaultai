@@ -141,6 +141,10 @@ INVALIDATION_RULES: dict[str, frozenset[str]] = {
         "get_vault_status", "get_vault_overview",
         "get_vault_intelligence",
     }),
+    # A saved item can appear in several kinds of vault summary. After an
+    # explicit deletion, drop every cached result for that vault rather than
+    # risk showing stale metadata until the normal TTL expires.
+    "secure_item_deleted": CACHEABLE_TOOLS,
     "expiry_updated": frozenset({
         "list_expiring_items", "get_expiry_alert",
         "get_vault_intelligence",

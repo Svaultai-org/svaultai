@@ -204,6 +204,29 @@ class InvalidationRules(_Base):
             tool_name="list_saved_credentials", args={},
         ))
 
+    def test_secure_item_deleted_drops_all_vault_results_only(self):
+        c = cache.get_cache()
+        for tool in cache.CACHEABLE_TOOLS:
+            self._store_pair(c, tool)
+        c.put(
+            vault_id=_VAULT_OTHER, token_id=_TOKEN_A,
+            tool_name="get_vault_status", args={}, result='{"v":"other"}',
+        )
+        self.assertEqual(
+            c.invalidate_for_event(vault_id=_VAULT, event="secure_item_deleted"),
+            len(cache.CACHEABLE_TOOLS),
+        )
+        for tool in cache.CACHEABLE_TOOLS:
+            with self.subTest(tool=tool):
+                self.assertIsNone(c.get(
+                    vault_id=_VAULT, token_id=_TOKEN_A,
+                    tool_name=tool, args={},
+                ))
+        self.assertEqual(c.get(
+            vault_id=_VAULT_OTHER, token_id=_TOKEN_A,
+            tool_name="get_vault_status", args={},
+        ), '{"v":"other"}')
+
     def test_file_renamed_drops_metadata_listings_only(self):
         c = cache.get_cache()
         self._store_pair(c, "list_vault_files")
