@@ -79,6 +79,7 @@ import 'services/zk_auth_service.dart';
 import 'services/zk_pin_free_item_read_session.dart';
 import 'services/zk_pin_free_file_session.dart';
 import 'services/legacy_file_read_session.dart' as legacy_file_read;
+import 'services/zk_legacy_file_read_route.dart' as zk_legacy_file_route;
 import 'services/ephemeral_legacy_file_action.dart' as ephemeral_file;
 import 'services/legacy_chunked_local_download.dart' as legacy_chunked_download;
 import 'services/legacy_file_metadata_consistency.dart';
@@ -18078,12 +18079,21 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           allowDisabledRoute:
               pinFreeLegacyDownloadOffered && !requireReadyV2,
         );
-    if ((requirePinFreeChat || signedPrivateChatOfferedForToken(authToken)) &&
-        !availableV2) {
-      if (!pinFreeLegacyDownloadOffered) {
-        throw StateError('Private file access changed. Sign in again.');
-      }
-      return _fetchPinFreeChatLegacyFile(
+    final oldFileRoute = zk_legacy_file_route.selectZkLegacyFileReadRoute(
+      availableV2: availableV2,
+      requireReadyV2: requireReadyV2,
+      requirePinFreeChat: requirePinFreeChat,
+      signedPrivateChatOffered: signedPrivateChatOfferedForToken(authToken),
+      strictPinFreeFiles: pinFreeZkFile,
+      signedLegacyDownloadOffered: pinFreeLegacyDownloadOffered,
+    );
+    if (oldFileRoute == zk_legacy_file_route.ZkLegacyFileReadRoute.unavailable) {
+      throw StateError(pinFreeZkFile
+          ? 'This older file needs a private read upgrade before opening.'
+          : 'Private file access changed. Sign in again.');
+    }
+    if (oldFileRoute == zk_legacy_file_route.ZkLegacyFileReadRoute.proofOnly) {
+      return _fetchProofOnlyLegacyFile(
         client: client,
         vaultName: vaultName,
         authToken: authToken,
@@ -18091,9 +18101,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         fallbackFileName: fallbackFileName,
         fallbackMime: fallbackMime,
       );
-    }
-    if (!availableV2 && pinFreeZkFile && !requireReadyV2) {
-      throw StateError('This file needs private migration before opening.');
     }
     if (requireReadyV2 && !availableV2) {
       throw StateError('Private file changed. Refresh and try again.');
@@ -18361,10 +18368,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     return (bytes: out, contentType: mime, fileName: fileName);
   }
 
-  /// Open one older chat-card file using a fresh OPAQUE proof and a local key.
-  /// The card never falls through to the legacy PIN-bearing download route.
+  /// Open one older file using a fresh OPAQUE proof and a local key. Private
+  /// chat and strict Files reads never fall through to a PIN-bearing route.
   Future<({Uint8List bytes, String? contentType, String fileName})>
-      _fetchPinFreeChatLegacyFile({
+      _fetchProofOnlyLegacyFile({
     required VaultAIClient client,
     required String vaultName,
     required String authToken,
