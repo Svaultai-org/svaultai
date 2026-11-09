@@ -496,12 +496,12 @@ def test_owner_copy_is_source_bound_and_keeps_legacy_active(monkeypatch):
             assert bytes(cur.fetchone()[0]) == third_legacy_ct
             cur.execute("INSERT INTO qa_memory_proofs(proof,vault_id) "
                         "VALUES(%s,%s)", ("restage-after-edit", vault_id))
-        refused_stage = client.post(path + "/stage", json={
+        reused_stage = client.post(path + "/stage", json={
             **body, "source_snapshot": snapshot3,
             "zk_proof_token": "restage-after-edit",
         })
-        assert refused_stage.status_code == 409
-        assert refused_stage.json()["detail"] == "memory_copy_protected"
+        assert reused_stage.status_code == 200
+        assert reused_stage.json()["reused_verified_copy"] is True
         assert client.get(path + "/readback").json()["payload_ciphertext"] == third_v2_encoded
         # Soft deletion hides the old-client row while retaining its bytes.
         delete_body = {"source_snapshot": snapshot3,
