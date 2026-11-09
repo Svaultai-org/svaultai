@@ -31,6 +31,8 @@ import 'services/file_v2_renamer.dart';
 import 'services/file_v2_writer.dart';
 import 'services/inheritance_v2_file_stream_transfer.dart';
 import 'services/linked_inheritance_v2_stage.dart' as linked_inh_stage;
+import 'services/linked_inheritance_v2_keycheck.dart' as linked_inh_keycheck;
+import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/private_content_pin_guard.dart' as private_content_guard;
 
 // Only builds with the MVK V2 file reader advertise this capability. The
@@ -3055,6 +3057,77 @@ class VaultAIClient {
       readback: (id) => request(
         'GET',
         '/inheritance/old-link-v2/$id/readback',
+      ),
+      accessIsCurrent: () {
+        try {
+          checkAccess();
+          return true;
+        } catch (_) {
+          return false;
+        }
+      },
+    );
+  }
+
+  /// Check beneficiary key possession using a random challenge. The owner
+  /// package stays private and the old link remains authoritative.
+  Future<linked_inh_keycheck.LinkedBeneficiaryKeyCheck>
+      verifyLinkedOldInheritanceBeneficiaryKey({
+    required String authToken,
+    required int linkId,
+    required String beneficiaryVaultId,
+    required SecretKey beneficiaryPrivateKey,
+    required String zkProofToken,
+    bool Function()? responseIsCurrent,
+  }) async {
+    const enabled = bool.fromEnvironment(
+      'VAULTAI_ENABLE_LINKED_INHERITANCE_KEYCHECK',
+      defaultValue: false,
+    );
+    if (!enabled) {
+      throw StateError('Linked inheritance key check is unavailable');
+    }
+    void checkAccess() {
+      if (zk_sk_store.ZkActiveSkVault.currentVaultId() !=
+              beneficiaryVaultId ||
+          !identical(zk_sk_store.ZkActiveSkVault.current(),
+              beneficiaryPrivateKey) ||
+          responseIsCurrent?.call() == false) {
+        throw StateError('Beneficiary vault access changed');
+      }
+    }
+
+    Future<Map<String, dynamic>> request(String path,
+        [Map<String, dynamic>? body]) async {
+      checkAccess();
+      final response = await _sessionHttpWithGuard(checkAccess).post(
+        Uri.parse('$baseUrl$path'),
+        headers: _defaultHeaders(authToken: authToken, json: true),
+        body: jsonEncode(body ?? <String, dynamic>{}),
+      );
+      checkAccess();
+      if (response.statusCode != 200) {
+        _throwIfAuthExpired(response.statusCode, response.body);
+        _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        throw StateError('Beneficiary key check unavailable');
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Invalid beneficiary key check response');
+      }
+      return decoded;
+    }
+
+    checkAccess();
+    return linked_inh_keycheck.verifyLinkedBeneficiaryKey(
+      linkId: linkId,
+      beneficiaryPrivateKey: beneficiaryPrivateKey,
+      zkProofToken: zkProofToken,
+      fetchChallenge: (id) => request(
+        '/inheritance/old-link-v2/$id/beneficiary-challenge',
+      ),
+      submitResponse: (body) => request(
+        '/inheritance/old-link-v2/beneficiary-keycheck', body,
       ),
       accessIsCurrent: () {
         try {

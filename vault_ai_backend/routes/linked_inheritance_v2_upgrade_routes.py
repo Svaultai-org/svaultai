@@ -10,13 +10,22 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import hmac
 import os
 import re
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from psycopg2.extras import RealDictCursor
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric.x25519 import (
+    X25519PrivateKey, X25519PublicKey,
+)
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from auth_local import SessionPrincipal
 from device_gate import verify_trusted_device
@@ -28,6 +37,9 @@ from vault_core import get_db
 
 router = APIRouter(tags=["linked-inheritance-v2-upgrade"])
 FLAG_NAME = "VAULTAI_ZK_LINKED_BENEFICIARY_V2_STAGE_ENABLED"
+KEYCHECK_FLAG_NAME = "VAULTAI_ZK_LINKED_BENEFICIARY_KEYCHECK_ENABLED"
+_KEYCHECK_INFO = b"vaultai.inh-v2-beneficiary-keycheck.v1"
+_CHALLENGE_LIFETIME = timedelta(minutes=5)
 
 
 class StageLinkedV2Package(BaseModel):
@@ -42,6 +54,16 @@ class StageLinkedV2Package(BaseModel):
     wrapped_key: str = Field(min_length=1)
     wrapping_ephemeral_pk: str = Field(min_length=1)
     wrapping_nonce: str = Field(min_length=1)
+
+
+class CompleteBeneficiaryKeyCheck(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    beneficiary_link_id: int = Field(gt=0)
+    stage_revision: int = Field(gt=0)
+    offer_commitment: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    challenge_secret: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    expected_beneficiary_pk_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    zk_proof_token: str = Field(min_length=1, max_length=128)
 
 
 _LINK_FIELDS = (
@@ -65,6 +87,12 @@ def _enabled() -> None:
             os.getenv("VAULTAI_ZK_BENEFICIARY_PROOF_ENABLED", "false")
             .strip().lower() != "true" or
             not zk_beneficiary_v2_enabled()):
+        raise HTTPException(status_code=404, detail="not_found")
+
+
+def _keycheck_enabled() -> None:
+    _enabled()
+    if os.getenv(KEYCHECK_FLAG_NAME, "false").strip().lower() != "true":
         raise HTTPException(status_code=404, detail="not_found")
 
 
@@ -116,12 +144,20 @@ def _source_snapshot(link: dict, credential: dict | None) -> str:
     return _b64(h.digest())
 
 
-def _load_old_link(cur, *, link_id: int, owner_vault_id: str, lock: bool) -> tuple[dict, dict | None]:
+def _load_old_link(
+    cur, *, link_id: int, lock: bool,
+    owner_vault_id: str | None = None,
+    beneficiary_vault_id: str | None = None,
+) -> tuple[dict, dict | None]:
+    if (owner_vault_id is None) == (beneficiary_vault_id is None):
+        raise ValueError("Exactly one link role is required")
+    column = "passer_vault_id" if owner_vault_id is not None else "beneficiary_vault_id"
+    actor = owner_vault_id if owner_vault_id is not None else beneficiary_vault_id
     suffix = "FOR UPDATE" if lock else "FOR SHARE"
     cur.execute(
         f"SELECT {', '.join(_LINK_FIELDS)} FROM beneficiary_links "
-        f"WHERE id=%s AND passer_vault_id=%s {suffix}",
-        (link_id, owner_vault_id),
+        f"WHERE id=%s AND {column}=%s {suffix}",
+        (link_id, actor),
     )
     link = cur.fetchone()
     if (not link or
@@ -184,6 +220,70 @@ def _stage_response(link_id: int, prior: dict, snapshot: str, pk_hash: bytes) ->
         "beneficiary_pk_sha256": pk_hash.hex(),
         "state": "staged",
         "legacy_link_unchanged": True,
+    }
+
+
+def _offer_commitment(link_id: int, stage: dict) -> str:
+    h = hashlib.sha256(b"linked-inheritance-beneficiary-keycheck/v1\x00")
+    _feed(h, link_id)
+    for name in (
+        "owner_vault_id", "beneficiary_vault_id", "old_source_snapshot",
+        "beneficiary_pk_sha256", "stage_revision", *_ENVELOPE_FIELDS,
+    ):
+        _feed(h, stage[name])
+    return _b64(h.digest())
+
+
+def _current_stage_for_beneficiary(cur, *, link: dict, credential: dict | None,
+                                   pk_hash: bytes) -> dict:
+    cur.execute(
+        """SELECT owner_vault_id,beneficiary_vault_id,old_source_snapshot,
+                  beneficiary_pk_sha256,encrypted_payload,payload_nonce,
+                  wrapped_key,wrapping_ephemeral_pk,wrapping_nonce,
+                  stage_revision,state,beneficiary_challenge_hash,
+                  beneficiary_challenge_revision,
+                  beneficiary_challenge_expires_at,
+                  beneficiary_keycheck_revision,beneficiary_keycheck_at
+             FROM beneficiary_link_v2_upgrades WHERE old_link_id=%s
+             FOR UPDATE""",
+        (link["id"],),
+    )
+    stage = cur.fetchone()
+    if not stage:
+        raise HTTPException(status_code=404, detail="upgrade_not_staged")
+    if (str(stage["owner_vault_id"]) != str(link["passer_vault_id"]) or
+            str(stage["beneficiary_vault_id"]) !=
+            str(link["beneficiary_vault_id"]) or
+            stage["state"] != "staged" or
+            stage["old_source_snapshot"] != _source_snapshot(link, credential) or
+            bytes(stage["beneficiary_pk_sha256"]) != pk_hash):
+        raise HTTPException(status_code=409, detail="old_link_or_key_changed")
+    return stage
+
+
+def _challenge_aad(link_id: int, revision: int, commitment: str) -> bytes:
+    return f"svaultai:old-link-v2-beneficiary-keycheck:v1:{link_id}:{revision}:{commitment}".encode("ascii")
+
+
+def _encrypt_challenge(public_key: bytes, secret: bytes, aad: bytes) -> dict:
+    ephemeral = X25519PrivateKey.generate()
+    ephemeral_public = ephemeral.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    try:
+        shared = ephemeral.exchange(X25519PublicKey.from_public_bytes(public_key))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="beneficiary_key_invalid") from exc
+    key = HKDF(
+        algorithm=hashes.SHA256(), length=32,
+        salt=ephemeral_public, info=_KEYCHECK_INFO,
+    ).derive(shared)
+    nonce = secrets.token_bytes(12)
+    return {
+        "challenge_ciphertext": _b64(AESGCM(key).encrypt(nonce, secret, aad)),
+        "challenge_nonce": _b64(nonce),
+        "challenge_ephemeral_pk": _b64(ephemeral_public),
     }
 
 
@@ -257,7 +357,11 @@ def stage_linked_v2_package(
                           encrypted_payload=%s,payload_nonce=%s,
                           wrapped_key=%s,wrapping_ephemeral_pk=%s,
                           wrapping_nonce=%s,stage_revision=stage_revision+1,
-                          updated_at=NOW()
+                          beneficiary_challenge_hash=NULL,
+                          beneficiary_challenge_revision=NULL,
+                          beneficiary_challenge_expires_at=NULL,
+                          beneficiary_keycheck_revision=NULL,
+                          beneficiary_keycheck_at=NULL,updated_at=NOW()
                     WHERE old_link_id=%s AND owner_vault_id=%s
                       AND stage_revision=%s AND state='staged'
                     RETURNING stage_revision""",
@@ -275,6 +379,124 @@ def stage_linked_v2_package(
             payload.beneficiary_link_id,
             {"stage_revision": revision}, snapshot, pk_hash,
         )
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@router.post("/inheritance/old-link-v2/{link_id}/beneficiary-challenge")
+def issue_beneficiary_key_challenge(
+    link_id: int,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    """Prove the beneficiary can decrypt its own key, without releasing MVK."""
+    _keycheck_enabled()
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        link, credential = _load_old_link(
+            cur, link_id=link_id, beneficiary_vault_id=principal["vault_id"],
+            lock=True,
+        )
+        public_key = _beneficiary_pk(cur, str(link["beneficiary_vault_id"]))
+        pk_hash = hashlib.sha256(public_key).digest()
+        stage = _current_stage_for_beneficiary(
+            cur, link=link, credential=credential, pk_hash=pk_hash,
+        )
+        revision = int(stage["stage_revision"])
+        commitment = _offer_commitment(link_id, stage)
+        secret = secrets.token_bytes(32)
+        ciphertext = _encrypt_challenge(
+            public_key, secret, _challenge_aad(link_id, revision, commitment),
+        )
+        expires_at = datetime.now(timezone.utc) + _CHALLENGE_LIFETIME
+        cur.execute(
+            """UPDATE beneficiary_link_v2_upgrades
+                  SET beneficiary_challenge_hash=%s,
+                      beneficiary_challenge_revision=%s,
+                      beneficiary_challenge_expires_at=%s,updated_at=NOW()
+                WHERE old_link_id=%s AND stage_revision=%s AND state='staged'""",
+            (hashlib.sha256(secret).digest(), revision, expires_at,
+             link_id, revision),
+        )
+        conn.commit()
+        return {
+            "beneficiary_link_id": link_id,
+            "stage_revision": revision,
+            "offer_commitment": commitment,
+            "beneficiary_pk_sha256": pk_hash.hex(),
+            "expires_at": expires_at.isoformat(),
+            **ciphertext,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@router.post("/inheritance/old-link-v2/beneficiary-keycheck")
+def complete_beneficiary_key_check(
+    payload: CompleteBeneficiaryKeyCheck,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    """Record private-key possession for exactly one unchanged stage."""
+    _keycheck_enabled()
+    secret = _decode(payload.challenge_secret, low=32, high=32)
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        link, credential = _load_old_link(
+            cur, link_id=payload.beneficiary_link_id,
+            beneficiary_vault_id=principal["vault_id"], lock=True,
+        )
+        pk_hash = hashlib.sha256(
+            _beneficiary_pk(cur, str(link["beneficiary_vault_id"])),
+        ).digest()
+        stage = _current_stage_for_beneficiary(
+            cur, link=link, credential=credential, pk_hash=pk_hash,
+        )
+        if (pk_hash.hex() != payload.expected_beneficiary_pk_sha256 or
+                int(stage["stage_revision"]) != payload.stage_revision or
+                _offer_commitment(payload.beneficiary_link_id, stage) !=
+                payload.offer_commitment):
+            raise HTTPException(status_code=409, detail="stage_revision_changed")
+        expires_at = stage.get("beneficiary_challenge_expires_at")
+        stored_hash = stage.get("beneficiary_challenge_hash")
+        if (stored_hash is None or
+                stage.get("beneficiary_challenge_revision") !=
+                payload.stage_revision or
+                expires_at is None or
+                expires_at <= datetime.now(timezone.utc) or
+                not hmac.compare_digest(
+                    bytes(stored_hash), hashlib.sha256(secret).digest(),
+                )):
+            raise HTTPException(status_code=409, detail="beneficiary_challenge_invalid")
+        consume_recent_zk_proof_on_cursor(
+            payload.zk_proof_token, principal, cur,
+        )
+        cur.execute(
+            """UPDATE beneficiary_link_v2_upgrades
+                  SET beneficiary_keycheck_revision=%s,
+                      beneficiary_keycheck_at=NOW(),
+                      beneficiary_challenge_hash=NULL,
+                      beneficiary_challenge_revision=NULL,
+                      beneficiary_challenge_expires_at=NULL,updated_at=NOW()
+                WHERE old_link_id=%s AND stage_revision=%s AND state='staged'""",
+            (payload.stage_revision, payload.beneficiary_link_id,
+             payload.stage_revision),
+        )
+        conn.commit()
+        return {
+            "beneficiary_link_id": payload.beneficiary_link_id,
+            "stage_revision": payload.stage_revision,
+            "offer_commitment": payload.offer_commitment,
+            "beneficiary_key_possession_confirmed": True,
+            "package_decryption_verified": False,
+            "legacy_link_unchanged": True,
+        }
     except Exception:
         conn.rollback()
         raise

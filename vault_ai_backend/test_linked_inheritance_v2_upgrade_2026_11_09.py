@@ -4,22 +4,34 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from datetime import datetime, timedelta, timezone
 from copy import deepcopy
 from unittest import mock
 
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric.x25519 import (
+    X25519PrivateKey, X25519PublicKey,
+)
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from routes import linked_inheritance_v2_upgrade_routes as upgrade
 
 
 OWNER = {"vault_id": "11111111-1111-1111-1111-111111111111", "token_id": "owner"}
 BENEFICIARY_ID = "22222222-2222-2222-2222-222222222222"
+BENEFICIARY = {"vault_id": BENEFICIARY_ID, "token_id": "beneficiary"}
 
 
 def _b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _unb64(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
 class FakeDb:
@@ -71,7 +83,12 @@ class FakeCursor:
         normalized = " ".join(sql.split()).upper()
         self.db.queries.append((normalized, params))
         if "FROM BENEFICIARY_LINKS" in normalized:
-            self.value = self.db.link if params == (41, OWNER["vault_id"]) else None
+            role = ("PASSER_VAULT_ID=%S" if params == (41, OWNER["vault_id"])
+                    else "BENEFICIARY_VAULT_ID=%S")
+            self.value = self.db.link if (
+                params in ((41, OWNER["vault_id"]), (41, BENEFICIARY_ID))
+                and role in normalized
+            ) else None
         elif "FROM INHERITANCE_CREDENTIALS" in normalized:
             self.value = self.db.credential
         elif "FROM VAULTS" in normalized:
@@ -98,8 +115,33 @@ class FakeCursor:
                 "wrapping_ephemeral_pk": eph,
                 "wrapping_nonce": wrap_nonce,
                 "stage_revision": 1, "state": "staged",
+                "beneficiary_challenge_hash": None,
+                "beneficiary_challenge_revision": None,
+                "beneficiary_challenge_expires_at": None,
+                "beneficiary_keycheck_revision": None,
+                "beneficiary_keycheck_at": None,
             }
             self.value = {"stage_revision": 1}
+        elif normalized.startswith("UPDATE BENEFICIARY_LINK_V2_UPGRADES") and \
+                "SET BENEFICIARY_CHALLENGE_HASH=%S" in normalized:
+            digest, revision, expiry, link_id, current_revision = params
+            assert (link_id, current_revision) == (41, self.db.stage["stage_revision"])
+            self.db.stage.update({
+                "beneficiary_challenge_hash": digest,
+                "beneficiary_challenge_revision": revision,
+                "beneficiary_challenge_expires_at": expiry,
+            })
+        elif normalized.startswith("UPDATE BENEFICIARY_LINK_V2_UPGRADES") and \
+                "SET BENEFICIARY_KEYCHECK_REVISION=%S" in normalized:
+            revision, link_id, current_revision = params
+            assert (link_id, current_revision) == (41, self.db.stage["stage_revision"])
+            self.db.stage.update({
+                "beneficiary_keycheck_revision": revision,
+                "beneficiary_keycheck_at": "now",
+                "beneficiary_challenge_hash": None,
+                "beneficiary_challenge_revision": None,
+                "beneficiary_challenge_expires_at": None,
+            })
         elif normalized.startswith("UPDATE BENEFICIARY_LINK_V2_UPGRADES"):
             (snapshot, pk_hash, encrypted, nonce, wrapped, eph, wrap_nonce,
              link_id, owner_id, expected_revision) = params
@@ -115,6 +157,11 @@ class FakeCursor:
                 "wrapping_ephemeral_pk": eph,
                 "wrapping_nonce": wrap_nonce,
                 "stage_revision": self.db.stage["stage_revision"] + 1,
+                "beneficiary_challenge_hash": None,
+                "beneficiary_challenge_revision": None,
+                "beneficiary_challenge_expires_at": None,
+                "beneficiary_keycheck_revision": None,
+                "beneficiary_keycheck_at": None,
             })
             self.value = {"stage_revision": self.db.stage["stage_revision"]}
         else:
@@ -248,3 +295,144 @@ def test_linked_old_link_without_credential_can_stage_without_creating_one(ready
     assert staged["state"] == "staged"
     assert db.credential is None
     assert db.link["wrapped_vault_key"] == "synthetic-old-pin-wrap"
+
+
+def _prepared_beneficiary(ready, monkeypatch):
+    db, proof = ready
+    private = X25519PrivateKey.generate()
+    db.pk = private.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+    )
+    payload = _payload().model_copy(update={
+        "expected_beneficiary_pk_sha256": hashlib.sha256(db.pk).hexdigest(),
+    })
+    upgrade.stage_linked_v2_package(payload, OWNER)
+    monkeypatch.setenv(upgrade.KEYCHECK_FLAG_NAME, "true")
+    return db, proof, private, payload
+
+
+def _solve_challenge(private, challenge):
+    eph = _unb64(challenge["challenge_ephemeral_pk"])
+    key = HKDF(
+        algorithm=hashes.SHA256(), length=32, salt=eph,
+        info=upgrade._KEYCHECK_INFO,
+    ).derive(private.exchange(X25519PublicKey.from_public_bytes(eph)))
+    aad = upgrade._challenge_aad(
+        challenge["beneficiary_link_id"], challenge["stage_revision"],
+        challenge["offer_commitment"],
+    )
+    secret = AESGCM(key).decrypt(
+        _unb64(challenge["challenge_nonce"]),
+        _unb64(challenge["challenge_ciphertext"]), aad,
+    )
+    assert len(secret) == 32
+    return upgrade.CompleteBeneficiaryKeyCheck(
+        beneficiary_link_id=challenge["beneficiary_link_id"],
+        stage_revision=challenge["stage_revision"],
+        offer_commitment=challenge["offer_commitment"],
+        challenge_secret=_b64(secret),
+        expected_beneficiary_pk_sha256=challenge["beneficiary_pk_sha256"],
+        zk_proof_token="synthetic-beneficiary-proof",
+    )
+
+
+def test_beneficiary_keycheck_disabled_separately_from_stage(ready, monkeypatch):
+    db, _, _, _ = _prepared_beneficiary(ready, monkeypatch)
+    monkeypatch.delenv(upgrade.KEYCHECK_FLAG_NAME)
+    with pytest.raises(HTTPException) as off:
+        upgrade.issue_beneficiary_key_challenge(41, BENEFICIARY)
+    assert off.value.status_code == 404
+    assert db.stage["beneficiary_challenge_hash"] is None
+
+
+def test_beneficiary_proves_own_private_key_without_old_link_mutation(
+        ready, monkeypatch):
+    db, proof, private, _ = _prepared_beneficiary(ready, monkeypatch)
+    old_link, old_credential = deepcopy(db.link), deepcopy(db.credential)
+    challenge = upgrade.issue_beneficiary_key_challenge(41, BENEFICIARY)
+    assert challenge["stage_revision"] == 1
+    assert "encrypted_payload" not in challenge
+    assert "wrapped_key" not in challenge
+    assert "pin" not in challenge
+    response = _solve_challenge(private, challenge)
+    assert response.challenge_secret not in str(db.queries)
+    result = upgrade.complete_beneficiary_key_check(response, BENEFICIARY)
+    assert result["beneficiary_key_possession_confirmed"] is True
+    assert result["package_decryption_verified"] is False
+    assert db.stage["beneficiary_keycheck_revision"] == 1
+    assert db.stage["beneficiary_challenge_hash"] is None
+    assert db.link == old_link and db.credential == old_credential
+    assert proof.call_count == 2  # Owner stage and beneficiary completion.
+    with pytest.raises(HTTPException) as replay:
+        upgrade.complete_beneficiary_key_check(response, BENEFICIARY)
+    assert replay.value.status_code == 409
+    assert proof.call_count == 2
+
+
+def test_keycheck_rejects_wrong_actor_expiry_and_stage_replacement(
+        ready, monkeypatch):
+    db, proof, private, payload = _prepared_beneficiary(ready, monkeypatch)
+    with pytest.raises(HTTPException):
+        upgrade.issue_beneficiary_key_challenge(41, OWNER)
+    challenge = upgrade.issue_beneficiary_key_challenge(41, BENEFICIARY)
+    response = _solve_challenge(private, challenge)
+    db.stage["beneficiary_challenge_expires_at"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=1)
+    )
+    with pytest.raises(HTTPException) as expired:
+        upgrade.complete_beneficiary_key_check(response, BENEFICIARY)
+    assert expired.value.status_code == 409
+    assert proof.call_count == 1
+    db.stage["beneficiary_challenge_expires_at"] = (
+        datetime.now(timezone.utc) + timedelta(minutes=5)
+    )
+    upgrade.complete_beneficiary_key_check(response, BENEFICIARY)
+    assert db.stage["beneficiary_keycheck_revision"] == 1
+    changed = payload.model_copy(update={
+        "expected_stage_revision": 1,
+        "encrypted_payload": _b64(b"z" * 48),
+    })
+    upgrade.stage_linked_v2_package(changed, OWNER)
+    assert db.stage["stage_revision"] == 2
+    assert db.stage["beneficiary_keycheck_revision"] is None
+    with pytest.raises(HTTPException) as stale:
+        upgrade.complete_beneficiary_key_check(response, BENEFICIARY)
+    assert stale.value.status_code == 409
+    assert proof.call_count == 3
+
+
+def test_keycheck_models_reject_pin_and_wrong_beneficiary_key(ready, monkeypatch):
+    db, proof, private, _ = _prepared_beneficiary(ready, monkeypatch)
+    challenge = upgrade.issue_beneficiary_key_challenge(41, BENEFICIARY)
+    with pytest.raises(ValidationError):
+        upgrade.CompleteBeneficiaryKeyCheck(**{
+            **_solve_challenge(private, challenge).model_dump(),
+            "pin": "synthetic-only",
+        })
+    response = _solve_challenge(private, challenge).model_copy(update={
+        "challenge_secret": _b64(b"wrong" * 6 + b"!!"),
+    })
+    with pytest.raises(HTTPException) as wrong:
+        upgrade.complete_beneficiary_key_check(response, BENEFICIARY)
+    assert wrong.value.status_code == 409
+    assert db.stage["beneficiary_keycheck_revision"] is None
+    assert proof.call_count == 1
+
+
+def test_keycheck_fails_when_link_or_registered_key_changes(ready, monkeypatch):
+    db, proof, private, _ = _prepared_beneficiary(ready, monkeypatch)
+    challenge = upgrade.issue_beneficiary_key_challenge(41, BENEFICIARY)
+    response = _solve_challenge(private, challenge)
+    db.pk = b"q" * 32
+    with pytest.raises(HTTPException) as changed_key:
+        upgrade.complete_beneficiary_key_check(response, BENEFICIARY)
+    assert changed_key.value.status_code == 409
+    db.pk = private.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+    )
+    db.link["cooldown_ends_at"] = datetime.now(timezone.utc)
+    with pytest.raises(HTTPException) as active_link:
+        upgrade.complete_beneficiary_key_check(response, BENEFICIARY)
+    assert active_link.value.status_code == 409
+    assert db.stage["beneficiary_keycheck_revision"] is None
+    assert proof.call_count == 1
