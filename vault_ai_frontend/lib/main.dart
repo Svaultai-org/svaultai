@@ -1220,6 +1220,29 @@ const bool kZkPrivateOnlyClientReady = kEnableZkPrivateChat &&
 // A private-only release must not start until every offered wallet action has
 // a verified client-held-key path and existing records have been read back.
 const bool kPrivateWalletFeatureParityReady = false;
+// These require active V2 readers/writers, old-client coordination, and
+// end-to-end transfer tests. Prepared ciphertext copies alone are insufficient.
+const bool kActiveLegacyMemoryFeatureParityReady = false;
+const bool kLegacyInheritanceFullTransferReady = false;
+
+// A strict client must have every private replacement before it can claim
+// that the server may reject all older PIN-bearing routes. Individual offers
+// fence their older calls but do not prove complete feature parity.
+const bool kStrictPrivateFeatureParityReady =
+    kSignedPrivateChatLocalReadersReady &&
+    kSignedPrivateChatClientEnabled &&
+    kSignedReadOffersClientEnabled &&
+    kSignedFileCreateClientEnabled &&
+    kSignedFileMutationClientEnabled &&
+    kSignedPasswordAnalysisClientEnabled &&
+    kSignedBeneficiaryClientEnabled &&
+    kSignedAuthDeviceClientEnabled &&
+    kSignedImportClientEnabled &&
+    kSignedMemoryClientEnabled &&
+    kSignedSavedItemMutationClientEnabled &&
+    kActiveLegacyMemoryFeatureParityReady &&
+    kLegacyInheritanceFullTransferReady &&
+    kPrivateWalletFeatureParityReady;
 
 // Staged, opt-in Wallet V2 UI. No production build enables these flags yet.
 const bool kEnableWalletV2UiRead = bool.fromEnvironment(
@@ -1332,6 +1355,12 @@ Future<void> main() async {
     throw StateError(
       'Private-only unlock requires PIN-free wallet access for every '
       'supported asset. This build does not yet provide it.',
+    );
+  }
+  if (kPrivateOnlyUnlockEnabled && !kStrictPrivateFeatureParityReady) {
+    throw StateError(
+      'Private-only unlock requires complete private chat, Memory, '
+      'inheritance, saved-item, file, and device action cutovers.',
     );
   }
   if (kReleaseMode && !backendBaseUrl.startsWith('https://')) {
@@ -5565,7 +5594,7 @@ Future<Map<String, dynamic>> _zkHttpPost(
       path,
       privateOnlyBuild: kPrivateOnlyUnlockEnabled,
       clientReady:
-          kZkPrivateOnlyClientReady && kPrivateWalletFeatureParityReady,
+          kZkPrivateOnlyClientReady && kStrictPrivateFeatureParityReady,
     ));
   }
   final deviceId = apiClientDeviceId();
