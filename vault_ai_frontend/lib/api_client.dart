@@ -316,6 +316,19 @@ int _signedOfferBits(String token) {
   }
 }
 
+// The server signs OPAQUE sessions with a versioned envelope when read offers
+// are negotiated. This is a conservative client-side routing check only: a
+// forged shape can deny a legacy request, but it cannot authorize one.
+bool _hasSignedOpaqueSessionShape(String token) {
+  try {
+    final wire = base64Url.decode(base64Url.normalize(token));
+    return (wire.length == 50 && wire[0] == 3) ||
+        (wire.length == 51 && wire[0] == 4);
+  } on FormatException {
+    return false;
+  }
+}
+
 bool signedPrivateChatOfferedForToken(String token) =>
     (_signedOfferBits(token) & 512) != 0;
 
@@ -1869,8 +1882,9 @@ class VaultAIClient {
     int? cursor,
     int? limit,
   }) async {
-    if (kPrivateOnlyTransportRejectPin) {
-      throw StateError('Use local password analysis in private mode.');
+    if (kPrivateOnlyTransportRejectPin ||
+        _hasSignedOpaqueSessionShape(authToken)) {
+      throw StateError('Use local password analysis for this vault.');
     }
     final uri = Uri.parse('$baseUrl/security-center/analyze-passwords');
     final body = jsonEncode({
@@ -3232,8 +3246,9 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
-    if (kPrivateOnlyTransportRejectPin) {
-      throw StateError('Legacy server PIN rotation is unavailable in private mode.');
+    if (kPrivateOnlyTransportRejectPin ||
+        _hasSignedOpaqueSessionShape(authToken)) {
+      throw StateError('Legacy server PIN rotation is unavailable for this vault.');
     }
     final uri = Uri.parse('$baseUrl/rotate-vault-kdf');
 
@@ -5374,8 +5389,9 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
-    if (kPrivateOnlyTransportRejectPin) {
-      throw StateError('Use private vault stats in private mode.');
+    if (kPrivateOnlyTransportRejectPin ||
+        _hasSignedOpaqueSessionShape(authToken)) {
+      throw StateError('Use private vault stats for this vault.');
     }
     final uri = Uri.parse('$baseUrl/vault-stats');
 
