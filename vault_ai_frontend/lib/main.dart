@@ -44,6 +44,7 @@ import 'services/metadata_migration_client.dart' as mmc;
 import 'services/legacy_ciphertext_export_client.dart' as legacy_export;
 import 'services/legacy_saved_item_read_session.dart' as legacy_item_read;
 import 'services/legacy_ciphertext_migration_codec.dart' as legacy_codec;
+import 'services/legacy_memory_v2_preparation.dart' as memory_prep;
 import 'services/legacy_saved_item_replacement.dart' as legacy_item_replace;
 import 'services/legacy_saved_item_deletion.dart' as legacy_item_delete;
 import 'services/legacy_content_migration_stager.dart' as legacy_stage;
@@ -868,6 +869,13 @@ const bool kEnablePrivateLegacyStageOnDemand = bool.fromEnvironment(
   'VAULTAI_ENABLE_PRIVATE_LEGACY_STAGE_ON_DEMAND',
   defaultValue: false,
 );
+
+// Paired with the backend Memory-copy flag. The owner verifies an encrypted
+// V2 copy while the old Memory row remains available to existing clients.
+const bool kEnableLegacyMemoryV2Preparation = bool.fromEnvironment(
+  'VAULTAI_ENABLE_LEGACY_MEMORY_V2_PREPARATION',
+  defaultValue: false,
+) && kEnablePrivateLegacyStageOnDemand;
 
 // A separate, owner-initiated cutover. Keep off until every reader, wallet,
 // and older metadata family has been reviewed on web and both mobile apps.
@@ -5968,11 +5976,13 @@ Future<void> _stageLegacyContentBestEffort({
 Future<({
   legacy_stage.LegacyStageResult stage,
   legacy_retire.LegacyRetirementResult? retirement,
+  int memoriesPrepared,
 })> _runPrivateLegacyContentOnDemand(
   AppState app, {
   required Future<String?> Function() promptPin,
   required bool finishUpgrade,
   legacy_stage.LegacyStageProgress? onProgress,
+  void Function(int verified)? onMemoryProgress,
 }) async {
   if (!kEnablePrivateLegacyStageOnDemand) {
     throw StateError('Private content preparation is unavailable');
@@ -6017,6 +6027,47 @@ Future<({
         onProgress: onProgress,
       ).stageAndVerify();
       if (!source.stillCurrent()) throw StateError('Vault session changed');
+      final memoriesPrepared = kEnableLegacyMemoryV2Preparation
+          ? await memory_prep.LegacyMemoryV2Preparation(
+              export: source.export,
+              codec: source.codec,
+              mvk: source.codec.mvk,
+              proofProvider: source.proof,
+              accessIsCurrent: source.stillCurrent,
+              onProgress: onMemoryProgress,
+              post: (path, body) async {
+                if (!RegExp(r'^/vault/memory/legacy-copy/[1-9][0-9]*/stage$')
+                    .hasMatch(path)) {
+                  throw StateError('Unsupported older Memory action');
+                }
+                if (!source.stillCurrent()) {
+                  throw StateError('Vault session changed');
+                }
+                assertPrivateOnlyPinFreeBody(body);
+                final reply = await _zkHttpPost(path, body,
+                    bearerToken: token);
+                if (!source.stillCurrent()) {
+                  throw StateError('Vault session changed');
+                }
+                return reply;
+              },
+              get: (path) async {
+                if (!RegExp(r'^/vault/memory/legacy-copy/[1-9][0-9]*/readback$')
+                    .hasMatch(path)) {
+                  throw StateError('Unsupported older Memory readback');
+                }
+                if (!source.stillCurrent()) {
+                  throw StateError('Vault session changed');
+                }
+                final reply = await _zkHttpGet(path, bearerToken: token);
+                if (!source.stillCurrent()) {
+                  throw StateError('Vault session changed');
+                }
+                return reply;
+              },
+            ).prepare()
+          : 0;
+      if (!source.stillCurrent()) throw StateError('Vault session changed');
       final retirement = finishUpgrade
           ? await legacy_retire.LegacyContentRetirementCoordinator(
               enabled: true,
@@ -6027,7 +6078,8 @@ Future<({
               now: DateTime.now,
             ).complete(result.verifiedReadbacks, ownerInitiated: true)
           : null;
-      return (stage: result, retirement: retirement);
+      return (stage: result, retirement: retirement,
+          memoriesPrepared: memoriesPrepared);
     } finally {
       transport.close();
       source.close();
@@ -14546,6 +14598,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     var ownerStarted = false;
     var itemsVerified = 0;
     var filesVerified = 0;
+    var memoriesVerified = 0;
     void recordProgress(int items, int files) {
       itemsVerified = items;
       filesVerified = files;
@@ -14561,27 +14614,31 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         if (pin != null) ownerStarted = true;
         return pin;
       }
-      final completion = kPrivateOnlyUnlockEnabled &&
-              kEnablePrivateLegacyRetireOnDemand
-          ? await finishPrivateLegacyContentOnDemand(
-              app, promptPin: ownerPrompt, onProgress: recordProgress,
-            )
-          : null;
-      final result = completion?.stage ??
-          await preparePrivateLegacyContentOnDemand(
-            app, promptPin: ownerPrompt, onProgress: recordProgress,
-          );
+      final completion = await _runPrivateLegacyContentOnDemand(
+        app,
+        promptPin: ownerPrompt,
+        finishUpgrade:
+            kPrivateOnlyUnlockEnabled && kEnablePrivateLegacyRetireOnDemand,
+        onProgress: recordProgress,
+        onMemoryProgress: (verified) => memoriesVerified = verified,
+      );
+      final result = completion.stage;
       if (!mounted) return;
       final deferred = result.itemsDeferredForSize +
           result.filesDeferredForSize +
           result.filesDeferredForUnreadableSource +
           result.filesDeferredForExtraLegacyData;
       final summary = result.itemsVerified == 0 &&
-              result.filesVerified == 0 && deferred == 0
+              result.filesVerified == 0 &&
+              completion.memoriesPrepared == 0 && deferred == 0
           ? 'No older content needs preparation.'
-          : 'Verified encrypted copies of ${result.itemsVerified} saved '
-              'items and ${result.filesVerified} files.';
-      final retired = completion?.retirement;
+          : kEnableLegacyMemoryV2Preparation
+              ? 'Verified encrypted copies of ${result.itemsVerified} saved '
+                  'items, ${result.filesVerified} files, and '
+                  '${completion.memoriesPrepared} memories.'
+              : 'Verified encrypted copies of ${result.itemsVerified} saved '
+                  'items and ${result.filesVerified} files.';
+      final retired = completion.retirement;
       final completionText = retired == null
           ? 'Your originals remain available.'
           : 'Switched ${retired.itemsRetired} saved items and '
@@ -14607,23 +14664,29 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // The first prompt can be dismissed without starting. A later renewal
       // can be dismissed after copies were verified; report that progress.
       if (ownerStarted) {
-        await _showOlderContentPreparationPaused(itemsVerified, filesVerified);
+        await _showOlderContentPreparationPaused(
+            itemsVerified, filesVerified, memoriesVerified);
       }
     } catch (error) {
       if (!mounted || app.handleApiException(error)) return;
-      await _showOlderContentPreparationPaused(itemsVerified, filesVerified);
+      await _showOlderContentPreparationPaused(
+          itemsVerified, filesVerified, memoriesVerified);
     } finally {
       if (mounted) setState(() => _privateLegacyStageBusy = false);
     }
   }
 
   Future<void> _showOlderContentPreparationPaused(
-      int itemsVerified, int filesVerified) async {
+      int itemsVerified, int filesVerified, int memoriesVerified) async {
     if (!mounted) return;
-    final progress = itemsVerified + filesVerified == 0
+    final progress = itemsVerified + filesVerified + memoriesVerified == 0
         ? ''
-        : 'Verified encrypted copies of $itemsVerified saved items and '
-            '$filesVerified files in this attempt. ';
+        : kEnableLegacyMemoryV2Preparation
+            ? 'Verified encrypted copies of $itemsVerified saved items, '
+                '$filesVerified files, and $memoriesVerified memories in '
+                'this attempt. '
+            : 'Verified encrypted copies of $itemsVerified saved items and '
+                '$filesVerified files in this attempt. ';
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
