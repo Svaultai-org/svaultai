@@ -1,11 +1,11 @@
-"""Default-off, body-free cutover fence for the old authentication PIN API.
+"""Default-off, body-free cutover fences for the old authentication PIN API.
 
-When enabled, every inventoried legacy route is rejected from ASGI scope
-alone, including unauthenticated login and multipart/form endpoints. This
-middleware never calls ``receive`` for a blocked request. The proxy and
-transport can still have received bytes; client-side network tests remain
-necessary. Keep the flag off until every required action has a private
-successor and old clients have been handled.
+The login-only switch blocks pre-OPAQUE sign-in. The route-only switch blocks
+every inventoried legacy route while leaving OPAQUE finalize available. The
+original strict switch also rejects incompatible OPAQUE finalize calls.
+All modes decide from ASGI scope alone and never call ``receive`` for a
+blocked request. The proxy and transport can still have received bytes;
+client-side network tests remain necessary.
 """
 
 from __future__ import annotations
@@ -19,6 +19,8 @@ from starlette.routing import compile_path
 
 
 FLAG_NAME = "VAULTAI_STRICT_RAW_PIN_INGRESS_ENABLED"
+LEGACY_ROUTES_FLAG_NAME = "VAULTAI_LEGACY_PIN_ROUTES_DISABLED"
+LEGACY_LOGIN_FLAG_NAME = "VAULTAI_LEGACY_PIN_LOGIN_DISABLED"
 STRICT_CLIENT_CAPABILITY_HEADER = b"x-svaultai-strict-pin-free-client"
 UPGRADE_DETAIL = {
     "code": "client_upgrade_required",
@@ -121,6 +123,16 @@ def strict_raw_pin_ingress_enabled() -> bool:
     return os.getenv(FLAG_NAME, "false").strip().lower() == "true"
 
 
+def legacy_pin_routes_disabled() -> bool:
+    """Block old PIN routes without changing OPAQUE finalize compatibility."""
+    return os.getenv(LEGACY_ROUTES_FLAG_NAME, "false").strip().lower() == "true"
+
+
+def legacy_pin_login_disabled() -> bool:
+    """Block the pre-OPAQUE login route without affecting other requests."""
+    return os.getenv(LEGACY_LOGIN_FLAG_NAME, "false").strip().lower() == "true"
+
+
 def _has_strict_private_client_signal(headers) -> bool:
     values = [value.strip() for name, value in headers
               if name.lower() == STRICT_CLIENT_CAPABILITY_HEADER]
@@ -154,21 +166,32 @@ def is_legacy_pin_route(method: str, path: str) -> bool:
 
 
 class StrictRawPinIngressGate:
-    """Reject old PIN-capable routes before the application reads their body."""
+    """Reject selected old PIN routes before the app reads their body."""
 
     def __init__(self, app: Callable[..., Awaitable[None]]) -> None:
         self.app = app
 
     async def __call__(self, scope, receive, send) -> None:
-        if scope.get("type") == "http" and strict_raw_pin_ingress_enabled():
+        if scope.get("type") == "http":
             method = scope.get("method", "")
             path = scope.get("path", "")
+            strict = strict_raw_pin_ingress_enabled()
+            block_routes = strict or legacy_pin_routes_disabled()
+            block_login = legacy_pin_login_disabled()
             old_finalize = (
+                strict and
                 method == "POST" and
                 path.rstrip("/") == "/auth/zk-login-finalize" and
                 not _has_strict_private_client_signal(scope.get("headers", ()))
             )
-            if not (old_finalize or is_legacy_pin_route(method, path)):
+            old_login = (
+                block_login and method == "POST" and
+                path.rstrip("/") == "/auth/login"
+            )
+            if not (
+                old_finalize or old_login or
+                (block_routes and is_legacy_pin_route(method, path))
+            ):
                 await self.app(scope, receive, send)
                 return
             response = JSONResponse(

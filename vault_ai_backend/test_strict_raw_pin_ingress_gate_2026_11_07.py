@@ -14,9 +14,11 @@ import main
 from routes import auth_zk_routes
 from routes.chunked_upload_routes import router as chunked_upload_router
 from strict_raw_pin_ingress_gate import (
-    FLAG_NAME, LEGACY_PIN_ROUTES, RETIRED_PIN_SENDING_ROUTES,
+    FLAG_NAME, LEGACY_LOGIN_FLAG_NAME, LEGACY_ROUTES_FLAG_NAME,
+    LEGACY_PIN_ROUTES, RETIRED_PIN_SENDING_ROUTES,
     StrictRawPinIngressGate,
     is_legacy_pin_route, require_strict_private_client,
+    legacy_pin_login_disabled, legacy_pin_routes_disabled,
     strict_raw_pin_ingress_enabled,
 )
 
@@ -92,6 +94,118 @@ def test_retired_signup_wire_is_fenced_before_body_read(monkeypatch):
         assert reads == []
         assert [start["status"] for start in starts] == [426]
         assert json.loads(body)["detail"]["code"] == "client_upgrade_required"
+
+
+@pytest.mark.parametrize(
+    "method,template",
+    sorted(LEGACY_PIN_ROUTES | RETIRED_PIN_SENDING_ROUTES),
+)
+def test_route_only_gate_rejects_old_pin_routes_without_reading_body(
+    monkeypatch, method, template,
+):
+    monkeypatch.delenv(FLAG_NAME, raising=False)
+    monkeypatch.delenv(LEGACY_LOGIN_FLAG_NAME, raising=False)
+    monkeypatch.setenv(LEGACY_ROUTES_FLAG_NAME, "true")
+    assert legacy_pin_routes_disabled() is True
+    for suffix in ("", "/"):
+        reads, starts, body = asyncio.run(_probe(
+            StrictRawPinIngressGate(_inner), method,
+            _concrete_path(template) + suffix,
+        ))
+        assert reads == []
+        assert [start["status"] for start in starts] == [426]
+        assert json.loads(body)["detail"]["code"] == "client_upgrade_required"
+
+
+def test_route_only_gate_preserves_current_opaque_finalize(monkeypatch):
+    monkeypatch.delenv(FLAG_NAME, raising=False)
+    monkeypatch.delenv(LEGACY_LOGIN_FLAG_NAME, raising=False)
+    monkeypatch.setenv(LEGACY_ROUTES_FLAG_NAME, "true")
+    for headers in ((), ((b"x-svaultai-strict-pin-free-client", b"v1"),)):
+        reads, starts, body = asyncio.run(_probe(
+            StrictRawPinIngressGate(_inner), "POST",
+            "/auth/zk-login-finalize", headers=headers,
+        ))
+        assert reads == [True]
+        assert [start["status"] for start in starts] == [200]
+        assert body == b"passed"
+    require_strict_private_client(Request({
+        "type": "http", "method": "POST", "path": "/auth/zk-login-finalize",
+        "headers": [],
+    }))
+
+
+def test_integrated_route_only_gate_preserves_opaque_finalize(monkeypatch):
+    monkeypatch.delenv(FLAG_NAME, raising=False)
+    monkeypatch.delenv(LEGACY_LOGIN_FLAG_NAME, raising=False)
+    monkeypatch.setenv(LEGACY_ROUTES_FLAG_NAME, "true")
+    headers = (
+        (b"origin", b"https://synthetic.example"),
+        (b"content-type", b"application/json"),
+    )
+    reads, starts, body = asyncio.run(_probe(
+        main.app, "POST", "/auth/login", headers=headers,
+    ))
+    assert reads == []
+    assert [start["status"] for start in starts] == [426]
+    assert (b"access-control-allow-origin", b"https://synthetic.example") \
+        in starts[0]["headers"]
+    assert json.loads(body)["detail"]["code"] == "client_upgrade_required"
+
+    # Invalid synthetic JSON reaches FastAPI validation and returns 422.
+    # No database or OPAQUE cryptography is invoked in this test.
+    reads, starts, _ = asyncio.run(_probe(
+        main.app, "POST", "/auth/zk-login-finalize", headers=headers,
+    ))
+    assert reads == [True]
+    assert [start["status"] for start in starts] == [422]
+
+
+def test_login_only_gate_blocks_pre_opaque_login_and_nothing_else(monkeypatch):
+    monkeypatch.delenv(FLAG_NAME, raising=False)
+    monkeypatch.delenv(LEGACY_ROUTES_FLAG_NAME, raising=False)
+    monkeypatch.setenv(LEGACY_LOGIN_FLAG_NAME, "true")
+    assert legacy_pin_login_disabled() is True
+    for path in ("/auth/login", "/auth/login/"):
+        reads, starts, body = asyncio.run(_probe(
+            StrictRawPinIngressGate(_inner), "POST", path,
+        ))
+        assert reads == []
+        assert [start["status"] for start in starts] == [426]
+        assert json.loads(body)["detail"]["code"] == "client_upgrade_required"
+    for method, path in (
+        ("POST", "/auth/zk-login-finalize"),
+        ("POST", "/update-secure-item"),
+        ("POST", "/auth/signup"),
+        ("GET", "/auth/login"),
+        ("POST", "/auth/login-extra"),
+    ):
+        reads, starts, body = asyncio.run(_probe(
+            StrictRawPinIngressGate(_inner), method, path,
+        ))
+        assert reads == [True]
+        assert [start["status"] for start in starts] == [200]
+        assert body == b"passed"
+
+
+def test_new_flags_are_default_off_and_leave_strict_flag_unchanged(monkeypatch):
+    for flag in (FLAG_NAME, LEGACY_ROUTES_FLAG_NAME, LEGACY_LOGIN_FLAG_NAME):
+        monkeypatch.delenv(flag, raising=False)
+    assert strict_raw_pin_ingress_enabled() is False
+    assert legacy_pin_routes_disabled() is False
+    assert legacy_pin_login_disabled() is False
+    reads, starts, _ = asyncio.run(_probe(
+        StrictRawPinIngressGate(_inner), "POST", "/auth/login",
+    ))
+    assert reads == [True]
+    assert [start["status"] for start in starts] == [200]
+    monkeypatch.setenv(FLAG_NAME, "true")
+    monkeypatch.setenv(LEGACY_ROUTES_FLAG_NAME, "true")
+    reads, starts, _ = asyncio.run(_probe(
+        StrictRawPinIngressGate(_inner), "POST", "/auth/zk-login-finalize",
+    ))
+    assert reads == []
+    assert [start["status"] for start in starts] == [426]
 
 
 @pytest.mark.parametrize("method,template", sorted(LEGACY_PIN_ROUTES))
