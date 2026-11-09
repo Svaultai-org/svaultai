@@ -16306,7 +16306,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (job.duplicateAction != null || job.duplicateDetail != null) {
         throw StateError('Private file cannot reuse a legacy conflict decision');
       }
-      final writer = FileV2Writer(ctx.v2Mvk!);
+      final writer = FileV2Writer(ctx.v2Mvk!, vaultId: ctx.vaultId);
       final prepared = job.preparedNewV2 ??= await writer.prepare(
         fileId: FileV2Writer.newFileId(),
         fileName: job.name,
@@ -16319,14 +16319,22 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         throw StateError('Private upload session changed');
       }
       try {
-        await ctx.client.uploadNewV2File(
+        final published = await ctx.client.uploadNewV2File(
           authToken: ctx.authToken,
           prepared: prepared,
           originalBytes: bytes,
           mvk: ctx.v2Mvk!,
+          duplicateAction: ctx.isBatchUpload ? 'skip' : 'prompt',
           responseIsCurrent: accessIsCurrent,
           onProgress: reportProgress,
         );
+        if (published['status'] == 'skipped_duplicate') {
+          return UploadResult(
+            fileId: published['duplicate_of_file_id'] as String,
+            skippedDuplicate: true,
+            message: 'Skipped duplicate file already in your vault.',
+          );
+        }
       } on StorageLimitExceededException catch (e) {
         throw StorageLimitDuringUploadException(
           message: e.message,

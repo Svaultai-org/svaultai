@@ -5,7 +5,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show kReleaseMode;
-import 'package:cryptography/cryptography.dart' show SecretKey;
+import 'package:cryptography/cryptography.dart' show SecretKey, Sha256;
 import 'package:http/http.dart' as http;
 
 import 'logins_page.dart' show isSystemHiddenItemType;
@@ -5740,10 +5740,14 @@ class VaultAIClient {
     required PreparedNewFileV2 prepared,
     required Uint8List originalBytes,
     required SecretKey mvk,
+    String duplicateAction = 'prompt',
     bool Function()? responseIsCurrent,
     void Function(double progress)? onProgress,
   }) async {
-    if (originalBytes.length != prepared.totalBytes ||
+    if (!<String>{'prompt', 'skip', 'keep_both'}.contains(duplicateAction) ||
+        (prepared.contentToken == null) != prepared.nameTokens.isEmpty ||
+        (prepared.contentToken == null) != (prepared.sourceSha256 == null) ||
+        originalBytes.length != prepared.totalBytes ||
         (prepared.chunkCiphertexts.isNotEmpty &&
             prepared.chunkCiphertexts.length != prepared.chunkCount) ||
         !identical(mvk, zk_mvk_store.ZkActiveMvk.current())) {
@@ -5753,6 +5757,16 @@ class VaultAIClient {
       _requireSavedItemKey(mvk);
       if (responseIsCurrent?.call() == false) {
         throw StateError('Private upload access changed');
+      }
+    }
+    if (prepared.sourceSha256 != null) {
+      checkAccess();
+      final currentDigest = vault_key_hierarchy.b64urlEncode(
+        (await Sha256().hash(originalBytes)).bytes,
+      );
+      checkAccess();
+      if (currentDigest != prepared.sourceSha256) {
+        throw StateError('Private upload source changed after preparation');
       }
     }
     Future<Map<String, dynamic>?> getOptional(String path) async {
@@ -5896,7 +5910,21 @@ class VaultAIClient {
     onProgress?.call(0.95);
     final published = await mutate('POST',
         '/vault/file-v2/$encodedId/publish-new',
-        <String, Object>{'confirm': true});
+        <String, Object>{
+          'confirm': true,
+          if (prepared.contentToken != null) ...<String, Object>{
+            'content_token': prepared.contentToken!,
+            'name_tokens': prepared.nameTokens,
+            'duplicate_action': duplicateAction,
+          },
+        });
+    if (published['file_id'] == prepared.fileId &&
+        published['status'] == 'skipped_duplicate' &&
+        duplicateAction == 'skip' &&
+        published['duplicate_of_file_id'] is String &&
+        (published['duplicate_of_file_id'] as String).isNotEmpty) {
+      return published;
+    }
     if (published['file_id'] != prepared.fileId ||
         !<String>{'published', 'already_published'}
             .contains(published['status'])) {

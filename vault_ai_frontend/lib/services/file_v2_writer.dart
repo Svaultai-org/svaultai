@@ -9,6 +9,7 @@ import 'package:cryptography/cryptography.dart';
 
 import 'file_v2_reader.dart';
 import 'file_v2_folder_path.dart';
+import 'file_private_conflict_tokens.dart';
 import 'vault_key_hierarchy.dart';
 
 class PreparedNewFileV2 {
@@ -17,6 +18,12 @@ class PreparedNewFileV2 {
   final int chunkSize;
   final int chunkCount;
   final String manifestCiphertext;
+  /// MVK-blinded equality tags. Present only when the writer was given the
+  /// authenticated vault ID; they contain no filename or file bytes.
+  final String? contentToken;
+  final List<String> nameTokens;
+  /// Local source digest used to reject a changed file before network I/O.
+  final String? sourceSha256;
 
   /// Small files retain ciphertext for exact retry. Large files are encrypted
   /// a chunk at a time while uploading; existing chunks are decrypted and
@@ -30,6 +37,9 @@ class PreparedNewFileV2 {
     required this.chunkCount,
     required this.manifestCiphertext,
     required this.chunkCiphertexts,
+    this.contentToken,
+    this.nameTokens = const <String>[],
+    this.sourceSha256,
   });
 
   Map<String, Object> toManifestBody() => <String, Object>{
@@ -57,10 +67,12 @@ class FileV2Writer {
   static const int eagerCiphertextLimitBytes = 64 * 1024 * 1024;
 
   final SecretKey mvk;
+  final String? vaultId;
   final int eagerLimitBytes;
 
   const FileV2Writer(
     this.mvk, {
+    this.vaultId,
     this.eagerLimitBytes = eagerCiphertextLimitBytes,
   });
 
@@ -103,16 +115,33 @@ class FileV2Writer {
       relativePath: relativePath,
       chunkSize: chunkSize,
     );
-    if (bytes.length > eagerLimitBytes) return manifest;
     final chunks = <String>[];
-    final contentKey = await VaultKeyHierarchy(mvk).fileContentKey();
-    for (var offset = 0; offset < bytes.length; offset += chunkSize) {
-      final end = min(offset + chunkSize, bytes.length);
-      chunks.add(b64urlEncode(await aesGcmWrap(
-        contentKey,
-        bytes.sublist(offset, end),
-      )));
+    if (bytes.length <= eagerLimitBytes) {
+      final contentKey = await VaultKeyHierarchy(mvk).fileContentKey();
+      for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+        final end = min(offset + chunkSize, bytes.length);
+        chunks.add(b64urlEncode(await aesGcmWrap(
+          contentKey,
+          bytes.sublist(offset, end),
+        )));
+      }
     }
+    final identity = vaultId;
+    final sourceDigest = identity == null
+        ? null
+        : Uint8List.fromList((await Sha256().hash(bytes)).bytes);
+    final tags = identity == null
+        ? null
+        : await FilePrivateConflictTokenMaker(
+            mvk: mvk,
+            vaultId: identity,
+          ).make(
+            wholeFileSha256: sourceDigest!,
+            fileSize: bytes.length,
+            fileName: fileName,
+            savedName: savedName,
+            relativePath: relativePath,
+          );
     return PreparedNewFileV2(
       fileId: manifest.fileId,
       totalBytes: manifest.totalBytes,
@@ -120,6 +149,11 @@ class FileV2Writer {
       chunkCount: manifest.chunkCount,
       manifestCiphertext: manifest.manifestCiphertext,
       chunkCiphertexts: List<String>.unmodifiable(chunks),
+      contentToken: tags == null ? null : b64urlEncode(tags.contentToken),
+      nameTokens: tags == null
+          ? const <String>[]
+          : List<String>.unmodifiable(tags.nameTokens.map(b64urlEncode)),
+      sourceSha256: sourceDigest == null ? null : b64urlEncode(sourceDigest),
     );
   }
 

@@ -88,6 +88,146 @@ void main() {
     }
   });
 
+  test('private publish sends only blinded conflict tokens', () async {
+    final mvk = SecretKey(List<int>.filled(32, 41));
+    ZkActiveMvk.set(
+      mvk: mvk, vaultId: 'synthetic-vault',
+      vaultHandle: 'synthetic-handle',
+    );
+    addTearDown(ZkActiveMvk.clear);
+    final prepared = await FileV2Writer(
+      mvk, vaultId: 'synthetic-vault',
+    ).prepare(
+      fileId: FileV2Writer.newFileId(),
+      fileName: 'private-name.txt',
+      savedName: 'private-title.txt',
+      bytes: Uint8List(0),
+    );
+    Map<String, dynamic>? manifest;
+    Map<String, dynamic>? publish;
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        final path = request.url.path;
+        if (request.method == 'GET' && path.endsWith('/manifest')) {
+          return manifest == null
+              ? http.Response('{"detail":"not_found"}', 404)
+              : http.Response(jsonEncode(<String, dynamic>{
+                  ...manifest!,
+                  'lifecycle_state': publish == null
+                      ? 'file_v2_written' : 'client_v2_ready',
+                  'verification_state': publish == null
+                      ? 'not_verified' : 'client_verified',
+                }), 200);
+        }
+        if (request.method == 'POST' && path == '/vault/file-v2/manifest') {
+          manifest = Map<String, dynamic>.from(jsonDecode(request.body) as Map);
+          return http.Response('{"created":true}', 200);
+        }
+        if (request.method == 'POST' && path.endsWith('/publish-new')) {
+          expect(request.body, isNot(contains('private-name.txt')));
+          expect(request.body, isNot(contains('private-title.txt')));
+          expect(request.body, isNot(contains('"pin"')));
+          publish = Map<String, dynamic>.from(jsonDecode(request.body) as Map);
+          return http.Response(jsonEncode(<String, Object>{
+            'file_id': prepared.fileId, 'status': 'published',
+          }), 200);
+        }
+        fail('Unexpected ${request.method} $path');
+      }),
+    );
+    await client.uploadNewV2File(
+      authToken: 'synthetic-session', prepared: prepared,
+      originalBytes: Uint8List(0), mvk: mvk,
+    );
+    expect(publish, isNotNull);
+    expect(publish!['duplicate_action'], 'prompt');
+    expect(publish!['content_token'], matches(RegExp(r'^[A-Za-z0-9_-]{43}$')));
+    expect(publish!['name_tokens'], isA<List>());
+    expect((publish!['name_tokens'] as List).length, 2);
+  });
+
+  test('changed source cannot publish stale blinded content token', () async {
+    final mvk = SecretKey(List<int>.filled(32, 43));
+    ZkActiveMvk.set(
+      mvk: mvk, vaultId: 'synthetic-vault',
+      vaultHandle: 'synthetic-handle',
+    );
+    addTearDown(ZkActiveMvk.clear);
+    final prepared = await FileV2Writer(
+      mvk, vaultId: 'synthetic-vault',
+    ).prepare(
+      fileId: FileV2Writer.newFileId(), fileName: 'source.txt',
+      bytes: Uint8List.fromList(<int>[1, 2, 3]),
+    );
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        fail('Changed source reached ${request.method} ${request.url.path}');
+      }),
+    );
+    await expectLater(client.uploadNewV2File(
+      authToken: 'synthetic-session', prepared: prepared,
+      originalBytes: Uint8List.fromList(<int>[1, 2, 4]), mvk: mvk,
+    ), throwsStateError);
+  });
+
+  test('batch duplicate skip stops before ready-file readback', () async {
+    final mvk = SecretKey(List<int>.filled(32, 42));
+    ZkActiveMvk.set(
+      mvk: mvk, vaultId: 'synthetic-vault',
+      vaultHandle: 'synthetic-handle',
+    );
+    addTearDown(ZkActiveMvk.clear);
+    final prepared = await FileV2Writer(
+      mvk, vaultId: 'synthetic-vault',
+    ).prepare(
+      fileId: FileV2Writer.newFileId(),
+      fileName: 'batch.txt', bytes: Uint8List(0),
+    );
+    var manifestStored = false;
+    var skipped = false;
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        final path = request.url.path;
+        if (request.method == 'GET' && path.endsWith('/manifest')) {
+          expect(skipped, isFalse,
+              reason: 'Skipped stage has no ready manifest');
+          return manifestStored
+              ? http.Response(jsonEncode(<String, dynamic>{
+                  ...prepared.toManifestBody(),
+                  'lifecycle_state': 'file_v2_written',
+                  'verification_state': 'not_verified',
+                }), 200)
+              : http.Response('{"detail":"not_found"}', 404);
+        }
+        if (request.method == 'POST' && path == '/vault/file-v2/manifest') {
+          manifestStored = true;
+          return http.Response('{"created":true}', 200);
+        }
+        if (request.method == 'POST' && path.endsWith('/publish-new')) {
+          final body = jsonDecode(request.body) as Map;
+          expect(body['duplicate_action'], 'skip');
+          skipped = true;
+          return http.Response(jsonEncode(<String, Object>{
+            'file_id': prepared.fileId,
+            'status': 'skipped_duplicate',
+            'duplicate_of_file_id': 'existing-synthetic-file',
+          }), 200);
+        }
+        fail('Unexpected ${request.method} $path');
+      }),
+    );
+    final result = await client.uploadNewV2File(
+      authToken: 'synthetic-session', prepared: prepared,
+      originalBytes: Uint8List(0), mvk: mvk,
+      duplicateAction: 'skip',
+    );
+    expect(result['status'], 'skipped_duplicate');
+    expect(skipped, isTrue);
+  });
+
   test('automatic queue retry retains one prepared encrypted file ID',
       () async {
     final mvk = SecretKey(List<int>.filled(32, 67));
