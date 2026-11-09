@@ -2,6 +2,77 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vault_ai_frontend/services/legacy_saved_item_deletion.dart';
 
 void main() {
+  test(
+    'staged legacy copy takes proof-bound deletion, never V2-only delete',
+    () {
+      expect(
+        savedItemDeleteStorage(<String, dynamic>{
+          'is_legacy': true,
+          'has_v2_payload': true,
+        }),
+        SavedItemDeleteStorage.legacy,
+      );
+      expect(
+        savedItemDeleteStorage(<String, dynamic>{
+          'is_legacy': true,
+          'has_v2_payload': false,
+        }),
+        SavedItemDeleteStorage.legacy,
+      );
+      expect(
+        savedItemDeleteStorage(<String, dynamic>{
+          'is_legacy': false,
+          'has_v2_payload': true,
+        }),
+        SavedItemDeleteStorage.ciphertext,
+      );
+      expect(
+        () => savedItemDeleteStorage(<String, dynamic>{}),
+        throwsStateError,
+      );
+    },
+  );
+
+  test('staged deletion requires encrypted and legacy labels to agree', () {
+    final source = <String, dynamic>{
+      'item_type': 'login',
+      'service': 'Synthetic',
+      'item_type_ciphertext': 'synthetic-type-cipher',
+    };
+    final listing = <String, dynamic>{...source};
+    expect(
+      () => requireStagedLegacyDeleteIdentity(
+        source: source,
+        listing: listing,
+        itemType: 'login',
+        service: 'Synthetic',
+      ),
+      returnsNormally,
+    );
+    for (final mismatch in <Map<String, dynamic>>[
+      {...source, 'service': 'Different'},
+      {...source, 'item_type_ciphertext': null},
+    ]) {
+      expect(
+        () => requireStagedLegacyDeleteIdentity(
+          source: mismatch,
+          listing: listing,
+          itemType: 'login',
+          service: 'Synthetic',
+        ),
+        throwsFormatException,
+      );
+    }
+    expect(
+      () => requireStagedLegacyDeleteIdentity(
+        source: source,
+        listing: {...listing, 'item_type': 'Different'},
+        itemType: 'login',
+        service: 'Synthetic',
+      ),
+      throwsFormatException,
+    );
+  });
   final source = LegacySavedItemDeleteSource(
     itemId: 17,
     itemType: 'login',

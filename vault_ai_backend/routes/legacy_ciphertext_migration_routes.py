@@ -358,10 +358,25 @@ def _require_legacy_item_editable(row: dict) -> None:
 def _require_legacy_item_deletable(row: dict) -> None:
     if row.get("encrypted_data") is None:
         raise HTTPException(status_code=409, detail="item_not_legacy")
-    if (row.get("item_type") in (None, "crypto_wallet_account") or
-            row.get("item_type_ciphertext") is not None or
-            row.get("payload_ciphertext") is not None):
+    if row.get("item_type") in (None, "crypto_wallet_account"):
         raise HTTPException(status_code=409, detail="item_requires_dedicated_delete")
+    # A fully staged item still has its original legacy blob. The owner may
+    # explicitly delete both copies with a fresh OPAQUE proof. Partial stages
+    # and mixed rename/index state remain ineligible because their visible
+    # identity cannot be verified consistently by the client.
+    staged_fields = (
+        row.get("item_type_ciphertext"), row.get("service_ciphertext"),
+        row.get("payload_ciphertext"),
+    )
+    if (row.get("item_type_ciphertext") is not None or
+            row.get("payload_ciphertext") is not None):
+        if (not all(value is not None for value in staged_fields) or
+                row.get("legacy_item_rename_active") is not False or
+                row.get("title_lookup_hash") is not None):
+            raise HTTPException(
+                status_code=409, detail="item_requires_dedicated_delete",
+            )
+        return
     # An active encrypted rename has only a service sidecar and its lookup
     # hash. A partial V2 stage or malformed sidecar must not be deleted here.
     active_rename = row.get("legacy_item_rename_active") is True

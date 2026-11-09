@@ -3,6 +3,41 @@
 
 import 'zk_proof_token_guard.dart';
 
+enum SavedItemDeleteStorage { legacy, ciphertext }
+
+SavedItemDeleteStorage savedItemDeleteStorage(Map<String, dynamic> row) {
+  // A staged copy still has an active legacy source. The V2-only DELETE
+  // refuses that source, so route the owner's confirmed deletion through the
+  // proof-bound legacy endpoint which removes the entire row atomically.
+  if (row['is_legacy'] == true) return SavedItemDeleteStorage.legacy;
+  if (row['has_v2_payload'] == true) return SavedItemDeleteStorage.ciphertext;
+  throw StateError('Saved item is unavailable');
+}
+
+void requireStagedLegacyDeleteIdentity({
+  required Map<String, dynamic> source,
+  required Map<String, dynamic> listing,
+  required String itemType,
+  required String service,
+}) {
+  final sourceTypeCipher = source['item_type_ciphertext'];
+  final listedTypeCipher = listing['item_type_ciphertext'];
+  final sourceStaged =
+      sourceTypeCipher is String && sourceTypeCipher.isNotEmpty;
+  final listedStaged =
+      listedTypeCipher is String && listedTypeCipher.isNotEmpty;
+  if (sourceStaged != listedStaged) {
+    throw const FormatException('Saved-item staged identity changed');
+  }
+  if (sourceStaged &&
+      (source['item_type'] != itemType ||
+          source['service'] != service ||
+          listing['item_type'] != itemType ||
+          listing['service'] != service)) {
+    throw const FormatException('Saved-item staged identity changed');
+  }
+}
+
 class LegacySavedItemDeleteSource {
   final int itemId;
   final String itemType;
@@ -21,7 +56,7 @@ class LegacySavedItemDeletion {
   final Future<LegacySavedItemDeleteSource> Function(int) sourceReader;
   final Future<String> Function() proofProvider;
   final Future<Map<String, dynamic>> Function(String, Map<String, dynamic>)
-      post;
+  post;
   final void Function() requireCurrentSession;
 
   const LegacySavedItemDeletion({

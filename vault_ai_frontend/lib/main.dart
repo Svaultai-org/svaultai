@@ -6583,6 +6583,12 @@ Future<void> _deleteLegacyZkSavedItem(
             'item_type', 'item_type_ciphertext');
         final actualService = await label(source.sourceMetadata,
             'service', 'service_ciphertext');
+        legacy_item_delete.requireStagedLegacyDeleteIdentity(
+          source: source.sourceMetadata,
+          listing: row,
+          itemType: actualType,
+          service: actualService,
+        );
         if (actualType != itemType || actualService != service ||
             await label(row, 'item_type', 'item_type_ciphertext') != actualType ||
             await label(row, 'service', 'service_ciphertext') != actualService) {
@@ -6653,17 +6659,16 @@ Future<void> _deleteSelectedZkSavedItem(
       !identical(zk_mvk_store.ZkActiveMvk.current(), mvk)) {
     throw StateError('Vault session changed during saved-item deletion');
   }
-  if (row['has_v2_payload'] == true) {
-    await client.deleteZkVaultSecureItemOnly(
-      authToken: token, service: service,
-      itemType: itemType, itemId: itemId,
-    );
-  } else if (row['is_legacy'] == true) {
+  if (legacy_item_delete.savedItemDeleteStorage(row) ==
+      legacy_item_delete.SavedItemDeleteStorage.legacy) {
     await _deleteLegacyZkSavedItem(
       app, itemId: selectedId, itemType: itemType, service: service,
     );
   } else {
-    throw StateError('Saved item is unavailable');
+    await client.deleteZkVaultSecureItemOnly(
+      authToken: token, service: service,
+      itemType: itemType, itemId: itemId,
+    );
   }
 }
 

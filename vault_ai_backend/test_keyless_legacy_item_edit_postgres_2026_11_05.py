@@ -96,6 +96,36 @@ def test_keyless_item_rename_and_delete_flags_off_before_database_use(monkeypatc
     assert deletion.value.status_code == 404
 
 
+def test_private_delete_accepts_only_complete_clean_stages():
+    base = {
+        "encrypted_data": "synthetic-legacy-ciphertext",
+        "item_type": "login", "service": "Synthetic",
+        "item_type_ciphertext": b"type", "service_ciphertext": b"service",
+        "payload_ciphertext": b"payload", "title_lookup_hash": None,
+        "legacy_item_rename_active": False,
+    }
+    edit._require_legacy_item_deletable(base)
+    for change in (
+        {"item_type_ciphertext": None},
+        {"service_ciphertext": None},
+        {"payload_ciphertext": None},
+        {"title_lookup_hash": b"index"},
+        {"legacy_item_rename_active": True},
+        {"item_type": "crypto_wallet_account"},
+    ):
+        with pytest.raises(HTTPException) as failure:
+            edit._require_legacy_item_deletable({**base, **change})
+        assert failure.value.status_code == 409
+    # The previously supported encrypted-rename sidecar remains deletable.
+    edit._require_legacy_item_deletable({
+        **base,
+        "item_type_ciphertext": None,
+        "payload_ciphertext": None,
+        "title_lookup_hash": b"index",
+        "legacy_item_rename_active": True,
+    })
+
+
 @pytest.mark.skipif(
     not os.getenv("VAULTAI_TEST_DATABASE_URL"),
     reason="requires explicit disposable loopback PostgreSQL",
@@ -130,8 +160,11 @@ def test_keyless_item_edit_preserves_old_source_and_proof_atomicity(monkeypatch)
                   "fields": {"username": "synthetic-user"}, "notes": None}
     old_ciphertext = encrypt_message(json.dumps(old_record), key)
     with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
-        cur.execute("SELECT version_num FROM alembic_version")
-        assert cur.fetchone() == ("0059_keyless_legacy_item_rename",)
+        cur.execute(
+            "SELECT to_regclass('legacy_item_edit_candidates') IS NOT NULL, "
+            "to_regclass('legacy_item_edit_history') IS NOT NULL"
+        )
+        assert cur.fetchone() == (True, True)
         cur.execute(
             "CREATE TABLE IF NOT EXISTS qa_edit_proofs "
             "(proof TEXT PRIMARY KEY,vault_id UUID NOT NULL)"
@@ -384,6 +417,158 @@ def test_keyless_item_edit_preserves_old_source_and_proof_atomicity(monkeypatch)
             )
     with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM vaults WHERE vault_id IN (%s,%s)", (vault_id, other_id))
+
+
+@pytest.mark.skipif(
+    not os.getenv("VAULTAI_TEST_DATABASE_URL"),
+    reason="requires explicit disposable loopback PostgreSQL",
+)
+def test_private_delete_removes_both_staged_copies_only_after_owner_proof(monkeypatch):
+    dsn = _dsn()
+    monkeypatch.chdir(Path(__file__).parent)
+    command.upgrade(Config(str(Path(__file__).with_name("alembic.ini"))), "head")
+    monkeypatch.setenv(DELETE_FLAG, "true")
+    monkeypatch.setenv(
+        "VAULT_SESSION_SECRET", "synthetic_staged_delete_secret_1234567890",
+    )
+    reset_secret_for_tests()
+    monkeypatch.setattr(edit, "get_db", lambda: psycopg2.connect(dsn))
+
+    def consume_proof(proof, principal, cur):
+        cur.execute(
+            "DELETE FROM qa_edit_proofs WHERE proof=%s AND vault_id=%s "
+            "RETURNING proof", (proof, principal["vault_id"]),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=401, detail="invalid_proof")
+
+    monkeypatch.setattr(edit, "consume_recent_zk_proof_on_cursor", consume_proof)
+    vault_id, token_id = str(uuid4()), str(uuid4())
+    principal = {"vault_id": vault_id, "token_id": token_id,
+                 "device_id": "synthetic-device", "zk_registered": True}
+    legacy_blob = encrypt_message(json.dumps({
+        "category": "login", "title": "Synthetic Staged",
+        "fields": {"username": "synthetic-user"},
+    }), secrets.token_bytes(32))
+    metadata_key = secrets.token_bytes(32)
+
+    def stage_ciphertext(text: str) -> bytes:
+        nonce = secrets.token_bytes(12)
+        return b"\x01" + nonce + AESGCM(metadata_key).encrypt(
+            nonce, text.encode(), None,
+        )
+
+    staged_fields = tuple(stage_ciphertext(text) for text in (
+        "login", "Synthetic Staged", "synthetic-payload",
+    ))
+    with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS qa_edit_proofs "
+            "(proof TEXT PRIMARY KEY,vault_id UUID NOT NULL)"
+        )
+        cur.execute(
+            "INSERT INTO vaults(vault_id,vault_name,pin_salt,pin_verifier,"
+            "kdf_iterations,vault_handle,opaque_registration_record,wrapped_mvk) "
+            "VALUES (%s,%s,'synthetic-salt','synthetic-verifier',600000,%s,%s,%s)",
+            (vault_id, f"vault-{vault_id.replace('-', '')}",
+             secrets.token_bytes(15), secrets.token_bytes(32),
+             secrets.token_bytes(48)),
+        )
+        cur.execute(
+            "INSERT INTO auth_sessions(token_id,vault_id,device_id,auth_method,expires_at) "
+            "VALUES(%s,%s,'synthetic-device','opaque',NOW()+INTERVAL '1 hour')",
+            (token_id, vault_id),
+        )
+        cur.execute(
+            "INSERT INTO vault_items(vault_id,item_type,service,encrypted_data,"
+            "item_type_ciphertext,service_ciphertext,payload_ciphertext) "
+            "VALUES(%s,'login','Synthetic Staged',%s,%s,%s,%s) RETURNING id",
+            (vault_id, legacy_blob, *staged_fields),
+        )
+        item_id = cur.fetchone()[0]
+        cur.execute(
+            "SELECT encrypted_data,item_type,service,item_type_ciphertext,"
+            "service_ciphertext FROM vault_items WHERE id=%s", (item_id,),
+        )
+        fields = ("encrypted_data", "item_type", "service",
+                  "item_type_ciphertext", "service_ciphertext")
+        snapshot = source_snapshot(
+            "item", dict(zip(fields, cur.fetchone(), strict=True)),
+            vault_id=vault_id, record_id=item_id,
+        )
+    app = FastAPI()
+    app.include_router(edit.router)
+    app.dependency_overrides[verify_trusted_device] = lambda: principal
+    path = f"/vault/items/legacy-ciphertext/{item_id}/delete"
+    body = {"source_snapshot": snapshot, "zk_proof_token": "synthetic-stage-proof",
+            "confirm": True}
+    try:
+        with TestClient(app) as client:
+            _json(client.post(path, json={**body, "pin": "000000"}), 422)
+            _json(client.post(path, json={**body, "confirm": False}), 400)
+            _json(client.post(path, json={**body, "source_snapshot": "A" * 43}), 409)
+            original_token_id = principal["token_id"]
+            principal["token_id"] = str(uuid4())
+            _json(client.post(path, json=body), 401)
+            principal["token_id"] = original_token_id
+            principal["vault_id"] = str(uuid4())
+            _json(client.post(path, json=body), 404)
+            principal["vault_id"] = vault_id
+            _json(client.post(path, json=body), 401)  # No owner proof yet.
+            with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT encrypted_data,item_type_ciphertext,"
+                    "service_ciphertext,payload_ciphertext FROM vault_items WHERE id=%s",
+                    (item_id,),
+                )
+                unchanged = cur.fetchone()
+                assert unchanged[0] == legacy_blob
+                assert tuple(bytes(v) for v in unchanged[1:]) == staged_fields
+                cur.execute(
+                    "INSERT INTO qa_edit_proofs(proof,vault_id) VALUES(%s,%s)",
+                    ("synthetic-stage-proof", vault_id),
+                )
+            with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+                cur.execute("""
+                    CREATE FUNCTION qa_fail_staged_item_delete() RETURNS trigger
+                    LANGUAGE plpgsql AS $$ BEGIN
+                        RAISE EXCEPTION 'qa_injected_staged_delete_failure';
+                    END; $$
+                """)
+                cur.execute(
+                    "CREATE TRIGGER qa_fail_staged_item_delete BEFORE DELETE "
+                    "ON vault_items FOR EACH ROW EXECUTE FUNCTION "
+                    "qa_fail_staged_item_delete()"
+                )
+            try:
+                with pytest.raises(Exception, match="qa_injected_staged_delete_failure"):
+                    client.post(path, json=body)
+                with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+                    cur.execute("SELECT count(*) FROM vault_items WHERE id=%s", (item_id,))
+                    assert cur.fetchone() == (1,)
+                    cur.execute(
+                        "SELECT count(*) FROM qa_edit_proofs WHERE proof=%s",
+                        ("synthetic-stage-proof",),
+                    )
+                    assert cur.fetchone() == (1,)
+            finally:
+                with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+                    cur.execute("DROP TRIGGER qa_fail_staged_item_delete ON vault_items")
+                    cur.execute("DROP FUNCTION qa_fail_staged_item_delete()")
+            assert _json(client.post(path, json=body)) == {
+                "status": "deleted", "item_id": item_id,
+            }
+            with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+                cur.execute("SELECT count(*) FROM vault_items WHERE id=%s", (item_id,))
+                assert cur.fetchone() == (0,)
+                cur.execute(
+                    "SELECT count(*) FROM qa_edit_proofs WHERE proof=%s",
+                    ("synthetic-stage-proof",),
+                )
+                assert cur.fetchone() == (0,)
+    finally:
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM vaults WHERE vault_id=%s", (vault_id,))
 
 
 @pytest.mark.skipif(
