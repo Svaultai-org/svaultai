@@ -99,6 +99,8 @@ void main() {
       title: 'journal.txt',
       searchText: 'I went to the beach with family.',
       mediaKind: ZkLocalMediaKind.document,
+      mimeType: 'text/plain',
+      sizeBytes: 36,
     );
     final flow = ZkPrivateChatFlow(
       accessIsCurrent: () => true,
@@ -117,6 +119,12 @@ void main() {
     final read = await flow.run('what does it say?');
     expect(read.local.action, ZkLocalChatAction.readText);
     expect(read.local.selection?.searchText, textFile.searchText);
+    final size = await flow.run('how big is it?');
+    expect(size.local.action, ZkLocalChatAction.fileSize);
+    expect(localFileMetadataFact(size.local.selection!, size.local.action),
+        '“journal.txt” is 36 bytes.');
+    final type = await flow.run('what type is it?');
+    expect(type.local.action, ZkLocalChatAction.fileType);
     expect(generalCalls, 0);
     flow.clear();
     final stale = await flow.run('read it');

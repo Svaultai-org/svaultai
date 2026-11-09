@@ -21789,6 +21789,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final selectedRecord = zk_private_chat.ZkLocalChatRecord(
       kind: zk_private_chat.ZkLocalChatKind.file,
       id: file.id, title: displayLabel, mimeType: file.contentType,
+      sizeBytes: file.fileSize,
     );
     final action = selectedId == null
         ? zk_private_chat.ZkLocalChatAction.none
@@ -21799,6 +21800,21 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             previousSelection: selectedRecord,
             forcePrivate: true,
           ).action;
+    final metadataFact = zk_private_chat.localFileMetadataFact(
+      selectedRecord, action,
+    );
+    if (metadataFact != null) {
+      if (!accessIsCurrent()) return true;
+      _zkPrivateChatFlow?.clear();
+      setState(() {
+        selectedSection = _DashboardSection.chat;
+        input.clear();
+        msgs.add(_Msg('user', text));
+        msgs.add(_Msg('assistant', metadataFact));
+      });
+      _scrollToBottom();
+      return true;
+    }
     if (action == zk_private_chat.ZkLocalChatAction.readText &&
         zk_local_text.isLocallyReadableText(
           file.fileName, file.contentType,
@@ -22234,6 +22250,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 local.action == zk_private_chat.ZkLocalChatAction.readText
                     ? zk_private_chat.localFileTextExcerpt(selected)
                     : null;
+            final metadataFact = zk_private_chat.localFileMetadataFact(
+              selected, local.action,
+            );
             final pendingAction = switch (local.action) {
               zk_private_chat.ZkLocalChatAction.open => 'open',
               zk_private_chat.ZkLocalChatAction.download => 'download',
@@ -22256,7 +22275,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             if (!currentAccess()) return;
             answer = _Msg(
               'assistant',
-              inspection ?? excerpt ??
+              inspection ?? excerpt ?? metadataFact ??
                   (pendingAction == 'download'
                       ? 'Downloading “${selected.title}” from your vault.'
                       : pendingAction == 'open'

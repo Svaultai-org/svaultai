@@ -54,6 +54,8 @@ void main() {
       ('what does it say?', ZkLocalChatAction.readText),
       ('what colors are in it?', ZkLocalChatAction.inspectImage),
       ('what is its resolution?', ZkLocalChatAction.inspectImage),
+      ('how big is it?', ZkLocalChatAction.fileSize),
+      ('what format is that?', ZkLocalChatAction.fileType),
     ]) {
       expect(ZkLocalChatRouter.isSelectedFileFollowUp(prompt), isTrue);
       final result = ZkLocalChatRouter.resolve(
@@ -83,6 +85,23 @@ void main() {
     expect(excerpt, contains('Excerpt shown'));
     expect(localFileTextExcerpt(recoveryFile), isNull);
     expect(localFileTextExcerpt(login), isNull);
+  });
+
+  test('selected file facts use only saved metadata', () {
+    const file = ZkLocalChatRecord(
+      kind: ZkLocalChatKind.file,
+      id: 'metadata-only',
+      title: 'private.mov',
+      mimeType: 'video/quicktime',
+      sizeBytes: 2486,
+    );
+    expect(localFileMetadataFact(file, ZkLocalChatAction.fileSize),
+        '“private.mov” is 2486 bytes.');
+    expect(localFileMetadataFact(file, ZkLocalChatAction.fileType),
+        'The saved file type for “private.mov” is video/quicktime.');
+    expect(localFileMetadataFact(recoveryFile, ZkLocalChatAction.fileSize),
+        contains('unavailable'));
+    expect(localFileMetadataFact(login, ZkLocalChatAction.fileSize), isNull);
   });
 
   test('private miss does not fall through to general AI', () {

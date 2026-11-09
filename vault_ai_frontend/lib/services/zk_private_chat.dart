@@ -23,7 +23,9 @@ enum ZkLocalChatDisposition {
 
 /// A device-local action on an exact file selection. These actions never
 /// become a request to the general AI endpoint.
-enum ZkLocalChatAction { none, open, download, readText, inspectImage }
+enum ZkLocalChatAction {
+  none, open, download, readText, inspectImage, fileSize, fileType,
+}
 
 class ZkLocalChatRecord {
   final ZkLocalChatKind kind;
@@ -144,6 +146,16 @@ class ZkLocalChatRouter {
     r'how\s+many\s+pixels\s+(?:wide|tall)\s+is\s+(?:it|that|this))[?.!]*$',
     caseSensitive: false,
   );
+  static final RegExp _fileSizeFollowUp = RegExp(
+    r'^(?:please\s+)?(?:how\s+(?:big|large)\s+is\s+(?:it|that|this)|'
+    r'what\s+is\s+(?:its|the)\s+(?:file\s+)?size)[?.!]*$',
+    caseSensitive: false,
+  );
+  static final RegExp _fileTypeFollowUp = RegExp(
+    r'^(?:please\s+)?(?:what\s+(?:type|format)\s+is\s+(?:it|that|this)|'
+    r'what\s+is\s+(?:its|the)\s+(?:file\s+)?(?:type|format))[?.!]*$',
+    caseSensitive: false,
+  );
   static final RegExp _contextReference = RegExp(
     r'\b(it|its|that|this|these|those|one|ones|same)\b',
     caseSensitive: false,
@@ -171,7 +183,9 @@ class ZkLocalChatRouter {
     return _followUp.hasMatch(query) ||
         _fileActionFollowUp.hasMatch(query) ||
         _readTextFollowUp.hasMatch(query) ||
-        _inspectImageFollowUp.hasMatch(query);
+        _inspectImageFollowUp.hasMatch(query) ||
+        _fileSizeFollowUp.hasMatch(query) ||
+        _fileTypeFollowUp.hasMatch(query);
   }
 
   static ZkLocalChatAction _actionFor(String query) {
@@ -184,6 +198,8 @@ class ZkLocalChatRouter {
     if (_inspectImageFollowUp.hasMatch(query)) {
       return ZkLocalChatAction.inspectImage;
     }
+    if (_fileSizeFollowUp.hasMatch(query)) return ZkLocalChatAction.fileSize;
+    if (_fileTypeFollowUp.hasMatch(query)) return ZkLocalChatAction.fileType;
     if (first == 'download') return ZkLocalChatAction.download;
     if (first == 'read' || _readTextFollowUp.hasMatch(query)) {
       return ZkLocalChatAction.readText;
@@ -328,7 +344,9 @@ class ZkLocalChatRouter {
     if (_followUp.hasMatch(query) ||
         _fileActionFollowUp.hasMatch(query) ||
         _readTextFollowUp.hasMatch(query) ||
-        _inspectImageFollowUp.hasMatch(query)) {
+        _inspectImageFollowUp.hasMatch(query) ||
+        _fileSizeFollowUp.hasMatch(query) ||
+        _fileTypeFollowUp.hasMatch(query)) {
       final previous =
           previousSelection == null ? null : currentRecord(previousSelection);
       if (previous == null) {
@@ -470,6 +488,29 @@ String? localFileTextExcerpt(
   final truncated = chars.moveNext();
   return 'Searchable text from “${file.title}”:\n\n$excerpt'
       '${truncated ? '\n\nExcerpt shown. Open the file to read more.' : ''}';
+}
+
+/// Answer exact selected-file metadata locally. A MIME label is metadata,
+/// not evidence that the file's contents were inspected.
+String? localFileMetadataFact(
+  ZkLocalChatRecord file,
+  ZkLocalChatAction action,
+) {
+  if (file.kind != ZkLocalChatKind.file) return null;
+  if (action == ZkLocalChatAction.fileSize) {
+    final size = file.sizeBytes;
+    return size == null || size < 0
+        ? 'The saved size for “${file.title}” is unavailable.'
+        : '“${file.title}” is $size bytes.';
+  }
+  if (action == ZkLocalChatAction.fileType) {
+    final type = file.mimeType?.split(';').first.trim().toLowerCase();
+    return type == null || type.isEmpty ||
+            type == 'application/octet-stream'
+        ? 'The saved file type for “${file.title}” is unavailable.'
+        : 'The saved file type for “${file.title}” is $type.';
+  }
+  return null;
 }
 
 /// Conservative local title matches. These are not semantic relationships or
