@@ -312,18 +312,37 @@ def _legacy_item_rename_fields(payload: LegacyItemEditStageRequest) -> tuple[byt
 
 
 def _require_live_legacy_item_edit_session(cur, principal: SessionPrincipal) -> None:
-    """Recheck live OPAQUE registration and this session inside the transaction."""
+    """Recheck vault state and the OPAQUE session inside the transaction."""
     token_id = principal.get("token_id")
     if not token_id:
         raise HTTPException(status_code=401, detail="session_expired")
     cur.execute(
-        "SELECT opaque_registration_record IS NOT NULL AS zk_registered "
-        "FROM vaults WHERE vault_id=%s",
+        "SELECT opaque_registration_record IS NOT NULL AS zk_registered, "
+        "must_reset, locked_until, NOW() AS db_now "
+        "FROM vaults WHERE vault_id=%s FOR NO KEY UPDATE",
         (principal["vault_id"],),
     )
     vault = cur.fetchone()
     if vault is None:
         raise HTTPException(status_code=404, detail="vault_not_found")
+    if vault["must_reset"]:
+        raise HTTPException(
+            status_code=423,
+            detail={
+                "code": "vault_frozen",
+                "message": "This vault has been frozen and cannot be unlocked.",
+            },
+        )
+    locked_until = vault["locked_until"]
+    if locked_until is not None and locked_until > vault["db_now"]:
+        raise HTTPException(
+            status_code=423,
+            detail={
+                "code": "pin_locked",
+                "message": f"Too many wrong PIN attempts. Try again after {locked_until}.",
+                "locked_until": locked_until.isoformat(),
+            },
+        )
     if not vault["zk_registered"]:
         raise HTTPException(status_code=409, detail="zk_registration_required")
     cur.execute(

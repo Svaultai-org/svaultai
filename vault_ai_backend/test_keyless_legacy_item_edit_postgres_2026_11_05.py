@@ -528,6 +528,32 @@ def test_private_delete_removes_both_staged_copies_only_after_owner_proof(monkey
                     "INSERT INTO qa_edit_proofs(proof,vault_id) VALUES(%s,%s)",
                     ("synthetic-stage-proof", vault_id),
                 )
+            for frozen, locked, expected_code in (
+                (True, False, "vault_frozen"),
+                (False, True, "pin_locked"),
+            ):
+                with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE vaults SET must_reset=%s, "
+                        "locked_until=CASE WHEN %s THEN NOW()+INTERVAL '1 hour' "
+                        "ELSE NULL END WHERE vault_id=%s",
+                        (frozen, locked, vault_id),
+                    )
+                blocked = _json(client.post(path, json=body), 423)
+                assert blocked["detail"]["code"] == expected_code
+                with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+                    cur.execute("SELECT count(*) FROM vault_items WHERE id=%s", (item_id,))
+                    assert cur.fetchone() == (1,)
+                    cur.execute(
+                        "SELECT count(*) FROM qa_edit_proofs WHERE proof=%s",
+                        ("synthetic-stage-proof",),
+                    )
+                    assert cur.fetchone() == (1,)
+            with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE vaults SET must_reset=FALSE, locked_until=NULL "
+                    "WHERE vault_id=%s", (vault_id,),
+                )
             with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
                 cur.execute("""
                     CREATE FUNCTION qa_fail_staged_item_delete() RETURNS trigger
