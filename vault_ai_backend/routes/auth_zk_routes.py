@@ -953,6 +953,16 @@ def pin_free_v2_file_upload_server_enabled() -> bool:
             .strip().lower() == "true")
 
 
+def pin_free_v2_file_reader_enabled() -> bool:
+    """Match the V2 manifest/chunk route before offering mixed file reads."""
+    flags = ZkMigrationFlags.from_environment(os.environ)
+    try:
+        flags.validate_dependencies()
+    except ValueError:
+        return False
+    return flags.file_read_enabled
+
+
 def _signed_read_offer_negotiation(request: Request) -> bool:
     header = request.headers.get("x-svaultai-pin-free-read-offers", "")
     if header not in ("", "1"):
@@ -1279,16 +1289,85 @@ def _signed_offer_token(
     return sign_opaque_read_offer_token(token, bits)
 
 
+def _pin_free_ready_v2_files_consistent(conn, vault_id: str) -> bool:
+    """A signed list may cover V2 files only when every ready marker is usable.
+
+    Unfinished new uploads cannot be displayed as complete files. A staged
+    legacy copy is harmless while the original remains readable, but any
+    other unfinished or mismatched V2 row must keep the old signed offer off.
+    """
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT NOT EXISTS (
+            SELECT 1 FROM file_v2_records r
+            LEFT JOIN uploaded_files u
+              ON u.id = r.file_id AND u.vault_id::text = r.vault_id
+             WHERE r.vault_id = %s
+               AND (
+                    (r.lifecycle_state IN
+                        ('legacy_migration_retired', 'client_v2_ready')
+                     AND r.verification_state = 'client_verified'
+                     AND (u.id IS NULL OR u.upload_status IS DISTINCT FROM 'complete'
+                          OR u.storage_mode IS DISTINCT FROM 'inline'
+                          OR u.encrypted_file_data IS NOT NULL
+                          OR u.file_size IS DISTINCT FROM r.total_bytes
+                          OR u.file_name IS NOT NULL OR u.saved_name IS NOT NULL
+                          OR u.content_type IS NOT NULL
+                          OR u.detected_type IS NOT NULL
+                          OR u.detected_service IS NOT NULL
+                          OR u.asset_type IS NOT NULL
+                          OR u.relative_path IS NOT NULL
+                          OR r.crypto_version <> 'client_mvk_v2'
+                          OR LENGTH(r.file_id) > 128
+                          OR r.total_bytes > 536870912
+                          OR r.chunk_size > 1048576
+                          OR r.chunk_count > 4096
+                          OR (r.lifecycle_state = 'legacy_migration_retired')
+                             IS DISTINCT FROM r.migrating_legacy))
+                 OR (r.lifecycle_state IN
+                        ('legacy_migration_retired', 'client_v2_ready')
+                     AND r.verification_state <> 'client_verified')
+                 OR (r.verification_state = 'client_verified'
+                     AND r.lifecycle_state NOT IN
+                         ('legacy_migration_retired', 'client_v2_ready'))
+                 OR (r.migrating_legacy IS NOT TRUE
+                     AND r.lifecycle_state NOT IN
+                         ('legacy_migration_retired', 'client_v2_ready'))
+                 OR (r.saved_name_override_ciphertext IS NOT NULL
+                     AND (r.verification_state <> 'client_verified'
+                          OR r.lifecycle_state NOT IN
+                              ('legacy_migration_retired', 'client_v2_ready')
+                          OR OCTET_LENGTH(r.saved_name_override_ciphertext) > 4096))
+               )
+        )
+        """,
+        (vault_id,),
+    )
+    row = cur.fetchone()
+    return bool(row and row[0] is True)
+
+
 def _pin_free_legacy_file_list_ready(
     conn, vault_id: str, *, allow_old_folders: bool = False,
+    allow_ready_v2: bool = False,
 ) -> bool:
     """Offer the metadata list only when its labels cover the old list."""
+    if allow_ready_v2 and not _pin_free_ready_v2_files_consistent(conn, vault_id):
+        return False
     cur = conn.cursor()
     cur.execute(
         """
         SELECT NOT EXISTS (
             SELECT 1 FROM uploaded_files u
              WHERE u.vault_id = %s::uuid AND u.upload_status = 'complete'
+               AND (NOT %s OR NOT EXISTS (
+                   SELECT 1 FROM file_v2_records r
+                    WHERE r.file_id = u.id AND r.vault_id = u.vault_id::text
+                      AND r.lifecycle_state IN
+                          ('legacy_migration_retired', 'client_v2_ready')
+                      AND r.verification_state = 'client_verified'
+               ))
                AND (
                     u.file_name_ciphertext IS NULL
                  OR LENGTH(u.id) > 128
@@ -1315,12 +1394,13 @@ def _pin_free_legacy_file_list_ready(
         ) AND NOT EXISTS (
             SELECT 1 FROM file_v2_records r
              WHERE r.vault_id = %s
+               AND NOT %s
                AND (r.saved_name_override_ciphertext IS NOT NULL
                     OR r.verification_state = 'client_verified'
                     OR r.migrating_legacy IS NOT TRUE)
         )
         """,
-        (vault_id, allow_old_folders, vault_id),
+        (vault_id, allow_ready_v2, allow_old_folders, vault_id, allow_ready_v2),
     )
     row = cur.fetchone()
     return bool(row and row[0] is True)
@@ -1328,14 +1408,24 @@ def _pin_free_legacy_file_list_ready(
 
 def _pin_free_legacy_file_download_ready(
     conn, vault_id: str, *, chunked_route_enabled: bool = True,
+    allow_ready_v2: bool = False,
 ) -> bool:
     """Offer only file shapes the owner-device reader supports."""
+    if allow_ready_v2 and not _pin_free_ready_v2_files_consistent(conn, vault_id):
+        return False
     cur = conn.cursor()
     cur.execute(
         """
         SELECT NOT EXISTS (
             SELECT 1 FROM uploaded_files u
              WHERE u.vault_id = %s::uuid AND u.upload_status = 'complete'
+               AND (NOT %s OR NOT EXISTS (
+                   SELECT 1 FROM file_v2_records r
+                    WHERE r.file_id = u.id AND r.vault_id = u.vault_id::text
+                      AND r.lifecycle_state IN
+                          ('legacy_migration_retired', 'client_v2_ready')
+                      AND r.verification_state = 'client_verified'
+               ))
                AND (
                     u.file_size IS NULL OR u.file_size < 0
                  OR (COALESCE(u.storage_mode, 'inline') = 'inline' AND
@@ -1356,12 +1446,14 @@ def _pin_free_legacy_file_download_ready(
         ) AND NOT EXISTS (
             SELECT 1 FROM file_v2_records r
              WHERE r.vault_id = %s
+               AND NOT %s
                AND (r.saved_name_override_ciphertext IS NOT NULL
                     OR r.verification_state = 'client_verified'
                     OR r.migrating_legacy IS NOT TRUE)
         )
         """,
-        (vault_id, chunked_route_enabled, vault_id),
+        (vault_id, allow_ready_v2, chunked_route_enabled,
+         vault_id, allow_ready_v2),
     )
     row = cur.fetchone()
     return bool(row and row[0] is True)
@@ -1598,12 +1690,18 @@ def _zk_login_finalize_sync(
         )
         file_list_offer = False
         file_download_offer = False
+        ready_v2_reader = (
+            signed_read_offers_requested
+            and request_has_file_v2_reader(request)
+            and pin_free_v2_file_reader_enabled()
+        )
         if offer_base:
             try:
                 with _zk_login_phase("metadata"):
                     file_list_offer = _pin_free_legacy_file_list_ready(
                         conn, str(vault_row["vault_id"]),
                         allow_old_folders=private_local_folders_requested,
+                        allow_ready_v2=ready_v2_reader,
                     )
             except Exception:
                 conn.rollback()
@@ -1619,6 +1717,7 @@ def _zk_login_finalize_sync(
                             ).strip().lower() == "true"
                             and bool(os.getenv("VAULTAI_UPLOAD_TOKEN_SECRET"))
                         ),
+                        allow_ready_v2=ready_v2_reader,
                     )
             except Exception:
                 conn.rollback()

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from auth_local import PIN_FREE_FILE_LIST_OFFER
 from routes import auth_zk_routes, zk_metadata_inventory_routes as inventory
 
 
@@ -156,7 +157,7 @@ def test_offered_file_list_rechecks_after_another_device_changes_files(monkeypat
     client, db = _client(monkeypatch)
     monkeypatch.setattr(
         auth_zk_routes, "_pin_free_legacy_file_list_ready",
-        lambda _conn, _vault_id: False,
+        lambda _conn, _vault_id, **_kwargs: False,
     )
     blocked = client.get(
         "/vault/files/metadata?require_legacy_complete=true",
@@ -167,13 +168,45 @@ def test_offered_file_list_rechecks_after_another_device_changes_files(monkeypat
     db.queries.clear()
     monkeypatch.setattr(
         auth_zk_routes, "_pin_free_legacy_file_list_ready",
-        lambda _conn, _vault_id: True,
+        lambda _conn, _vault_id, **_kwargs: True,
     )
     current = client.get(
         "/vault/files/metadata?require_legacy_complete=true",
     )
     assert current.status_code == 200
     assert len(current.json()["records"]) == 2
+
+
+def test_mixed_v2_recheck_requires_signed_reader_and_live_route(monkeypatch):
+    client, db = _client(monkeypatch)
+    checked = []
+    monkeypatch.setattr(
+        auth_zk_routes, "_pin_free_legacy_file_list_ready",
+        lambda _conn, _vault_id, **kwargs:
+            checked.append(kwargs["allow_ready_v2"]) or True,
+    )
+    monkeypatch.setattr(
+        auth_zk_routes, "pin_free_v2_file_reader_enabled", lambda: True,
+    )
+    route = "/vault/files/metadata?require_legacy_complete=true"
+    db.principal["file_v2_reader_capable"] = True
+    db.principal["pin_free_read_offers"] = PIN_FREE_FILE_LIST_OFFER
+    assert client.get(route).status_code == 200
+    assert checked[-1] is True
+    db.principal["file_v2_reader_capable"] = False
+    assert client.get(route).status_code == 200
+    assert checked[-1] is False
+    db.principal["file_v2_reader_capable"] = True
+    monkeypatch.setattr(
+        auth_zk_routes, "pin_free_v2_file_reader_enabled", lambda: False,
+    )
+    monkeypatch.setattr(
+        auth_zk_routes, "_pin_free_legacy_file_list_ready",
+        lambda _conn, _vault_id, **kwargs:
+            checked.append(kwargs["allow_ready_v2"]) or True,
+    )
+    assert client.get(route).status_code == 200
+    assert checked[-1] is False
 
 
 def test_inventory_flag_and_vault_guard_fail_closed(monkeypatch):

@@ -120,8 +120,21 @@ def file_metadata_inventory(
             # offered the PIN-free list. Recheck under one stable snapshot so
             # an incomplete list cannot silently omit its newest file.
             cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            from routes.auth_zk_routes import _pin_free_legacy_file_list_ready
-            if not _pin_free_legacy_file_list_ready(conn, principal["vault_id"]):
+            from auth_local import PIN_FREE_FILE_LIST_OFFER
+            from routes.auth_zk_routes import (
+                _pin_free_legacy_file_list_ready,
+                pin_free_v2_file_reader_enabled,
+            )
+            ready_v2_reader = (
+                principal.get("file_v2_reader_capable") is True
+                and bool(principal.get("pin_free_read_offers", 0)
+                         & PIN_FREE_FILE_LIST_OFFER)
+                and pin_free_v2_file_reader_enabled()
+            )
+            if not _pin_free_legacy_file_list_ready(
+                conn, principal["vault_id"],
+                allow_ready_v2=ready_v2_reader,
+            ):
                 raise HTTPException(
                     status_code=409, detail="legacy_file_list_changed",
                 )

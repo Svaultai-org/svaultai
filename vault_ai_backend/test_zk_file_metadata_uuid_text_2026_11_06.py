@@ -206,7 +206,8 @@ def test_file_list_offer_rejects_missing_labels_and_new_v2(monkeypatch):
             """)
             cur.execute("""
                 CREATE TEMP TABLE file_v2_records (
-                    vault_id text, verification_state text,
+                    file_id text, vault_id text, lifecycle_state text,
+                    verification_state text,
                     migrating_legacy boolean,
                     saved_name_override_ciphertext bytea
                 )
@@ -326,5 +327,111 @@ def test_file_list_offer_rejects_missing_labels_and_new_v2(monkeypatch):
         assert auth_zk_routes._pin_free_legacy_file_download_ready(
             conn, vault_id,
         ) is False
+    finally:
+        conn.close()
+
+
+@pytest.mark.skipif(
+    not os.getenv("TEST_DATABASE_URL"), reason="disposable PostgreSQL required",
+)
+def test_mixed_legacy_and_ready_v2_files_get_signed_read_offer():
+    """A ready V2 marker is covered by its manifest, never a legacy PIN read."""
+    conn = psycopg2.connect(os.environ["TEST_DATABASE_URL"])
+    vault_id = str(uuid.uuid4())
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TEMP TABLE uploaded_files (
+                    id text, vault_id uuid, upload_status text,
+                    file_size bigint, storage_mode text,
+                    encrypted_file_data text, chunk_size integer,
+                    chunk_count integer, file_name text,
+                    file_name_ciphertext bytea, saved_name text,
+                    saved_name_ciphertext bytea, content_type text,
+                    content_type_ciphertext bytea, detected_type text,
+                    detected_type_ciphertext bytea, detected_service text,
+                    detected_service_ciphertext bytea, asset_type text,
+                    asset_type_ciphertext bytea, relative_path text
+                )
+            """)
+            cur.execute("""
+                CREATE TEMP TABLE file_v2_records (
+                    file_id text, vault_id text, crypto_version text,
+                    total_bytes bigint, chunk_size integer,
+                    chunk_count integer, lifecycle_state text,
+                    verification_state text, migrating_legacy boolean,
+                    saved_name_override_ciphertext bytea
+                )
+            """)
+            cur.execute("""
+                INSERT INTO uploaded_files
+                  (id, vault_id, upload_status, file_size, storage_mode,
+                   encrypted_file_data, file_name_ciphertext)
+                VALUES ('old-file', %s::uuid, 'complete', 12, 'inline',
+                        'opaque-frame', %s),
+                       ('new-file', %s::uuid, 'complete', 8, 'inline',
+                        NULL, NULL)
+            """, (vault_id, b"encrypted-name", vault_id))
+            cur.execute("""
+                INSERT INTO file_v2_records
+                  (file_id, vault_id, crypto_version, total_bytes,
+                   chunk_size, chunk_count, lifecycle_state,
+                   verification_state, migrating_legacy)
+                VALUES ('new-file', %s, 'client_mvk_v2', 8, 8, 1,
+                        'client_v2_ready', 'client_verified', false)
+            """, (vault_id,))
+        list_ready = auth_zk_routes._pin_free_legacy_file_list_ready
+        download_ready = auth_zk_routes._pin_free_legacy_file_download_ready
+        assert not list_ready(conn, vault_id)
+        assert not download_ready(conn, vault_id)
+        assert list_ready(conn, vault_id, allow_ready_v2=True)
+        assert download_ready(conn, vault_id, allow_ready_v2=True)
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE file_v2_records SET saved_name_override_ciphertext=%s
+                WHERE file_id='new-file'
+            """, (b"encrypted-renamed-label",))
+        assert list_ready(conn, vault_id, allow_ready_v2=True)
+        with conn.cursor() as cur:
+            cur.execute("UPDATE uploaded_files SET file_size=9 WHERE id='new-file'")
+        assert not list_ready(conn, vault_id, allow_ready_v2=True)
+        assert not download_ready(conn, vault_id, allow_ready_v2=True)
+        with conn.cursor() as cur:
+            cur.execute("UPDATE uploaded_files SET file_size=8 WHERE id='new-file'")
+            cur.execute("DELETE FROM uploaded_files WHERE id='new-file'")
+        assert not list_ready(conn, vault_id, allow_ready_v2=True)
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO uploaded_files
+                  (id, vault_id, upload_status, file_size, storage_mode)
+                VALUES ('new-file', %s::uuid, 'complete', 8, 'inline')
+            """, (vault_id,))
+            cur.execute("""
+                UPDATE file_v2_records
+                   SET verification_state='not_verified'
+                 WHERE file_id='new-file'
+            """)
+        assert not list_ready(conn, vault_id, allow_ready_v2=True)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE file_v2_records
+                   SET lifecycle_state='legacy_migration_retired',
+                       verification_state='client_verified',
+                       migrating_legacy=true
+                 WHERE file_id='new-file'
+            """)
+        assert list_ready(conn, vault_id, allow_ready_v2=True)
+        assert download_ready(conn, vault_id, allow_ready_v2=True)
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO file_v2_records
+                  (file_id, vault_id, crypto_version, total_bytes,
+                   chunk_size, chunk_count, lifecycle_state,
+                   verification_state, migrating_legacy)
+                VALUES ('unfinished-new', %s, 'client_mvk_v2', 1, 1, 1,
+                        'file_v2_written', 'not_verified', false)
+            """, (vault_id,))
+        assert not list_ready(conn, vault_id, allow_ready_v2=True)
     finally:
         conn.close()
