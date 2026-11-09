@@ -21057,6 +21057,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         sendGeneral: (prompt, history) => client.zkGeneralChat(
           authToken: token,
           message: prompt,
+          vaultName: vaultName ?? '',
           history: history,
           accessGuard: () {
             if (!currentAccess()) throw StateError('Vault access changed');
@@ -21252,6 +21253,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           mvk: mvk,
           accessIsCurrent: currentAccess,
           indexPhotoColors: kEnableZkLocalPhotoColorIndex,
+          legacyItemInventory:
+              ZkPinFreeItemReadSession.instance.activeForToken(token)
+                  ? () => client.listZkItemMetadataRaw(
+                        authToken: token, maxRecords: 500,
+                      )
+                  : null,
           legacyFileInventory:
               ZkPinFreeFileSession.instance.listOfferedForToken(token) &&
                       ZkPinFreeFileSession.instance.downloadOfferedForToken(token)
@@ -21271,6 +21278,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         sendGeneral: (prompt, history) => client.zkGeneralChat(
           authToken: token,
           message: prompt,
+          vaultName: vaultName ?? '',
           history: history,
           accessGuard: () {
             if (!currentAccess()) throw StateError('Vault access changed');

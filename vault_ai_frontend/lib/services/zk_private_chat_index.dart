@@ -18,6 +18,8 @@ import 'zk_local_photo_colors.dart';
 
 typedef ZkPrivateChatGet = Future<Object?> Function(String path);
 typedef ZkPrivateLegacyFileInventory = Future<Map<String, dynamic>> Function();
+typedef ZkPrivateLegacyItemInventory = Future<List<Map<String, dynamic>>>
+    Function();
 
 class ZkPrivateChatIndex {
   final List<ZkLocalChatRecord> savedItems;
@@ -62,6 +64,10 @@ class ZkPrivateChatIndexLoader {
   /// when this bearer can open older files through the proof-only reader.
   final ZkPrivateLegacyFileInventory? legacyFileInventory;
 
+  /// Trusted-session metadata only. Older item values are never requested or
+  /// indexed; a title match cannot claim to answer about the item's contents.
+  final ZkPrivateLegacyItemInventory? legacyItemInventory;
+
   const ZkPrivateChatIndexLoader({
     required this.mvk,
     required this.get,
@@ -76,6 +82,7 @@ class ZkPrivateChatIndexLoader {
     this.totalTextByteLimit = maxTotalTextBytes,
     this.allowPartialFileListing = false,
     this.legacyFileInventory,
+    this.legacyItemInventory,
   });
 
   void _checkAccess() {
@@ -168,6 +175,59 @@ class ZkPrivateChatIndexLoader {
           incomplete = true;
         }
       }
+      if (legacyItemInventory != null) {
+        _checkAccess();
+        final inventory = await legacyItemInventory!();
+        _checkAccess();
+        if (inventory.length > maxSavedItems) {
+          throw const FormatException(
+              'Older saved-item index exceeds safe limit');
+        }
+        final seenIds = savedItems.map((item) => item.id).toSet();
+        for (final raw in inventory) {
+          _checkAccess();
+          if (raw['is_legacy'] != true) continue;
+          try {
+            final id = raw['item_id'];
+            if (id is! int || id <= 0 || !seenIds.add('$id')) {
+              if (id is int && savedItems.any((item) => item.id == '$id')) {
+                continue; // The verified V2 copy is already searchable.
+              }
+              throw const FormatException('Duplicate older item identity');
+            }
+            Future<String> label(
+                String encryptedField, String plainField) async {
+              final encrypted = raw[encryptedField];
+              if (encrypted is String && encrypted.isNotEmpty) {
+                return decryptRequired(encrypted);
+              }
+              final plain = raw[plainField];
+              if (plain is String && plain.isNotEmpty) return plain;
+              throw const FormatException('Older item label is unavailable');
+            }
+
+            final service =
+                (await label('service_ciphertext', 'service')).trim();
+            final type =
+                (await label('item_type_ciphertext', 'item_type')).trim();
+            if (service.isEmpty ||
+                service.length > 255 ||
+                type.isEmpty ||
+                type.length > 128) {
+              throw const FormatException('Invalid older item label');
+            }
+            savedItems.add(ZkLocalChatRecord(
+              kind: ZkLocalChatKind.savedItem,
+              id: '$id',
+              title: service,
+              searchText: type,
+              legacyProofRequired: true,
+            ));
+          } catch (_) {
+            incomplete = true;
+          }
+        }
+      }
     }
 
     final listing = await _get('/vault/file-v2');
@@ -229,7 +289,8 @@ class ZkPrivateChatIndexLoader {
         var content = '';
         var fullTextRead = false;
         final isText = _isTextFile(manifest.contentType, manifest.displayName);
-        if (indexTextContent && isText &&
+        if (indexTextContent &&
+            isText &&
             manifest.totalBytes <= textFileByteLimit &&
             textFiles < textFileLimit &&
             textBytes + manifest.totalBytes <= totalTextByteLimit) {
@@ -246,8 +307,10 @@ class ZkPrivateChatIndexLoader {
         // transcript inside the client-encrypted V2 manifest. Search that
         // text only on this device when full text was not already read.
         final extracted = manifest.extractedText;
-        if (indexTextContent && !fullTextRead &&
-            extracted != null && extracted.isNotEmpty) {
+        if (indexTextContent &&
+            !fullTextRead &&
+            extracted != null &&
+            extracted.isNotEmpty) {
           final extractedBytes = utf8.encode(extracted).length;
           if (extractedBytes <= extractedTextByteLimit &&
               textFiles < textFileLimit &&
@@ -277,12 +340,14 @@ class ZkPrivateChatIndexLoader {
             colorBytes += manifest.totalBytes;
             try {
               final download = await reader.download(
-                manifest.fileId, maxBytes: maxLocalPhotoColorBytes,
+                manifest.fileId,
+                maxBytes: maxLocalPhotoColorBytes,
               );
               try {
                 _checkAccess();
                 visualColors = await observePhotoColors(
-                  download.bytes, accessIsCurrent: accessIsCurrent,
+                  download.bytes,
+                  accessIsCurrent: accessIsCurrent,
                 );
                 _checkAccess();
               } finally {
@@ -296,14 +361,14 @@ class ZkPrivateChatIndexLoader {
         }
         if (mediaKind == ZkLocalMediaKind.video ||
             mediaKind == ZkLocalMediaKind.audio) {
-          final key = _captionPairKey(
-              manifest.displayName, manifest.relativePath);
+          final key =
+              _captionPairKey(manifest.displayName, manifest.relativePath);
           if (key != null) mediaPairKeys[manifest.fileId] = key;
         }
         if (_isCaptionFile(manifest.contentType, manifest.displayName) &&
             fullTextRead) {
-          final key = _captionPairKey(
-              manifest.displayName, manifest.relativePath);
+          final key =
+              _captionPairKey(manifest.displayName, manifest.relativePath);
           final fullTranscript = _captionTranscript(content);
           if (fullTranscript.length > 8192) incomplete = true;
           final transcript = fullTranscript.length > 8192
@@ -396,8 +461,7 @@ class ZkPrivateChatIndexLoader {
           ),
         );
         final path = raw['relative_path'];
-        if (kind == ZkLocalMediaKind.video ||
-            kind == ZkLocalMediaKind.audio) {
+        if (kind == ZkLocalMediaKind.video || kind == ZkLocalMediaKind.audio) {
           final key = _captionPairKey(name, path);
           if (key != null) mediaPairKeys[id] = key;
         }

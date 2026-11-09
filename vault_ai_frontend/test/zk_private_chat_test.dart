@@ -222,9 +222,45 @@ void main() {
     final reply = await client.zkGeneralChat(
       authToken: 'synthetic-token',
       message: 'How does two-factor authentication work?',
+      vaultName: 'Synthetic Vault Name',
     );
     expect(reply, 'A general answer');
     expect(requests, 1);
+  });
+
+  test('general chat transport rejects private turns before network',
+      () async {
+    var requests = 0;
+    final client = VaultAIClient(
+      baseUrl: 'https://example.invalid',
+      httpClient: MockClient((request) async {
+        requests++;
+        return http.Response('{"reply":"unexpected","mode":"general"}', 200);
+      }),
+    );
+    Future<void> blocked(String message, {
+      String vaultName = 'Synthetic Vault Name',
+      List<ZkGeneralChatTurn> history = const [],
+    }) async {
+      await expectLater(
+        client.zkGeneralChat(
+          authToken: 'synthetic-token',
+          message: message,
+          vaultName: vaultName,
+          history: history,
+        ),
+        throwsStateError,
+      );
+    }
+
+    await blocked('What is my PIN?');
+    await blocked('What is Synthetic Vault Name?');
+    await blocked('How does encryption work?', vaultName: '');
+    await blocked('How does encryption work?', history: const [
+      ZkGeneralChatTurn(role: 'user', content: 'Find my recovery codes'),
+      ZkGeneralChatTurn(role: 'assistant', content: 'No match'),
+    ]);
+    expect(requests, 0);
   });
 
   test('private index transport sends only bearer-scoped ciphertext GETs',

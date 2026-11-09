@@ -25,6 +25,7 @@ import 'services/vault_handle.dart' as vault_handle;
 import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/zk_private_chat.dart' as zk_private_chat;
+import 'services/zk_general_chat_bridge.dart' as zk_general_bridge;
 import 'services/file_v2_reader.dart';
 import 'services/file_v2_renamer.dart';
 import 'services/file_v2_writer.dart';
@@ -2135,10 +2136,21 @@ class VaultAIClient {
   Future<String> zkGeneralChat({
     required String authToken,
     required String message,
+    required String vaultName,
     List<zk_private_chat.ZkGeneralChatTurn> history = const [],
     void Function()? accessGuard,
   }) async {
     accessGuard?.call();
+    // This endpoint sees plaintext. Reject private prompts again at transport
+    // so another caller cannot bypass the UI router and disclose vault text.
+    if (vaultName.trim().isEmpty ||
+        !zk_general_bridge.isClearlyGeneralChatPrompt(
+            message, vaultName: vaultName) ||
+        history.any((turn) => turn.role == 'user' &&
+            !zk_general_bridge.isClearlyGeneralChatPrompt(
+                turn.content, vaultName: vaultName))) {
+      throw StateError('Question needs the private vault chat route');
+    }
     final uri = Uri.parse('$baseUrl/chat/zk/general');
     final body = zk_private_chat.buildZkGeneralChatBody(
       message: message,
@@ -3699,7 +3711,11 @@ class VaultAIClient {
   /// saved-item value ciphertext is sent or returned by this route.
   Future<List<Map<String, dynamic>>> listZkItemMetadataRaw({
     required String authToken,
+    int? maxRecords,
   }) async {
+    if (maxRecords != null && maxRecords < 1) {
+      throw ArgumentError.value(maxRecords, 'maxRecords');
+    }
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) throw StateError('Vault encryption key is unavailable');
     final records = <Map<String, dynamic>>[];
@@ -3736,6 +3752,9 @@ class VaultAIClient {
           throw const FormatException('Invalid saved-item metadata record');
         }
         records.add(raw);
+        if (maxRecords != null && records.length > maxRecords) {
+          throw const FormatException('Saved-item metadata exceeds safe limit');
+        }
       }
       final hasMore = decoded['has_more'] as bool;
       if (!hasMore) {

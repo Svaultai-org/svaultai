@@ -835,6 +835,46 @@ void main() {
     await expectLater(loader.load(), throwsStateError);
   });
 
+  test('offered older item titles are searchable without PIN or values',
+      () async {
+    final key = await VaultKeyHierarchy(_mvk).metadataKey();
+    final paths = <String>[];
+    final loader = ZkPrivateChatIndexLoader(
+      mvk: _mvk,
+      accessIsCurrent: () => true,
+      get: (path) async {
+        paths.add(path);
+        if (path == '/vault/ciphertext/vault-items') return [];
+        if (path == '/vault/file-v2') return {'files': []};
+        fail('Unexpected private GET: $path');
+      },
+      legacyItemInventory: () async => [
+        {
+          'item_id': 31,
+          'is_legacy': true,
+          'service_ciphertext': await _wrap(key, 'Archive account'),
+          'item_type_ciphertext': await _wrap(key, 'login'),
+          'payload_ciphertext': 'must-not-be-read',
+        },
+        {
+          'item_id': 32,
+          'is_legacy': false,
+          'service': 'unrelated item',
+        },
+      ],
+    );
+    final index = await loader.load();
+    expect(index.savedItems, hasLength(1));
+    final item = index.savedItems.single;
+    expect(item.title, 'Archive account');
+    expect(item.searchText, 'login');
+    expect(item.legacyProofRequired, isTrue);
+    expect(index.incomplete, isFalse);
+    expect(paths, ['/vault/ciphertext/vault-items', '/vault/file-v2']);
+    expect(paths.join(' '), isNot(contains('Archive account')));
+    expect(paths.join(' '), isNot(contains('must-not-be-read')));
+  });
+
   test('description not present in encrypted metadata is not invented', () {
     const photo = ZkLocalChatRecord(
       kind: ZkLocalChatKind.file,

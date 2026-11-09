@@ -199,6 +199,7 @@ void main() {
       sendGeneral: (prompt, history) => client.zkGeneralChat(
         authToken: 'synthetic-token',
         message: prompt,
+        vaultName: 'Synthetic Vault Name',
         history: history,
         accessGuard: () {},
       ),
