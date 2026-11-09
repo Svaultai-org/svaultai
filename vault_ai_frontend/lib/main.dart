@@ -975,6 +975,11 @@ const bool kEnableZkPrivateChat = bool.fromEnvironment(
   'VAULTAI_ENABLE_ZK_PRIVATE_CHAT',
   defaultValue: false,
 );
+// Local pixel colors only. This does not identify people, clothing or scenes.
+const bool kEnableZkLocalPhotoColorIndex = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_LOCAL_PHOTO_COLOR_INDEX',
+  defaultValue: false,
+);
 // Transitional opt-in for PIN-free OPAQUE chat. General questions use the
 // retrieval-free AI route; every other question stays on the local vault path.
 const bool kEnableZkGeneralChatBridge = bool.fromEnvironment(
@@ -21259,6 +21264,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         loadIndex: () => zk_chat_index.ZkPrivateChatIndexLoader(
           mvk: mvk,
           accessIsCurrent: currentAccess,
+          indexPhotoColors: kEnableZkLocalPhotoColorIndex,
           legacyFileInventory:
               ZkPinFreeFileSession.instance.listOfferedForToken(token) &&
                       ZkPinFreeFileSession.instance.downloadOfferedForToken(token)
@@ -21346,7 +21352,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       ? 'Downloading “${selected.title}” from your vault.'
                       : pendingAction == 'open'
                           ? 'Opening “${selected.title}” from your vault.'
-                          : 'Found “${selected.title}” in your vault.'),
+                          : local.colorOnlyEvidence
+                              ? 'Possible color match: “${selected.title}”. '
+                                  'I matched photo colors only; I did not '
+                                  'identify people, clothing, or objects.'
+                              : 'Found “${selected.title}” in your vault.'),
               kind: ChatMessage.kVaultFile,
               fileId: selected.id,
               fileName: selected.title,
@@ -21396,8 +21406,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         case zk_private_chat.ZkLocalChatDisposition.needsPrivateIndex:
           answer = _Msg(
             'assistant',
-            'I could not find that media from its saved name or searchable text. '
-                'Visual and spoken-content search is not available yet.',
+            'I could not find that media from its saved name or searchable text. ' +
+                (kEnableZkLocalPhotoColorIndex
+                    ? 'Object, scene, and spoken-content search is not available yet.'
+                    : 'Visual and spoken-content search is not available yet.'),
           );
         case zk_private_chat.ZkLocalChatDisposition.notFound:
           answer = _Msg(
