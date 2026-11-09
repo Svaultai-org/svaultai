@@ -29,6 +29,7 @@ import 'services/file_v2_reader.dart';
 import 'services/file_v2_renamer.dart';
 import 'services/file_v2_writer.dart';
 import 'services/inheritance_v2_file_stream_transfer.dart';
+import 'services/linked_inheritance_v2_stage.dart' as linked_inh_stage;
 import 'services/private_content_pin_guard.dart' as private_content_guard;
 
 // Only builds with the MVK V2 file reader advertise this capability. The
@@ -2970,6 +2971,88 @@ class VaultAIClient {
       ));
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  /// Stage a PIN-free owner MVK envelope beside an unchanged linked old link.
+  /// The caller supplies a separately confirmed beneficiary fingerprint and
+  /// a fresh local OPAQUE action proof. This does not switch the old link.
+  Future<linked_inh_stage.StagedLinkedInheritanceV2>
+      stageLinkedOldInheritanceV2({
+    required String authToken,
+    required int linkId,
+    required String ownerVaultId,
+    required SecretKey ownerMvk,
+    required String confirmedBeneficiaryFingerprint,
+    required String zkProofToken,
+    int? expectedStageRevision,
+    bool Function()? responseIsCurrent,
+  }) async {
+    void checkAccess() {
+      _requireSavedItemKey(ownerMvk);
+      if (zk_mvk_store.ZkActiveMvk.currentVaultId() != ownerVaultId ||
+          responseIsCurrent?.call() == false) {
+        throw StateError('Private inheritance access changed');
+      }
+    }
+
+    Future<Map<String, dynamic>> request(
+      String method,
+      String path, [
+      Map<String, dynamic>? body,
+    ]) async {
+      checkAccess();
+      final uri = Uri.parse('$baseUrl$path');
+      final headers = _defaultHeaders(
+        authToken: authToken,
+        json: method == 'POST',
+      );
+      final transport = _sessionHttpWithGuard(checkAccess);
+      final response = method == 'POST'
+          ? await transport.post(uri, headers: headers, body: jsonEncode(body))
+          : await transport.get(uri, headers: headers);
+      checkAccess();
+      if (response.statusCode != 200) {
+        _throwIfAuthExpired(response.statusCode, response.body);
+        _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        throw StateError('Private inheritance stage unavailable');
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Invalid private inheritance response');
+      }
+      return decoded;
+    }
+
+    checkAccess();
+    return linked_inh_stage.stageLinkedOldInheritanceV2(
+      linkId: linkId,
+      ownerVaultId: ownerVaultId,
+      ownerMvk: ownerMvk,
+      confirmedBeneficiaryFingerprint: confirmedBeneficiaryFingerprint,
+      zkProofToken: zkProofToken,
+      expectedStageRevision: expectedStageRevision,
+      fetchPubkey: (id) => getInheritanceBeneficiaryPubKey(
+        linkId: id,
+        authToken: authToken,
+      ),
+      stage: (body) => request(
+        'POST',
+        '/inheritance/old-link-v2/stage',
+        body,
+      ),
+      readback: (id) => request(
+        'GET',
+        '/inheritance/old-link-v2/$id/readback',
+      ),
+      accessIsCurrent: () {
+        try {
+          checkAccess();
+          return true;
+        } catch (_) {
+          return false;
+        }
+      },
+    );
   }
 
   Future<Map<String, dynamic>> saveInheritanceCredentials({
