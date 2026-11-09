@@ -4482,8 +4482,8 @@ Future<bool> tryZkFinalizeBeneficiaryLabelCiphertext({
       'link_id': linkId,
       'passer_label_ciphertext': vk_hier.b64urlEncode(ct),
     });
-    assertOutboundPinFreeRequest(uri, headers, body: body);
-    final resp = await http.post(
+    final resp = await sendPinCheckedHttp(
+      'POST',
       uri,
       headers: headers,
       body: body,
@@ -5860,20 +5860,12 @@ Future<void> _stageLegacyContentBestEffort({
       sessionToken: token,
       deviceId: apiClientDeviceId(),
     );
-    assertOutboundPinFreeRequest(uri, headers, body: body);
-    late http.Response response;
-    switch (method) {
-      case 'GET':
-        response = await http.get(uri, headers: headers);
-      case 'POST':
-        response =
-            await http.post(uri, headers: headers, body: jsonEncode(body));
-      case 'PUT':
-        response =
-            await http.put(uri, headers: headers, body: jsonEncode(body));
-      default:
-        throw StateError('Unsupported migration request');
-    }
+    final response = await sendPinCheckedHttp(
+      method,
+      uri,
+      headers: headers,
+      body: method == 'GET' ? null : jsonEncode(body),
+    );
     stageGuard.requireRequest();
     Object? decoded;
     try {

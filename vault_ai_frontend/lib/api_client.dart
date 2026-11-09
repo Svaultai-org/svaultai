@@ -267,6 +267,31 @@ Future<http.StreamedResponse> _sendCheckedBaseRequest(
   return client?.send(request) ?? request.send();
 }
 
+/// Use the same outbound PIN boundary for the few direct HTTP calls outside
+/// VaultAIClient. The optional client supports an in-memory transport test.
+Future<http.Response> sendPinCheckedHttp(
+  String method,
+  Uri uri, {
+  Map<String, String>? headers,
+  Object? body,
+  http.Client? client,
+}) {
+  assertOutboundPinFreeRequest(uri, headers, body: body);
+  switch (method) {
+    case 'GET':
+      if (body != null) throw StateError('GET body is unavailable');
+      return client?.get(uri, headers: headers) ?? http.get(uri, headers: headers);
+    case 'POST':
+      return client?.post(uri, headers: headers, body: body) ??
+          http.post(uri, headers: headers, body: body);
+    case 'PUT':
+      return client?.put(uri, headers: headers, body: body) ??
+          http.put(uri, headers: headers, body: body);
+    default:
+      throw StateError('Unsupported private request method');
+  }
+}
+
 int _signedOfferBits(String token) {
   try {
     final wire = base64Url.decode(base64Url.normalize(token));
