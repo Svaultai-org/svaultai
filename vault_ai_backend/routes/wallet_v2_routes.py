@@ -110,6 +110,22 @@ def _migration_enabled() -> None:
         raise HTTPException(status_code=404, detail="wallet_migration_disabled")
 
 
+def _preparation_enabled() -> None:
+    """Allow owner-verified pending copies before old wallet writes stop.
+
+    Retirement still requires the full wallet migration gate. This separate
+    stage gate lets existing apps keep creating and using older wallets while
+    an owner prepares an exact V2 copy for a later coordinated cutover.
+    """
+    flags = ZkMigrationFlags.from_environment(os.environ)
+    flags.validate_dependencies()
+    if flags.wallet_migration_enabled:
+        return
+    enabled = os.getenv("WALLET_V2_PREPARE_ENABLED", "false").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"} or not flags.wallet_read_enabled:
+        raise HTTPException(status_code=404, detail="wallet_preparation_disabled")
+
+
 def _load_legacy_wallet_locked(cur, vault_id: str, item_id: int) -> dict:
     cur.execute(
         f"SELECT {_LEGACY_COLUMNS} FROM vault_items "
@@ -180,11 +196,11 @@ def _assert_zk_vault(cur, vault_id: str) -> None:
 @router.post("/vault/wallet-v2/migrate/stage")
 def stage_legacy_wallet(payload: WalletV2MigrationStageRequest,
                         principal: SessionPrincipal = Depends(verify_trusted_device)):
-    _migration_enabled()
+    _preparation_enabled()
     require_content_write(principal)
     require_crypto_access(principal)
-    if payload.chain not in CHAINS:
-        raise HTTPException(status_code=400, detail="unsupported_chain")
+    if (payload.chain, payload.network, payload.asset) not in NEW_WALLET_SLOTS:
+        raise HTTPException(status_code=400, detail="unsupported_wallet_slot")
     ciphertext = _decode(payload.payload_ciphertext)
     conn = get_db()
     try:
@@ -472,6 +488,9 @@ def retire_legacy_wallet(payload: WalletV2MigrationRetireRequest,
                 staged.get("legacy_item_id") != payload.legacy_item_id or \
                 staged.get("legacy_source_snapshot") != snapshot:
             raise HTTPException(status_code=409, detail="wallet_stage_not_ready")
+        if (staged.get("chain"), staged.get("network"),
+                staged.get("asset")) not in NEW_WALLET_SLOTS:
+            raise HTTPException(status_code=409, detail="wallet_stage_slot_invalid")
         if not _receipt_valid(
             payload.readback_receipt, "w", principal,
             payload.wallet_record_id, _wallet_digest(staged),
