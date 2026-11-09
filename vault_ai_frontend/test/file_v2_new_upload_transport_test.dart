@@ -323,14 +323,16 @@ void main() {
       () async {
     final mvk = SecretKey(List<int>.filled(32, 73));
     ZkActiveMvk.set(
-      mvk: mvk, vaultId: 'synthetic-vault',
+      mvk: mvk,
+      vaultId: 'synthetic-vault',
       vaultHandle: 'synthetic-handle',
     );
     addTearDown(ZkActiveMvk.clear);
     final bytes = Uint8List.fromList(<int>[1]);
     final prepared = await FileV2Writer(mvk).prepare(
       fileId: FileV2Writer.newFileId(),
-      fileName: 'synthetic.bin', bytes: bytes,
+      fileName: 'synthetic.bin',
+      bytes: bytes,
     );
     final client = VaultAIClient(
       baseUrl: 'https://synthetic.example',
@@ -339,18 +341,146 @@ void main() {
           return http.Response('{"detail":"file_v2_not_found"}', 404);
         }
         expect(request.url.path, '/vault/file-v2/manifest');
-        return http.Response(jsonEncode(<String, dynamic>{
-          'detail': <String, dynamic>{
-            'code': 'vault_storage_limit_exceeded',
-            'used_bytes': 10,
-            'limit_bytes': 10,
-          },
-        }), 413);
+        return http.Response(
+            jsonEncode(<String, dynamic>{
+              'detail': <String, dynamic>{
+                'code': 'vault_storage_limit_exceeded',
+                'used_bytes': 10,
+                'limit_bytes': 10,
+              },
+            }),
+            413);
       }),
     );
-    await expectLater(client.uploadNewV2File(
-      authToken: 'synthetic-session', prepared: prepared,
-      originalBytes: bytes, mvk: mvk,
-    ), throwsA(isA<StorageLimitExceededException>()));
+    await expectLater(
+        client.uploadNewV2File(
+          authToken: 'synthetic-session',
+          prepared: prepared,
+          originalBytes: bytes,
+          mvk: mvk,
+        ),
+        throwsA(isA<StorageLimitExceededException>()));
+  });
+
+  test('deferred encrypted chunks resume from verified server bytes', () async {
+    final mvk = SecretKey(List<int>.filled(32, 74));
+    ZkActiveMvk.set(
+      mvk: mvk,
+      vaultId: 'synthetic-vault',
+      vaultHandle: 'synthetic-handle',
+    );
+    addTearDown(ZkActiveMvk.clear);
+    final source = Uint8List.fromList(utf8.encode('larger private source'));
+    final prepared = await FileV2Writer(mvk, eagerLimitBytes: 1).prepare(
+      fileId: FileV2Writer.newFileId(),
+      fileName: 'private.bin',
+      relativePath: 'Private/private.bin',
+      bytes: source,
+      chunkSize: 7,
+    );
+    expect(prepared.chunkCiphertexts, isEmpty);
+    expect(prepared.chunkCount, 3);
+    final chunks = <int, String>{};
+    var manifestStored = false;
+    var published = false;
+    var firstChunkResponseLost = false;
+    var publishCalls = 0;
+    final requests = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        final path = request.url.path;
+        expect(request.body, isNot(contains('larger private source')));
+        expect(request.body, isNot(contains('Private')));
+        expect(request.body, isNot(contains('private.bin')));
+        expect(request.body, isNot(contains('"pin"')));
+        if (path.endsWith('/manifest') && request.method == 'GET') {
+          return manifestStored
+              ? http.Response(
+                  jsonEncode(<String, dynamic>{
+                    ...prepared.toManifestBody(),
+                    'lifecycle_state':
+                        published ? 'client_v2_ready' : 'file_v2_written',
+                    'verification_state':
+                        published ? 'client_verified' : 'unverified',
+                  }),
+                  200)
+              : http.Response('{"detail":"not_found"}', 404);
+        }
+        if (path == '/vault/file-v2/manifest') {
+          manifestStored = true;
+          expect(jsonDecode(request.body)['chunk_count'], 3);
+          return http.Response('{"created":true}', 200);
+        }
+        if (path.contains('/chunk/') && request.method == 'GET') {
+          final index = int.parse(path.split('/').last);
+          return chunks.containsKey(index)
+              ? http.Response(
+                  jsonEncode(<String, dynamic>{
+                    'file_id': prepared.fileId,
+                    'chunk_index': index,
+                    'ciphertext': chunks[index],
+                  }),
+                  200)
+              : http.Response('{"detail":"not_found"}', 404);
+        }
+        if (path == '/vault/file-v2/chunk') {
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          final index = body['chunk_index'] as int;
+          chunks[index] = body['ciphertext'] as String;
+          if (index == 0 && !firstChunkResponseLost) {
+            firstChunkResponseLost = true;
+            throw StateError('Synthetic lost response after chunk stored');
+          }
+          return http.Response('{"stored":true}', 200);
+        }
+        if (path.endsWith('/publish-new')) {
+          publishCalls++;
+          published = true;
+          return http.Response(
+              jsonEncode(<String, dynamic>{
+                'file_id': prepared.fileId,
+                'status': 'published',
+              }),
+              200);
+        }
+        fail('Unexpected private file request: ${request.method} $path');
+      }),
+    );
+    await expectLater(
+        client.uploadNewV2File(
+          authToken: 'synthetic-session',
+          prepared: prepared,
+          originalBytes: source,
+          mvk: mvk,
+        ),
+        throwsStateError);
+    expect(chunks.keys, <int>{0});
+    final originalFirstChunk = chunks[0]!;
+    chunks[0] =
+        '${originalFirstChunk[0] == 'A' ? 'B' : 'A'}${originalFirstChunk.substring(1)}';
+    await expectLater(
+      client.uploadNewV2File(
+        authToken: 'synthetic-session',
+        prepared: prepared,
+        originalBytes: source,
+        mvk: mvk,
+      ),
+      throwsStateError,
+    );
+    expect(publishCalls, 0);
+    chunks[0] = originalFirstChunk;
+    await client.uploadNewV2File(
+      authToken: 'synthetic-session',
+      prepared: prepared,
+      originalBytes: source,
+      mvk: mvk,
+    );
+    expect(chunks.keys, <int>{0, 1, 2});
+    expect(publishCalls, 1);
+    expect(requests.where((request) => request.method == 'PUT'), hasLength(3));
+    expect(
+        requests.any((request) => request.url.path == '/upload-file'), isFalse);
   });
 }

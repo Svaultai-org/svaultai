@@ -59,8 +59,8 @@ class FileV2Manifest {
   String get displayName => (savedName?.trim().isNotEmpty ?? false)
       ? savedName!
       : (fileName?.trim().isNotEmpty ?? false)
-      ? fileName!
-      : 'File';
+          ? fileName!
+          : 'File';
 }
 
 class FileV2Download {
@@ -71,7 +71,7 @@ class FileV2Download {
 }
 
 class FileV2Reader {
-  static const int maxDownloadBytes = 64 * 1024 * 1024;
+  static const int maxDownloadBytes = 512 * 1024 * 1024;
 
   final SecretKey mvk;
   final FileV2Get get;
@@ -141,13 +141,16 @@ class FileV2Reader {
     final migrationMetadataVersion =
         response['migration_metadata_version'] ?? 1;
     if (migrationMetadataVersion is! int ||
-        migrationMetadataVersion < 1 || migrationMetadataVersion > 3) {
+        migrationMetadataVersion < 1 ||
+        migrationMetadataVersion > 3) {
       throw const FormatException('Invalid V2 file metadata version');
     }
     final encodedManifest = response['manifest_ciphertext'] as String;
     final maxManifestBytes = migrationMetadataVersion == 3
         ? 2 * 1024 * 1024
-        : migrationMetadataVersion == 2 ? 512 * 1024 : 128 * 1024;
+        : migrationMetadataVersion == 2
+            ? 512 * 1024
+            : 128 * 1024;
     if (encodedManifest.length > ((maxManifestBytes + 64) * 4 ~/ 3) + 8) {
       throw const FormatException('V2 file manifest exceeds safe limit');
     }
@@ -189,8 +192,7 @@ class FileV2Reader {
       if ((relativePath != null && utf8.encode(relativePath).length > 4096) ||
           (extractedText != null &&
               utf8.encode(extractedText).length >
-                  (migrationMetadataVersion == 3
-                      ? 256 * 1024 : 64 * 1024))) {
+                  (migrationMetadataVersion == 3 ? 256 * 1024 : 64 * 1024))) {
         throw const FormatException('V2 legacy file extras too large');
       }
     } else if (decoded.containsKey('legacy_extra')) {
@@ -242,7 +244,8 @@ class FileV2Reader {
         throw const FormatException('Invalid private folder manifest');
       }
       relativePath = requirePrivateV2RelativePath(
-        privatePath, fileName: fileName,
+        privatePath,
+        fileName: fileName,
       );
     }
     return FileV2Manifest(
@@ -279,18 +282,7 @@ class FileV2Reader {
     final out = Uint8List(manifest.totalBytes);
     var offset = 0;
     for (var i = 0; i < manifest.chunkCount; i++) {
-      final response = await get(
-        '/vault/file-v2/${Uri.encodeComponent(fileId)}/chunk/$i',
-      );
-      if (response['file_id'] != fileId ||
-          response['chunk_index'] != i ||
-          response['ciphertext'] is! String) {
-        throw const FormatException('Invalid V2 file chunk');
-      }
-      final plain = await aesGcmUnwrap(
-        key,
-        b64urlDecode(response['ciphertext'] as String),
-      );
+      final plain = await _readChunk(fileId, i, key);
       final expectedLength = i == manifest.chunkCount - 1
           ? manifest.totalBytes - offset
           : manifest.chunkSize;
@@ -304,6 +296,45 @@ class FileV2Reader {
       throw const FormatException('V2 file length mismatch');
     }
     return FileV2Download(manifest: manifest, bytes: out);
+  }
+
+  /// Recheck a staged upload without allocating a second full-file buffer.
+  /// This is especially important for large files that are already resident
+  /// in the upload queue's source buffer.
+  Future<bool> matchesOriginalBytes(String fileId, Uint8List original) async {
+    final manifest = await readManifest(fileId);
+    if (manifest.totalBytes != original.length) return false;
+    final key = await VaultKeyHierarchy(mvk).fileContentKey();
+    var offset = 0;
+    for (var i = 0; i < manifest.chunkCount; i++) {
+      final plain = await _readChunk(fileId, i, key);
+      final expected = i == manifest.chunkCount - 1
+          ? manifest.totalBytes - offset
+          : manifest.chunkSize;
+      if (plain.length != expected) {
+        throw const FormatException('V2 file chunk length mismatch');
+      }
+      for (var j = 0; j < expected; j++) {
+        if (plain[j] != original[offset + j]) return false;
+      }
+      offset += expected;
+    }
+    return offset == original.length;
+  }
+
+  Future<Uint8List> _readChunk(String fileId, int index, SecretKey key) async {
+    final response = await get(
+      '/vault/file-v2/${Uri.encodeComponent(fileId)}/chunk/$index',
+    );
+    if (response['file_id'] != fileId ||
+        response['chunk_index'] != index ||
+        response['ciphertext'] is! String) {
+      throw const FormatException('Invalid V2 file chunk');
+    }
+    return aesGcmUnwrap(
+      key,
+      b64urlDecode(response['ciphertext'] as String),
+    );
   }
 }
 

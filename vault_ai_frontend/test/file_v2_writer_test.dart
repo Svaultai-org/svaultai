@@ -22,9 +22,12 @@ void main() {
       chunkSize: 7,
     );
     expect(prepared.toManifestBody()['migrating_legacy'], false);
-    expect(prepared.toManifestBody().toString(), isNot(contains('private-note')));
-    expect(prepared.toManifestBody().toString(), isNot(contains('synthetic private bytes')));
-    expect(prepared.chunkCiphertexts.join(''), isNot(contains('synthetic private bytes')));
+    expect(
+        prepared.toManifestBody().toString(), isNot(contains('private-note')));
+    expect(prepared.toManifestBody().toString(),
+        isNot(contains('synthetic private bytes')));
+    expect(prepared.chunkCiphertexts.join(''),
+        isNot(contains('synthetic private bytes')));
 
     Future<Map<String, dynamic>> get(String path) async {
       if (path.endsWith('/manifest')) {
@@ -40,20 +43,24 @@ void main() {
       };
     }
 
-    expect(await writer.verifyReadback(
-      prepared: prepared,
-      originalBytes: bytes,
-      get: get,
-    ), isTrue);
+    expect(
+        await writer.verifyReadback(
+          prepared: prepared,
+          originalBytes: bytes,
+          get: get,
+        ),
+        isTrue);
     final opened = await FileV2Reader(mvk: mvk, get: get).download(id);
     expect(opened.manifest.displayName, 'private-note.txt');
     expect(opened.manifest.contentType, 'text/plain');
     expect(opened.bytes, bytes);
-    expect(await writer.verifyReadback(
-      prepared: prepared,
-      originalBytes: Uint8List.fromList(utf8.encode('different')),
-      get: get,
-    ), isFalse);
+    expect(
+        await writer.verifyReadback(
+          prepared: prepared,
+          originalBytes: Uint8List.fromList(utf8.encode('different')),
+          get: get,
+        ),
+        isFalse);
   });
 
   test('corrupt server readback blocks publish and oversize input fails',
@@ -65,23 +72,34 @@ void main() {
       fileName: 'tiny.bin',
       bytes: bytes,
     );
-    expect(await writer.verifyReadback(
-      prepared: prepared,
-      originalBytes: bytes,
-      get: (path) async => <String, dynamic>{
-        'file_id': id,
-        'crypto_version': 'client_mvk_v2',
-        'manifest_ciphertext': 'invalid',
-        'total_bytes': 3,
-        'chunk_size': FileV2Writer.defaultChunkSize,
-        'chunk_count': 1,
-      },
-    ), isFalse);
-    expect(() => writer.prepare(
-      fileId: id,
-      fileName: 'too big',
-      bytes: Uint8List(FileV2Writer.maxFileBytes + 1),
-    ), throwsFormatException);
+    expect(
+        await writer.verifyReadback(
+          prepared: prepared,
+          originalBytes: bytes,
+          get: (path) async => <String, dynamic>{
+            'file_id': id,
+            'crypto_version': 'client_mvk_v2',
+            'manifest_ciphertext': 'invalid',
+            'total_bytes': 3,
+            'chunk_size': FileV2Writer.defaultChunkSize,
+            'chunk_count': 1,
+          },
+        ),
+        isFalse);
+    expect(
+      () => FileV2Writer.requireChunkCount(
+        FileV2Writer.maxFileBytes + 1,
+        FileV2Writer.maxChunkBytes,
+      ),
+      throwsFormatException,
+    );
+    expect(
+      FileV2Writer.requireChunkCount(
+        FileV2Writer.maxFileBytes,
+        FileV2Writer.maxChunkBytes,
+      ),
+      512,
+    );
   });
 
   test('folder path is encrypted and readable on web and native clients',
@@ -117,10 +135,28 @@ void main() {
       'red shoes.jpg',
     ]) {
       await expectLater(
-        writer.prepare(fileId: FileV2Writer.newFileId(),
-            fileName: 'red shoes.jpg', relativePath: invalid, bytes: bytes),
+        writer.prepare(
+            fileId: FileV2Writer.newFileId(),
+            fileName: 'red shoes.jpg',
+            relativePath: invalid,
+            bytes: bytes),
         throwsFormatException,
       );
     }
+  });
+
+  test('a real file above 64 MiB prepares without a second chunk buffer',
+      () async {
+    final source = Uint8List(FileV2Writer.eagerCiphertextLimitBytes + 1);
+    final prepared = await writer.prepare(
+      fileId: FileV2Writer.newFileId(),
+      fileName: 'large-private.bin',
+      bytes: source,
+      chunkSize: FileV2Writer.maxChunkBytes,
+    );
+    expect(prepared.totalBytes, source.length);
+    expect(prepared.chunkCount, 65);
+    expect(prepared.chunkCiphertexts, isEmpty);
+    expect(prepared.toManifestBody()['chunk_count'], 65);
   });
 }

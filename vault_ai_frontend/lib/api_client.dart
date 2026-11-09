@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show kReleaseMode;
@@ -4907,6 +4908,8 @@ class VaultAIClient {
     void Function(double progress)? onProgress,
   }) async {
     if (originalBytes.length != prepared.totalBytes ||
+        (prepared.chunkCiphertexts.isNotEmpty &&
+            prepared.chunkCiphertexts.length != prepared.chunkCount) ||
         !identical(mvk, zk_mvk_store.ZkActiveMvk.current())) {
       throw StateError('Private upload access changed');
     }
@@ -4979,24 +4982,62 @@ class VaultAIClient {
             prepared.manifestCiphertext ||
         existingManifest['total_bytes'] != prepared.totalBytes ||
         existingManifest['chunk_size'] != prepared.chunkSize ||
-        existingManifest['chunk_count'] != prepared.chunkCiphertexts.length) {
+        existingManifest['chunk_count'] != prepared.chunkCount) {
       throw const FormatException('Private file upload differs from server');
     }
-    for (var index = 0; index < prepared.chunkCiphertexts.length; index++) {
+    final writer = FileV2Writer(mvk);
+    final deferredChunks = prepared.chunkCiphertexts.isEmpty &&
+        prepared.chunkCount > 0;
+    final contentKey = deferredChunks
+        ? await vault_key_hierarchy.VaultKeyHierarchy(mvk).fileContentKey()
+        : null;
+    for (var index = 0; index < prepared.chunkCount; index++) {
+      checkAccess();
       final chunkPath = '/vault/file-v2/$encodedId/chunk/$index';
       final existing = await getOptional(chunkPath);
       if (existing == null) {
-        await mutate('PUT', '/vault/file-v2/chunk',
-            prepared.chunkBody(index));
+        final start = index * prepared.chunkSize;
+        final end = math.min(start + prepared.chunkSize, originalBytes.length);
+        final ciphertext = deferredChunks
+            ? vault_key_hierarchy.b64urlEncode(
+                await vault_key_hierarchy.aesGcmWrap(
+                  contentKey!, originalBytes.sublist(start, end),
+                ),
+              )
+            : prepared.chunkCiphertexts[index];
+        checkAccess();
+        await mutate('PUT', '/vault/file-v2/chunk', <String, Object>{
+          'file_id': prepared.fileId,
+          'chunk_index': index,
+          'ciphertext': ciphertext,
+        });
       } else if (existing['file_id'] != prepared.fileId ||
           existing['chunk_index'] != index ||
-          existing['ciphertext'] != prepared.chunkCiphertexts[index]) {
+          existing['ciphertext'] is! String) {
         throw const FormatException('Private file chunk differs from server');
+      } else if (!deferredChunks) {
+        if (existing['ciphertext'] != prepared.chunkCiphertexts[index]) {
+          throw const FormatException('Private file chunk differs from server');
+        }
+      } else {
+        final start = index * prepared.chunkSize;
+        final end = math.min(start + prepared.chunkSize, originalBytes.length);
+        final clear = await vault_key_hierarchy.aesGcmUnwrap(
+          contentKey!,
+          vault_key_hierarchy.b64urlDecode(existing['ciphertext'] as String),
+        );
+        checkAccess();
+        if (clear.length != end - start) {
+          throw const FormatException('Private file chunk differs from source');
+        }
+        for (var j = 0; j < clear.length; j++) {
+          if (clear[j] != originalBytes[start + j]) {
+            throw const FormatException('Private file chunk differs from source');
+          }
+        }
       }
-      onProgress?.call((index + 1) /
-          (prepared.chunkCiphertexts.length + 2));
+      onProgress?.call(0.8 * (index + 1) / prepared.chunkCount);
     }
-    final writer = FileV2Writer(mvk);
     final verified = await writer.verifyReadback(
       prepared: prepared,
       originalBytes: originalBytes,

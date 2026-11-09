@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from routes import file_v2_new_upload_routes as route
+from routes import file_v2_routes as staging
 
 
 VAULT = "11111111-1111-1111-1111-111111111111"
@@ -198,6 +199,36 @@ def test_publishes_exact_ciphertext_once_and_retries_without_double_charge(harne
                for sql in db.cur.sql)
 
 
+def test_512_mib_private_file_framing_is_bounded_without_file_allocation():
+    assert route.MAX_NEW_FILE_BYTES == 512 * 1024 * 1024
+    payload = staging.Manifest(
+        file_id=FILE,
+        crypto_version="client_mvk_v2",
+        manifest_ciphertext="AQID",
+        total_bytes=route.MAX_NEW_FILE_BYTES,
+        chunk_size=route.MAX_CHUNK_BYTES,
+        chunk_count=512,
+    )
+    assert payload.chunk_count == 512
+    record = {
+        "total_bytes": payload.total_bytes,
+        "chunk_size": payload.chunk_size,
+        "chunk_count": payload.chunk_count,
+        "manifest_ciphertext": b"x" * route.AES_GCM_FRAME_OVERHEAD,
+    }
+    chunks = [
+        {"chunk_index": index,
+         "ciphertext_bytes": route.MAX_CHUNK_BYTES +
+         route.AES_GCM_FRAME_OVERHEAD}
+        for index in range(payload.chunk_count)
+    ]
+    route._validate_framing(record, chunks)
+    record["total_bytes"] += 1
+    with pytest.raises(HTTPException) as oversized:
+        route._validate_framing(record, chunks)
+    assert oversized.value.detail == "file_v2_invalid_framing"
+
+
 @pytest.mark.parametrize("change,detail", [
     (lambda db: db.chunks.clear(), "file_v2_chunks_incomplete"),
     (lambda db: db.chunks.__setitem__(0, {"chunk_index": 0,
@@ -206,7 +237,7 @@ def test_publishes_exact_ciphertext_once_and_retries_without_double_charge(harne
      "file_v2_invalid_chunk_size"),
     (lambda db: db.record.__setitem__("manifest_ciphertext", b"x" * 65537),
      "file_v2_invalid_framing"),
-    (lambda db: db.record.__setitem__("total_bytes", 65 * 1024 * 1024),
+    (lambda db: db.record.__setitem__("total_bytes", route.MAX_NEW_FILE_BYTES + 1),
      "file_v2_invalid_framing"),
     (lambda db: db.marker.__setitem__("has_legacy", True),
      "file_v2_not_new"),

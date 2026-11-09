@@ -16446,6 +16446,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final app = context.read<AppState>();
     final cap = app.uploadSafetyCapBytes;
 
+    if (kEnableNewFileV2Upload &&
+        zk_mvk_store.ZkActiveMvk.current() != null &&
+        sizeBytes > FileV2Writer.maxFileBytes) {
+      return 'Private file upload currently supports files up to '
+          '${_formatBytes(FileV2Writer.maxFileBytes)}.';
+    }
+
     if (app.isBillingLoaded) {
       final limit = app.effectiveStorageLimitBytes;
       final remaining = (limit - app.storageUsedBytes).clamp(0, limit);

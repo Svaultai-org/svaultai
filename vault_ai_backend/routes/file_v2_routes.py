@@ -15,7 +15,9 @@ from zk_migration_flags import ZkMigrationFlags
 from subscription_entitlement import require_content_write, require_file_read
 
 router = APIRouter()
-MAX_FILE_BYTES = 64 * 1024 * 1024
+# Match the existing PIN-free, client-decrypted older chunk reader. New V2
+# uploads stage and verify one ciphertext chunk at a time above 64 MiB.
+MAX_FILE_BYTES = 512 * 1024 * 1024
 MAX_CHUNK_BYTES = 1024 * 1024
 MAX_CHUNKS = 4096
 MAX_MANIFEST_CIPHERTEXT_BYTES = 64 * 1024
