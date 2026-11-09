@@ -20930,6 +20930,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         loadIndex: () => zk_chat_index.ZkPrivateChatIndexLoader(
           mvk: mvk,
           accessIsCurrent: currentAccess,
+          legacyFileInventory:
+              ZkPinFreeFileSession.instance.listOfferedForToken(token) &&
+                      ZkPinFreeFileSession.instance.downloadOfferedForToken(token)
+                  ? () => client.listZkFileMetadata(
+                        authToken: token, requireLegacyComplete: true,
+                        maxPages: 5,
+                      )
+                  : null,
           get: (path) => client.zkPrivateChatCiphertextGet(
             authToken: token,
             path: path,
@@ -20982,7 +20990,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               fileId: selected.id,
               fileName: selected.title,
               mimeType: selected.mimeType,
-              payload: const {'zk_private_chat_v2': true},
+              payload: selected.legacyProofRequired
+                  ? const {'pin_free_chat_file': true}
+                  : const {'zk_private_chat_v2': true},
             );
           } else {
             answer = _Msg(

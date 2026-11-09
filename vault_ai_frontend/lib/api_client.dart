@@ -4756,13 +4756,17 @@ class VaultAIClient {
   Future<Map<String, dynamic>> listZkFileMetadata({
     required String authToken,
     bool requireLegacyComplete = false,
+    int maxPages = 1000,
   }) async {
+    if (maxPages < 1 || maxPages > 1000) {
+      throw ArgumentError.value(maxPages, 'maxPages', 'Must be 1–1000');
+    }
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) throw StateError('Vault encryption key is unavailable');
     final files = <Map<String, dynamic>>[];
     final seen = <String>{};
     var after = '';
-    for (var page = 0; page < 1000; page++) {
+    for (var page = 0; page < maxPages; page++) {
       _requireSavedItemKey(mvk);
       final uri = Uri.parse(
         '$baseUrl/vault/files/metadata?after_file_id=${Uri.encodeQueryComponent(after)}&limit=100${requireLegacyComplete ? '&require_legacy_complete=true' : ''}',
@@ -4815,6 +4819,18 @@ class VaultAIClient {
       }
       if (decoded['has_more'] == false) {
         final result = <String, dynamic>{'files': files};
+        await _decryptUploadedFileMetadataForActiveZkVault(result);
+        _requireSavedItemKey(mvk);
+        return result;
+      }
+      // Private search needs a bounded snapshot, while the file UI continues
+      // to request the complete inventory by default. Never call a truncated
+      // search result complete.
+      if (page + 1 == maxPages && maxPages < 1000) {
+        final result = <String, dynamic>{
+          'files': files,
+          'truncated': true,
+        };
         await _decryptUploadedFileMetadataForActiveZkVault(result);
         _requireSavedItemKey(mvk);
         return result;

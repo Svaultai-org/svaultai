@@ -39,7 +39,7 @@ void main() {
         isFalse);
   });
 
-  test('issued chat offer fences only replaced PIN routes before transport',
+  test('issued chat offer fences old chat before transport even without PIN',
       () async {
     final token = signedChatToken();
     final headers = <String, String>{'Authorization': 'Bearer $token'};
@@ -58,8 +58,11 @@ void main() {
         throwsStateError,
       );
     }
-    assertOfferedReadPinFreeRequest(
-      Uri.parse('https://synthetic.example/chat'), headers, body: '{}');
+    expect(
+      () => assertOfferedReadPinFreeRequest(
+        Uri.parse('https://synthetic.example/chat'), headers, body: '{}'),
+      throwsStateError,
+    );
     assertOfferedReadPinFreeRequest(
       Uri.parse('https://synthetic.example/update-secure-item'), headers,
       body: '{"pin":"synthetic-marker"}');

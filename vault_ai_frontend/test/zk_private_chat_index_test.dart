@@ -272,6 +272,124 @@ void main() {
     }
   });
 
+  test('older media names join private search only with a proof reader',
+      () async {
+    final ready = await _fileManifest(
+      id: 'ready-photo', name: 'ready-photo.jpg',
+      mime: 'image/jpeg', size: 0,
+    );
+    final requested = <String>[];
+    var inventoryCalls = 0;
+    final loader = ZkPrivateChatIndexLoader(
+      mvk: _mvk,
+      accessIsCurrent: () => true,
+      fileLimit: 3,
+      get: (path) async {
+        requested.add(path);
+        if (path == '/vault/ciphertext/vault-items') return [];
+        if (path == '/vault/file-v2') {
+          return {
+            'files': [
+              {
+                'file_id': 'ready-photo',
+                'verification_state': 'client_verified',
+                'lifecycle_state': 'client_v2_ready',
+              }
+            ]
+          };
+        }
+        if (path == '/vault/file-v2/ready-photo/manifest') return ready;
+        fail('Unexpected private GET: $path');
+      },
+      legacyFileInventory: () async {
+        inventoryCalls++;
+        return {
+          'files': [
+            {
+              'id': 'ready-photo', 'upload_status': 'complete',
+              'v2_ready': true, 'file_name': 'ready-photo.jpg',
+              'content_type': 'image/jpeg', 'storage_mode': 'inline',
+            },
+            {
+              'id': 'older-photo', 'upload_status': 'complete',
+              'v2_ready': false, 'v2_retired': false,
+              'file_name': 'red-cloth-black-shoes.jpg',
+              'content_type': 'image/jpeg', 'storage_mode': 'inline',
+            },
+            {
+              'id': 'older-video', 'upload_status': 'complete',
+              'v2_ready': false, 'v2_retired': false,
+              'file_name': 'standing-at-the-beach.mp4',
+              'content_type': 'video/mp4', 'storage_mode': 'chunked',
+            },
+            {
+              'id': 'bad-name', 'upload_status': 'complete',
+              'file_name': '', 'content_type': 'image/jpeg',
+              'storage_mode': 'inline',
+            },
+          ],
+        };
+      },
+    );
+    final index = await loader.load();
+    expect(inventoryCalls, 1);
+    expect(index.incomplete, isTrue); // Malformed older label was omitted.
+    expect(index.files.map((f) => f.id),
+        ['ready-photo', 'older-photo', 'older-video']);
+    expect(index.files.first.legacyProofRequired, isFalse);
+    expect(index.files[1].legacyProofRequired, isTrue);
+    expect(index.files[2].legacyProofRequired, isTrue);
+    expect(requested.every((path) => path.startsWith('/vault/')), isTrue);
+    expect(requested.join(' '), isNot(contains('red-cloth')));
+    final selected = ZkLocalChatRouter.resolve(
+      prompt: 'Find my video at the beach',
+      savedItems: index.savedItems,
+      files: index.files,
+    );
+    expect(selected.selection?.id, 'older-video');
+    expect(selected.maySendToGeneralAi, isFalse);
+  });
+
+  test('older media adapter stays inside the existing file cap', () async {
+    final ready = await _fileManifest(
+      id: 'ready-photo', name: 'ready-photo.jpg',
+      mime: 'image/jpeg', size: 0,
+    );
+    final loader = ZkPrivateChatIndexLoader(
+      mvk: _mvk,
+      accessIsCurrent: () => true,
+      fileLimit: 1,
+      get: (path) async {
+        if (path == '/vault/ciphertext/vault-items') return [];
+        if (path == '/vault/file-v2') {
+          return {
+            'files': [
+              {
+                'file_id': 'ready-photo',
+                'verification_state': 'client_verified',
+                'lifecycle_state': 'client_v2_ready',
+              }
+            ]
+          };
+        }
+        if (path == '/vault/file-v2/ready-photo/manifest') return ready;
+        fail('Unexpected private GET: $path');
+      },
+      legacyFileInventory: () async => {
+        'files': [
+          {
+            'id': 'older-video', 'upload_status': 'complete',
+            'file_name': 'standing-at-the-beach.mp4',
+            'content_type': 'video/mp4', 'storage_mode': 'chunked',
+          }
+        ],
+      },
+    );
+    final index = await loader.load();
+    expect(index.files.map((f) => f.id), ['ready-photo']);
+    expect(index.incomplete, isTrue);
+  });
+
   test('private search stops if the vault locks during a fetch', () async {
     var current = true;
     final loader = ZkPrivateChatIndexLoader(

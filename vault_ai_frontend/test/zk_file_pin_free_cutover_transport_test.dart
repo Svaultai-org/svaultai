@@ -175,4 +175,40 @@ void main() {
       'Bearer synthetic-session',
     );
   });
+
+  test('private media inventory caps pages without sending a PIN or name',
+      () async {
+    ZkActiveMvk.set(
+      mvk: SecretKey(List<int>.filled(32, 54)),
+      vaultId: 'synthetic-zk-vault',
+      vaultHandle: 'synthetic-zk-handle',
+    );
+    final requests = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        return http.Response(
+          '{"records":[{"file_id":"synthetic-old-file","upload_status":"complete"}],'
+          '"has_more":true,"next_after_file_id":"synthetic-old-file"}',
+          200,
+        );
+      }),
+    );
+    final result = await client.listZkFileMetadata(
+      authToken: 'synthetic-session',
+      requireLegacyComplete: true,
+      maxPages: 1,
+    );
+    expect(result['files'], hasLength(1));
+    expect(result['truncated'], isTrue);
+    expect(requests, hasLength(1));
+    expect(requests.single.method, 'GET');
+    expect(requests.single.url.path, '/vault/files/metadata');
+    expect(requests.single.url.queryParameters['require_legacy_complete'],
+        'true');
+    expect(requests.single.body, isEmpty);
+    expect(requests.single.url.toString(), isNot(contains('pin')));
+    expect(requests.single.url.toString(), isNot(contains('vault_name')));
+  });
 }
