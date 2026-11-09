@@ -68,6 +68,7 @@ import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/private_content_pin_guard.dart' as private_content_guard;
 import 'services/zk_private_chat.dart' as zk_private_chat;
 import 'services/zk_private_file_selection.dart' as zk_file_selection;
+import 'services/zk_private_upload_guard.dart' as zk_upload_guard;
 import 'services/zk_general_chat_bridge.dart' as zk_general_bridge;
 import 'services/zk_private_chat_flow.dart' as zk_chat_flow;
 import 'services/zk_private_chat_index.dart' as zk_chat_index;
@@ -17273,7 +17274,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required List<_Attachment> pendingAttachments,
     String? accompanyingText,
     bool showUploadMessages = true,
+    SecretKey? requiredPrivateMvk,
+    String? requiredPrivateVaultId,
   }) async {
+    final app = context.read<AppState>();
+    final v2Mvk = zk_upload_guard.selectV2UploadKey(
+      activeMvk: zk_mvk_store.ZkActiveMvk.current(),
+      activeVaultId: zk_mvk_store.ZkActiveMvk.currentVaultId(),
+      writerEnabled: kEnableNewFileV2Upload,
+      readerEnabled: kEnableFileV2UiRead,
+      requiredPrivateMvk: requiredPrivateMvk,
+      requiredPrivateVaultId: requiredPrivateVaultId,
+    );
     final preUploadedIds = <String>[];
     final freshAttachments = <_Attachment>[];
     for (final a in pendingAttachments) {
@@ -17290,6 +17302,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         a.uploadedFileId = existing!.uploadedFileId;
       }
       if (a.uploaded && a.uploadedFileId != null) {
+        if (requiredPrivateMvk != null &&
+            (existing?.status != UploadJobStatus.uploaded ||
+                existing?.preparedNewV2 == null ||
+                existing?.uploadedFileId != a.uploadedFileId)) {
+          throw StateError('Private upload state changed. Select the file again.');
+        }
         preUploadedIds.add(a.uploadedFileId!);
       } else {
         freshAttachments.add(a);
@@ -17303,7 +17321,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
     }
 
-    final app = context.read<AppState>();
     if (kRequirePinFreeZkFiles &&
         app.vaultHandle?.isNotEmpty == true &&
         (!kEnableFileV2UiRead ||
@@ -17316,9 +17333,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         zk_mvk_store.ZkActiveMvk.current() != null) {
       throw StateError('Private file upload needs the V2 file reader');
     }
-    final v2Mvk = kEnableNewFileV2Upload
-        ? zk_mvk_store.ZkActiveMvk.current()
-        : null;
     if (kEnableNewFileV2Upload &&
         v2Mvk == null &&
         app.vaultHandle?.isNotEmpty == true) {
@@ -17400,7 +17414,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       vaultId: app.vaultId,
       v2Mvk: v2Mvk,
       keyBytes: keyBytes,
-      accompanyingText: accompanyingText,
+      accompanyingText: zk_upload_guard.uploadAccompanyingText(
+        text: accompanyingText,
+        requiredPrivateMvk: requiredPrivateMvk,
+      ),
       isBatchUpload: isMultiFileBatch,
       zkImportSessionOnly: zkImportSessionOnly,
       uploadSafetyCapBytes: app.uploadSafetyCapBytes,
@@ -21590,6 +21607,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (!currentAccess() ||
         vaultName == null ||
         vaultName.isEmpty ||
+        app.vaultId == null ||
         !identical(zk_mvk_store.ZkActiveMvk.current(), mvk)) {
       _appendAssistantMessage('Unlock your vault and try the upload again.');
       return;
@@ -21642,7 +21660,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         pin: '',
         authToken: token,
         pendingAttachments: pending,
-        accompanyingText: text,
+        requiredPrivateMvk: mvk,
+        requiredPrivateVaultId: app.vaultId,
         showUploadMessages: false,
       );
       if (!currentAccess()) return;
