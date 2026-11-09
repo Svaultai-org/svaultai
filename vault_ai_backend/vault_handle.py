@@ -1,44 +1,38 @@
 """Vault Handle model for VaultAI's zero-knowledge login identifier.
 
 VaultAI's ZK redesign replaces the plaintext ``vault_name`` login-lookup
-column with an opaque high-entropy identifier generated client-side at
-signup. The server stores the handle as the row-lookup key. The user's
-human-readable display name is encrypted client-side under the vault
-master key and lives in ``vaults.display_name_ciphertext``.
+column with a client-derived identifier. The server stores the handle as
+the row-lookup key. The user's human-readable display name is encrypted
+client-side under the vault master key and lives in
+``vaults.display_name_ciphertext``.
 
 Wire format
 -----------
 Display form:
     ``VLT-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX``
     24 base32 characters (Crockford variant: alphabet = 0-9 A-Z minus
-    I, L, O, U) split into six four-character groups. 24 * 5 =
-    120 bits of entropy; well above the 80-bit threshold for
-    "practically unenumerable" random identifiers.
+    I, L, O, U) split into six four-character groups. The 120-bit
+    representation is a truncated hash, not 120 bits of name entropy.
 
 Storage form:
-    ``BYTEA(15)`` — the raw 120-bit random value. The server NEVER
-    stores or logs the display ASCII string; only the 15 canonical
-    bytes. This matters because we want ``log(request)`` scans to
-    never contain a value a reader could type back into the login
-    dialog verbatim.
+    ``BYTEA(15)`` — the 120-bit truncated hash. The server stores the
+    canonical bytes and does not log the display ASCII string.
 
 Properties
 ----------
-* Client-generated using a CSPRNG; no derivation from user input.
+* New signups derive a stable handle from the normalized user-chosen name.
+  A database dump plus source permits offline guessing of common names.
+  The legacy adoption path still generates a random handle.
 * Case-insensitive on input; normalized to uppercase with dashes for
   display.
 * Dashes optional on input; whitespace tolerated; humans can transcribe
   from paper without ambiguity (I/L/O/U absent).
-* No collision possible in the lifetime of the product at 120 bits.
-* Not human-guessable; not enumerable from a DB dump because the
-  server-side hash function used for lookup (see auth_zk_routes) is
-  the raw bytes — an operator with the DB has the value verbatim but
-  cannot invert it to a person because the value is not derived from
-  any personal information.
+* Hash collisions are negligible at 120 bits, but user-chosen names
+  are not high entropy and can be tested against a stolen handle.
 
-This module contains NO cryptographic primitives. It is a formatter,
-parser, and CSPRNG-backed generator. All encryption/decryption is
-performed elsewhere.
+This module formats and parses handles, derives deterministic lookup
+identifiers, and generates random handles for legacy adoption. Content
+encryption/decryption is performed elsewhere.
 """
 
 from __future__ import annotations
@@ -93,9 +87,9 @@ class InvalidVaultHandle(ValueError):
 
 
 def generate() -> bytes:
-    """Return a fresh 15-byte random handle (server-side only when the
-    server is minting a placeholder for legacy adoption; clients should
-    generate their own).
+    """Return a fresh 15-byte random handle for legacy adoption.
+
+    New signup derives a stable handle from the user's entered name.
     """
     return secrets.token_bytes(VAULT_HANDLE_BYTES)
 

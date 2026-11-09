@@ -1,6 +1,7 @@
 """Regression guards for client-private vault login names."""
 
 from pathlib import Path
+import re
 
 import pytest
 
@@ -51,6 +52,30 @@ def test_migration_replaces_names_and_enforces_opaque_label() -> None:
     assert "display_username = NULL" in migration
     assert "vaults_vault_name_is_opaque_ck" in migration
     assert "'vault-' || replace(vault_id::text, '-', '')" in migration
+
+
+def test_opaque_auth_log_identifiers_are_off_without_a_separate_key(
+    monkeypatch,
+) -> None:
+    from routes import auth_zk_routes as zk
+    from vault_handle import derive_from_username, derive_username_lookup_v1
+
+    handle = derive_from_username("Synthetic Name")
+    lookup = derive_username_lookup_v1("Synthetic Name")
+    monkeypatch.delenv("VAULTAI_ZK_AUTH_LOG_HMAC_KEY", raising=False)
+    assert zk._auth_log_fingerprint("handle", handle) == "-"
+    assert zk._auth_log_fingerprint("lookup", lookup) == "-"
+    monkeypatch.setenv("VAULTAI_ZK_AUTH_LOG_HMAC_KEY", "too-short")
+    assert zk._auth_log_fingerprint("handle", handle) == "-"
+
+    monkeypatch.setenv(
+        "VAULTAI_ZK_AUTH_LOG_HMAC_KEY", "synthetic-separate-diagnostic-key-32bytes",
+    )
+    tagged_handle = zk._auth_log_fingerprint("handle", handle)
+    tagged_lookup = zk._auth_log_fingerprint("lookup", lookup)
+    assert re.fullmatch(r"[0-9a-f]{8}", tagged_handle)
+    assert tagged_handle == zk._auth_log_fingerprint("handle", handle)
+    assert tagged_handle != tagged_lookup
 
 
 def test_deletion_service_refuses_non_user_callers() -> None:

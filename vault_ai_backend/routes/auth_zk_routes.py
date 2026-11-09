@@ -126,25 +126,21 @@ def _zk_login_connection():
             conn.close()
 
 
-def _handle_fingerprint(handle_bytes: bytes) -> str:
-    """First 4 bytes of SHA-256(handle_bytes), hex-encoded.
+def _auth_log_fingerprint(kind: str, value: bytes) -> str:
+    """Optional keyed correlation tag for auth diagnostics.
 
-    Non-reversible pointer to a specific vault_handle that can be
-    correlated across register + login logs without exposing the
-    handle itself or the username it derives from.
+    Vault handles and username lookups are deterministic hashes of a
+    user-chosen name. An unkeyed fingerprint in logs is therefore
+    dictionary-guessable even though it is short. The diagnostic is off
+    unless a separate 32-byte-or-longer secret is configured; the secret
+    never enters the log or the database.
     """
-    return hashlib.sha256(handle_bytes).hexdigest()[:8]
-
-
-def _record_fingerprint(record_bytes: bytes) -> str:
-    """First 4 bytes of SHA-256(opaque_registration_record), hex.
-
-    A stable identifier for the stored OPAQUE record that lets an
-    operator confirm the same record byte-for-byte was used at
-    register-finish and at every subsequent login-init without
-    logging the record itself (which is registration-secret material).
-    """
-    return hashlib.sha256(record_bytes).hexdigest()[:8]
+    key = os.getenv("VAULTAI_ZK_AUTH_LOG_HMAC_KEY", "").encode("utf-8")
+    if len(key) < 32:
+        return "-"
+    return hmac.new(
+        key, kind.encode("ascii") + b"\x00" + value, hashlib.sha256,
+    ).hexdigest()[:8]
 
 
 def _bytes_or_none(value: object) -> Optional[bytes]:
@@ -159,11 +155,11 @@ def _bytes_or_none(value: object) -> Optional[bytes]:
 USERNAME_LOOKUP_V1_BYTES = 32
 
 
-def _lookup_v1_fingerprint(lookup: bytes) -> str:
-    """8-hex fingerprint of a username_lookup_v1 value for correlated
-    logs. The full 32 bytes are already non-reversible without a
-    dictionary attack on common usernames; the fingerprint truncates
-    further so no log line carries the entire lookup id.
+def _lookup_v1_audit_fingerprint(lookup: bytes) -> str:
+    """Keep the existing conflict-row marker inside the database only.
+
+    That database already stores the full lookup on the conflicting row.
+    This unkeyed marker must not be copied into application logs.
     """
     return hashlib.sha256(lookup).hexdigest()[:8]
 
@@ -405,8 +401,8 @@ def _zk_register_init_sync(
                 "[ZK-REGISTER-INIT] duplicate username pid=%d "
                 "handle_fpr=%s lookup_fpr=%s",
                 os.getpid(),
-                _handle_fingerprint(handle_bytes),
-                _lookup_v1_fingerprint(lookup_bytes),
+                _auth_log_fingerprint("handle", handle_bytes),
+                _auth_log_fingerprint("lookup", lookup_bytes),
             )
             raise HTTPException(
                 status_code=409,
@@ -556,17 +552,15 @@ def _zk_register_finalize_sync(
     except OpaqueError:
         raise HTTPException(status_code=400, detail="registration rejected")
 
-    # Safe diagnostic: the SAME (handle_fpr, record_fpr) pair should
-    # appear later in the [ZK-LOGIN-INIT] log for this account. If a
-    # subsequent login shows a DIFFERENT record_fpr for the same
-    # handle_fpr, the record on disk was silently rewritten — a
-    # storage-layer bug.
+    # When a separate diagnostic HMAC key is configured, these keyed tags
+    # can correlate registration and login without exposing public-hash
+    # fingerprints of a user-chosen name. They are '-' by default.
     logger.info(
         "[ZK-REGISTER-FINALIZE] pid=%d handle_fpr=%s record_fpr=%s "
         "stage=registration_finish",
         os.getpid(),
-        _handle_fingerprint(handle_bytes),
-        _record_fingerprint(record),
+        _auth_log_fingerprint("handle", handle_bytes),
+        _auth_log_fingerprint("record", record),
     )
 
     # Decode the client's one-way lookup once. New private-identifier
@@ -642,8 +636,8 @@ def _zk_register_finalize_sync(
             conn.rollback()
             logger.warning(
                 "[ZK-REGISTER] duplicate on finalize (handle_fpr=%s lookup_fpr=%s)",
-                _handle_fingerprint(handle_bytes),
-                _lookup_v1_fingerprint(lookup_bytes),
+                _auth_log_fingerprint("handle", handle_bytes),
+                _auth_log_fingerprint("lookup", lookup_bytes),
             )
             raise HTTPException(
                 status_code=409,
@@ -825,7 +819,7 @@ def _zk_login_init_sync(
                         (
                             row["vault_id"],
                             conflict["vault_id"],
-                            _lookup_v1_fingerprint(lookup_bytes),
+                            _lookup_v1_audit_fingerprint(lookup_bytes),
                         ),
                     )
                     conn.commit()
@@ -835,7 +829,7 @@ def _zk_login_init_sync(
                         os.getpid(),
                         row["vault_id"],
                         conflict["vault_id"],
-                        _lookup_v1_fingerprint(lookup_bytes),
+                        _auth_log_fingerprint("lookup", lookup_bytes),
                     )
             # End the lookup/backfill transaction before OPAQUE, just as
             # releasing the former first lease did. Keep the checked lease.
@@ -845,8 +839,8 @@ def _zk_login_init_sync(
                 "[ZK-LOGIN-INIT] no vault for handle "
                 "pid=%d handle_fpr=%s lookup_fpr=%s",
                 os.getpid(),
-                _handle_fingerprint(handle_bytes),
-                _lookup_v1_fingerprint(lookup_bytes)
+                _auth_log_fingerprint("handle", handle_bytes),
+                _auth_log_fingerprint("lookup", lookup_bytes)
                 if lookup_bytes is not None else "-",
             )
             raise HTTPException(
@@ -861,17 +855,14 @@ def _zk_login_init_sync(
         # can differ — and the stored bytes are the correct ones.
         stored_handle_bytes = bytes(row["vault_handle"])
         record_bytes = bytes(row["opaque_registration_record"])
-        # Safe diagnostic: correlates register-finish and every subsequent
-        # login-init for the SAME account without leaking secrets.
-        # Also reveals whether two workers see the same registration
-        # record (they should — the record lives in Postgres, not in a
-        # per-worker cache).
+        # Optional keyed tags allow cross-worker registration-record
+        # correlation during an incident. They are '-' by default.
         logger.info(
             "[ZK-LOGIN-INIT] pid=%d handle_fpr=%s record_fpr=%s "
             "vault_id=%s stage=login_start",
             os.getpid(),
-            _handle_fingerprint(handle_bytes),
-            _record_fingerprint(record_bytes),
+            _auth_log_fingerprint("handle", handle_bytes),
+            _auth_log_fingerprint("record", record_bytes),
             row["vault_id"],
         )
 

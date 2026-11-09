@@ -68,6 +68,10 @@ void main() {
     final finalize = bodies['/auth/zk-register-finalize']!;
     expect(init.containsKey('pin'), isFalse);
     expect(finalize.containsKey('pin'), isFalse);
+    for (final body in [init, finalize]) {
+      expect(body.containsKey('vault_name'), isFalse);
+      expect(jsonEncode(body), isNot(contains('Synthetic QA Vault')));
+    }
     expect(finalize['pin_salt'], isA<String>());
     expect(finalize['kdf_iterations'], 600000);
     if (kVerifierFreeZkRegistration) {

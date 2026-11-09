@@ -381,6 +381,7 @@ void main() {
       for (final body in http.initBodies) {
         expect(body.containsKey('vault_name'), isFalse);
         expect(body.containsKey('pin'), isFalse);
+        expect(jsonEncode(body), isNot(contains(name)));
       }
     });
   });
