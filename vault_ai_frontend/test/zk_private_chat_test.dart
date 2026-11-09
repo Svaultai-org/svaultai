@@ -37,7 +37,44 @@ void main() {
       previousSelection: recoveryFile,
     );
     expect(result.selection, same(recoveryFile));
+    expect(result.action, ZkLocalChatAction.open);
     expect(result.maySendToGeneralAi, isFalse);
+  });
+
+  test('exact file follow-ups stay local and bound to the selection', () {
+    const file = ZkLocalChatRecord(
+      kind: ZkLocalChatKind.file,
+      id: 'private-text',
+      title: 'journal.txt',
+      searchText: '🗝️abcdef',
+    );
+    for (final (prompt, action) in <(String, ZkLocalChatAction)>[
+      ('please open it', ZkLocalChatAction.open),
+      ('download that', ZkLocalChatAction.download),
+      ('what does it say?', ZkLocalChatAction.readText),
+    ]) {
+      expect(ZkLocalChatRouter.isSelectedFileFollowUp(prompt), isTrue);
+      final result = ZkLocalChatRouter.resolve(
+        prompt: prompt, savedItems: const [], files: const [file],
+        previousSelection: file,
+      );
+      expect(result.selection?.id, file.id);
+      expect(result.action, action);
+      expect(result.maySendToGeneralAi, isFalse);
+    }
+    expect(ZkLocalChatRouter.isSelectedFileFollowUp('open my other file'),
+        isFalse);
+    final unbound = ZkLocalChatRouter.resolve(
+      prompt: 'what does it say?', savedItems: const [], files: const [file],
+    );
+    expect(unbound.disposition, ZkLocalChatDisposition.notFound);
+    expect(unbound.maySendToGeneralAi, isFalse);
+    final excerpt = localFileTextExcerpt(file, maxCharacters: 3);
+    expect(excerpt, contains('🗝️a'));
+    expect(excerpt, isNot(contains('bcdef')));
+    expect(excerpt, contains('Excerpt shown'));
+    expect(localFileTextExcerpt(recoveryFile), isNull);
+    expect(localFileTextExcerpt(login), isNull);
   });
 
   test('private miss does not fall through to general AI', () {

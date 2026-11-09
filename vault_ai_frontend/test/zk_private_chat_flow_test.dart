@@ -85,6 +85,39 @@ void main() {
     expect(generalCalls, 0);
   });
 
+  test('V2 text follow-up keeps decrypted text on the device', () async {
+    var generalCalls = 0;
+    const textFile = ZkLocalChatRecord(
+      kind: ZkLocalChatKind.file,
+      id: 'v2-journal',
+      title: 'journal.txt',
+      searchText: 'I went to the beach with family.',
+      mediaKind: ZkLocalMediaKind.document,
+    );
+    final flow = ZkPrivateChatFlow(
+      accessIsCurrent: () => true,
+      loadIndex: () async => const ZkPrivateChatIndex(
+        savedItems: [],
+        files: [textFile],
+        incomplete: false,
+      ),
+      sendGeneral: (_, __) async {
+        generalCalls++;
+        return 'general reply';
+      },
+    );
+    final found = await flow.run('Find my journal');
+    expect(found.local.selection?.id, textFile.id);
+    final read = await flow.run('what does it say?');
+    expect(read.local.action, ZkLocalChatAction.readText);
+    expect(read.local.selection?.searchText, textFile.searchText);
+    expect(generalCalls, 0);
+    flow.clear();
+    final stale = await flow.run('read it');
+    expect(stale.local.disposition, ZkLocalChatDisposition.notFound);
+    expect(generalCalls, 0);
+  });
+
   test('offered filename lookup stays local after a name miss', () async {
     var generalCalls = 0;
     final flow = ZkPrivateChatFlow(

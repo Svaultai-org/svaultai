@@ -10419,6 +10419,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   String? _zkPrivateChatToken;
   String? _zkPrivateChatVaultId;
   SecretKey? _zkPrivateChatMvk;
+  String? _pinFreeSelectedFileId;
+  String? _pinFreeSelectedFileToken;
+  String? _pinFreeSelectedFileVaultId;
+  SecretKey? _pinFreeSelectedFileMvk;
   zk_general_bridge.ZkGeneralChatBridge? _zkGeneralChatBridge;
   String? _zkGeneralChatBridgeToken;
   String? _zkGeneralChatBridgeVaultId;
@@ -15343,6 +15347,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _zkPrivateChatFlow?.clear();
     _zkPrivateChatFlow = null;
     _zkPrivateChatMvk = null;
+    _clearPinFreeSelectedFile();
     _zkGeneralChatBridge?.clear();
     _zkGeneralChatBridge = null;
     _zkGeneralChatBridgeMvk = null;
@@ -18956,7 +18961,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   /// received vault_file card. Only fires once per message — we use
   /// the payload's own `pending_action` flag which is cleared after
   /// dispatch so a rebuild does not re-fire the action.
-  void _maybeTriggerPendingFileAction(_Msg msg) {
+  void _maybeTriggerPendingFileAction(
+    _Msg msg, {
+    bool Function()? accessIsCurrent,
+  }) {
     if (msg.kind != 'vault_file') return;
     final payload = msg.payload;
     if (payload == null) return;
@@ -18965,7 +18973,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     // Clear so any subsequent rebuild does not re-dispatch.
     payload.remove('pending_action');
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || accessIsCurrent?.call() == false) return;
       if (action == 'download') {
         _downloadVaultFileCard(msg);
       } else if (action == 'open' || action == 'view' || action == 'show') {
@@ -20625,11 +20633,23 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<bool> _tryPinFreeChatFileLookup({
     required VaultAIClient client,
     required String token,
+    required String vaultId,
+    required SecretKey mvk,
     required String text,
     required bool Function() accessIsCurrent,
   }) async {
     final query = extractLocalFileLookupQuery(text);
-    if (query == null) return false;
+    final isFollowUp =
+        zk_private_chat.ZkLocalChatRouter.isSelectedFileFollowUp(text);
+    final selectedId = isFollowUp &&
+            _pinFreeSelectedFileToken == token &&
+            _pinFreeSelectedFileVaultId == vaultId &&
+            identical(_pinFreeSelectedFileMvk, mvk)
+        ? _pinFreeSelectedFileId
+        : null;
+    if (selectedId == null) _clearPinFreeSelectedFile();
+    if (isFollowUp && selectedId == null) return false;
+    if (query == null && selectedId == null) return false;
     final listOffered = ZkPinFreeFileSession.instance.listOfferedForToken(token);
     final downloadOffered =
         ZkPinFreeFileSession.instance.downloadOfferedForToken(token);
@@ -20654,46 +20674,98 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (files.length != raw.length) {
       throw const FormatException('Private file inventory is incomplete');
     }
-    final lookup = resolveLocalVaultFileLookupResult(
-      query: query,
-      files: files.map((file) => VaultLocalFileLookupEntry(
-        id: file.id, fileName: file.fileName, savedName: file.savedName,
-        mimeType: file.contentType, assetType: file.assetType,
-        relativePath: file.relativePath, sizeBytes: file.fileSize,
-      )),
-    );
-    if (lookup.isAmbiguous) {
-      _appendLocalVaultReply(text,
-          'Several saved files match "$query". Open Files and choose one.');
-      return true;
+    String? targetId = selectedId;
+    String? label;
+    if (targetId == null) {
+      final lookup = resolveLocalVaultFileLookupResult(
+        query: query!,
+        files: files.map((file) => VaultLocalFileLookupEntry(
+          id: file.id, fileName: file.fileName, savedName: file.savedName,
+          mimeType: file.contentType, assetType: file.assetType,
+          relativePath: file.relativePath, sizeBytes: file.fileSize,
+        )),
+      );
+      if (lookup.isAmbiguous) {
+        _appendLocalVaultReply(text,
+            'Several saved files match "$query". Open Files and choose one.');
+        return true;
+      }
+      if (lookup.match == null) return false;
+      targetId = lookup.match!.entry.id;
+      label = lookup.match!.entry.displayName;
     }
-    final match = lookup.match;
-    if (match == null) return false;
-    final selected = files.where((file) => file.id == match.entry.id).toList();
+    final selected = files.where((file) => file.id == targetId).toList();
     if (selected.length != 1 || !accessIsCurrent()) {
+      if (selectedId != null && accessIsCurrent()) {
+        _clearPinFreeSelectedFile();
+        _appendLocalVaultReply(text, 'That file is no longer available.');
+        return true;
+      }
       throw StateError('Private file selection changed');
     }
     final file = selected.single;
-    final label = match.entry.displayName;
+    final displayLabel = label ??
+        (file.savedName?.trim().isNotEmpty == true
+            ? file.savedName!
+            : file.fileName);
+    final selectedRecord = zk_private_chat.ZkLocalChatRecord(
+      kind: zk_private_chat.ZkLocalChatKind.file,
+      id: file.id, title: displayLabel, mimeType: file.contentType,
+    );
+    final action = selectedId == null
+        ? zk_private_chat.ZkLocalChatAction.none
+        : zk_private_chat.ZkLocalChatRouter.resolve(
+            prompt: text,
+            savedItems: const [],
+            files: [selectedRecord],
+            previousSelection: selectedRecord,
+            forcePrivate: true,
+          ).action;
+    final pendingAction = switch (action) {
+      zk_private_chat.ZkLocalChatAction.download => 'download',
+      zk_private_chat.ZkLocalChatAction.open ||
+      zk_private_chat.ZkLocalChatAction.readText => 'open',
+      _ => null,
+    };
     _zkPrivateChatFlow?.clear();
+    _pinFreeSelectedFileId = file.id;
+    _pinFreeSelectedFileToken = token;
+    _pinFreeSelectedFileVaultId = vaultId;
+    _pinFreeSelectedFileMvk = mvk;
+    final card = _Msg(
+      'assistant',
+      pendingAction == 'download'
+          ? 'Downloading “$displayLabel” from your vault.'
+          : pendingAction == 'open'
+              ? 'Opening “$displayLabel” from your vault.'
+              : 'Found “$displayLabel” among your saved files.',
+      kind: ChatMessage.kVaultFile,
+      fileId: file.id,
+      fileName: file.fileName,
+      mimeType: file.contentType,
+      payload: <String, dynamic>{
+        if (file.v2Available) 'zk_private_chat_v2': true
+        else 'pin_free_chat_file': true,
+        if (pendingAction != null) 'pending_action': pendingAction,
+      },
+    );
     setState(() {
       selectedSection = _DashboardSection.chat;
       _nextSelectionHint = {'kind': 'file', 'id': file.id};
       input.clear();
       msgs.add(_Msg('user', text));
-      msgs.add(_Msg(
-        'assistant', 'Found “$label” among your saved files.',
-        kind: ChatMessage.kVaultFile,
-        fileId: file.id,
-        fileName: file.fileName,
-        mimeType: file.contentType,
-        payload: file.v2Available
-            ? const {'zk_private_chat_v2': true}
-            : const {'pin_free_chat_file': true},
-      ));
+      msgs.add(card);
     });
     _scrollToBottom();
+    _maybeTriggerPendingFileAction(card, accessIsCurrent: accessIsCurrent);
     return true;
+  }
+
+  void _clearPinFreeSelectedFile() {
+    _pinFreeSelectedFileId = null;
+    _pinFreeSelectedFileToken = null;
+    _pinFreeSelectedFileVaultId = null;
+    _pinFreeSelectedFileMvk = null;
   }
 
   Future<void> _send() async {
@@ -20815,7 +20887,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
         identical(zk_mvk_store.ZkActiveMvk.current(), mvk);
     if (!currentAccess()) return;
+    if (!zk_private_chat.ZkLocalChatRouter.isSelectedFileFollowUp(text)) {
+      _clearPinFreeSelectedFile();
+    }
     if (attachments.isNotEmpty) {
+      _clearPinFreeSelectedFile();
       if (safeBridgeOnly) {
         _appendLocalVaultReply(text,
             'Private attachment analysis is unavailable in this version.');
@@ -20906,6 +20982,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (await _tryPinFreeChatFileLookup(
         client: client,
         token: token,
+        vaultId: vaultId,
+        mvk: mvk,
         text: text,
         accessIsCurrent: memoryAccessIsCurrent,
       )) return;
@@ -20983,16 +21061,33 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             answer = _Msg('assistant', 'I could not find a match.');
           } else if (selected.kind == zk_private_chat.ZkLocalChatKind.file &&
               kZkChatFileCardsEnabled) {
+            final excerpt =
+                local.action == zk_private_chat.ZkLocalChatAction.readText
+                    ? zk_private_chat.localFileTextExcerpt(selected)
+                    : null;
+            final pendingAction = switch (local.action) {
+              zk_private_chat.ZkLocalChatAction.open => 'open',
+              zk_private_chat.ZkLocalChatAction.download => 'download',
+              zk_private_chat.ZkLocalChatAction.readText when excerpt == null => 'open',
+              _ => null,
+            };
             answer = _Msg(
               'assistant',
-              'Found “${selected.title}” in your vault.',
+              excerpt ??
+                  (pendingAction == 'download'
+                      ? 'Downloading “${selected.title}” from your vault.'
+                      : pendingAction == 'open'
+                          ? 'Opening “${selected.title}” from your vault.'
+                          : 'Found “${selected.title}” in your vault.'),
               kind: ChatMessage.kVaultFile,
               fileId: selected.id,
               fileName: selected.title,
               mimeType: selected.mimeType,
-              payload: selected.legacyProofRequired
-                  ? const {'pin_free_chat_file': true}
-                  : const {'zk_private_chat_v2': true},
+              payload: <String, dynamic>{
+                if (selected.legacyProofRequired) 'pin_free_chat_file': true
+                else 'zk_private_chat_v2': true,
+                if (pendingAction != null) 'pending_action': pendingAction,
+              },
             );
           } else {
             answer = _Msg(
@@ -21050,6 +21145,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
       setState(() => msgs.add(answer));
       _scrollToBottom();
+      _maybeTriggerPendingFileAction(answer, accessIsCurrent: currentAccess);
     } catch (_) {
       if (currentAccess()) {
         _appendAssistantMessage(

@@ -21,6 +21,10 @@ enum ZkLocalChatDisposition {
   unsupportedAction,
 }
 
+/// A device-local action on an exact file selection. These actions never
+/// become a request to the general AI endpoint.
+enum ZkLocalChatAction { none, open, download, readText }
+
 class ZkLocalChatRecord {
   final ZkLocalChatKind kind;
   final String id;
@@ -28,6 +32,7 @@ class ZkLocalChatRecord {
   final String searchText;
   final String? mimeType;
   final ZkLocalMediaKind mediaKind;
+
   /// The file card must use the owner-proof legacy reader, never V2 download.
   final bool legacyProofRequired;
 
@@ -46,11 +51,13 @@ class ZkLocalChatResult {
   final ZkLocalChatDisposition disposition;
   final List<ZkLocalChatRecord> matches;
   final ZkLocalChatRecord? selection;
+  final ZkLocalChatAction action;
 
   const ZkLocalChatResult(
     this.disposition, {
     this.matches = const [],
     this.selection,
+    this.action = ZkLocalChatAction.none,
   });
 
   bool get maySendToGeneralAi => disposition == ZkLocalChatDisposition.general;
@@ -102,6 +109,16 @@ class ZkLocalChatRouter {
     r'^(?:please\s+)?(?:show|open|view|play|display|where\s+is)\s+(?:me\s+)?(?:it|that|this|the\s+one)\??$',
     caseSensitive: false,
   );
+  static final RegExp _fileActionFollowUp = RegExp(
+    r'^(?:please\s+)?(?:open|view|show|display|play|download|read)\s+'
+    r'(?:me\s+)?(?:it|that|this|the\s+one)(?:\s+to\s+my\s+device)?[?.!]*$',
+    caseSensitive: false,
+  );
+  static final RegExp _readTextFollowUp = RegExp(
+    r'^(?:please\s+)?(?:what\s+does\s+(?:it|that|this)\s+say|'
+    r'what\s+is\s+written\s+in\s+(?:it|that|this))[?.!]*$',
+    caseSensitive: false,
+  );
   static final RegExp _contextReference = RegExp(
     r'\b(it|its|that|this|these|those|one|ones|same)\b',
     caseSensitive: false,
@@ -121,6 +138,33 @@ class ZkLocalChatRouter {
       _contextReference.hasMatch(prompt) ||
       _relatedCue.hasMatch(prompt) ||
       _ordinalFollowUp.hasMatch(prompt);
+
+  /// Only an exact reference to the current selection may reuse a file ID.
+  /// A fresh content query must run a new local search instead.
+  static bool isSelectedFileFollowUp(String prompt) {
+    final query = prompt.trim();
+    return _followUp.hasMatch(query) ||
+        _fileActionFollowUp.hasMatch(query) ||
+        _readTextFollowUp.hasMatch(query);
+  }
+
+  static ZkLocalChatAction _actionFor(String query) {
+    final first = query
+        .trim()
+        .replaceFirst(RegExp(r'^please\s+', caseSensitive: false), '')
+        .split(RegExp(r'\s+'))
+        .first
+        .toLowerCase();
+    if (first == 'download') return ZkLocalChatAction.download;
+    if (first == 'read' || _readTextFollowUp.hasMatch(query)) {
+      return ZkLocalChatAction.readText;
+    }
+    if (const {'open', 'view', 'show', 'display', 'play'}.contains(first)) {
+      return ZkLocalChatAction.open;
+    }
+    return ZkLocalChatAction.none;
+  }
+
   static const Set<String> _stop = {
     'a',
     'an',
@@ -224,6 +268,7 @@ class ZkLocalChatRouter {
         ZkLocalChatDisposition.found,
         matches: [candidates[at]],
         selection: candidates[at],
+        action: _actionFor(query),
       );
     }
     if (_relatedCue.hasMatch(query)) {
@@ -239,7 +284,9 @@ class ZkLocalChatRouter {
         selection: previous,
       );
     }
-    if (_followUp.hasMatch(query)) {
+    if (_followUp.hasMatch(query) ||
+        _fileActionFollowUp.hasMatch(query) ||
+        _readTextFollowUp.hasMatch(query)) {
       final previous = previousSelection;
       if (previous == null ||
           !records.any(
@@ -252,6 +299,7 @@ class ZkLocalChatRouter {
         ZkLocalChatDisposition.found,
         matches: [previous],
         selection: previous,
+        action: _actionFor(query),
       );
     }
     final hasMy = _myCue.hasMatch(query);
@@ -328,6 +376,28 @@ class ZkLocalChatRouter {
     final reply = await sendGeneral(prompt);
     return ZkChatDispatchResult(local: local, generalReply: reply);
   }
+}
+
+/// Render an exact, bounded excerpt of locally decrypted searchable file text.
+/// It never summarizes or sends content to general AI. A missing excerpt is
+/// reported honestly because image/audio/video understanding is separate.
+String? localFileTextExcerpt(
+  ZkLocalChatRecord file, {
+  int maxCharacters = 1600,
+}) {
+  if (file.kind != ZkLocalChatKind.file || maxCharacters < 1) return null;
+  final content = file.searchText.trim();
+  if (content.isEmpty) return null;
+  final chars = content.runes.iterator;
+  final excerpt = StringBuffer();
+  var count = 0;
+  while (count < maxCharacters && chars.moveNext()) {
+    excerpt.writeCharCode(chars.current);
+    count++;
+  }
+  final truncated = chars.moveNext();
+  return 'Searchable text from “${file.title}”:\n\n$excerpt'
+      '${truncated ? '\n\nExcerpt shown. Open the file to read more.' : ''}';
 }
 
 /// Conservative local title matches. These are not semantic relationships or
