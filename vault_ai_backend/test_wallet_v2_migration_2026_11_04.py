@@ -182,6 +182,31 @@ def test_owner_can_prepare_without_disabling_older_wallet_access(setup, monkeypa
     assert db.proofs == []
 
 
+def test_older_writer_change_requires_a_new_prepared_copy(setup, monkeypatch):
+    db = setup
+    monkeypatch.setenv("WALLET_V2_WRITE_ENABLED", "false")
+    monkeypatch.setenv("WALLET_V2_MIGRATION_ENABLED", "false")
+    monkeypatch.setenv("WALLET_V2_PREPARE_ENABLED", "true")
+    first = stage_body(db)
+    route.stage_legacy_wallet(first, PRINCIPAL)
+    first_receipt = route.read_wallet_v2(WALLET_ID, PRINCIPAL)["readback_receipt"]
+    # A still-installed client can replace its legacy ciphertext while the
+    # preparation phase is open. The prior copy must never represent it.
+    changed = json.loads(db.legacy["encrypted_data"])
+    changed["encryptedWalletSecret"] = "new-synthetic-inner-ciphertext"
+    db.legacy["encrypted_data"] = json.dumps(changed)
+    second = stage_body(db, ciphertext=b"\x01new-synthetic-mvk-envelope")
+    assert second.source_snapshot != first.source_snapshot
+    route.stage_legacy_wallet(second, PRINCIPAL)
+    readback = route.read_wallet_v2(WALLET_ID, PRINCIPAL)
+    assert readback["legacy_source_snapshot"] == second.source_snapshot
+    assert readback["payload_ciphertext"] == second.payload_ciphertext
+    assert readback["readback_receipt"] != first_receipt
+    assert db.legacy is not None
+    assert db.wallet["migration_state"] == "migration_pending"
+    assert db.proofs == []
+
+
 def test_preparation_requires_private_read_and_explicit_flag(setup, monkeypatch):
     db = setup
     monkeypatch.setenv("WALLET_V2_WRITE_ENABLED", "false")
