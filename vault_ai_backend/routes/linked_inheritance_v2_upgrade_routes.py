@@ -1,8 +1,8 @@
-"""Default-off staging of an owner-MVK envelope for a linked legacy link.
+"""Default-off V2 staging and release readback for a linked legacy link.
 
-This route cannot switch, release, or retire a legacy link. The old wrapped
-key, credential package, status, and countdown remain authoritative until a
-separate beneficiary-verified ceremony is implemented.
+The old wrapped key and credential package remain intact. The existing
+approval/cooldown state gates release, while a separate ceremony is still
+needed to verify decryption and retire the old protocol.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from auth_local import SessionPrincipal
 from device_gate import verify_trusted_device
 from inheritance_protocol import ZK_BENEFICIARY_V2_MARKER, zk_beneficiary_v2_enabled
 from routes.auth_zk_routes import consume_recent_zk_proof_on_cursor
+from rate_limit_sensitive import enforce_export_rate_limit
 from subscription_entitlement import require_content_write
 from vault_core import get_db
 
@@ -38,6 +39,9 @@ from vault_core import get_db
 router = APIRouter(tags=["linked-inheritance-v2-upgrade"])
 FLAG_NAME = "VAULTAI_ZK_LINKED_BENEFICIARY_V2_STAGE_ENABLED"
 KEYCHECK_FLAG_NAME = "VAULTAI_ZK_LINKED_BENEFICIARY_KEYCHECK_ENABLED"
+RELEASE_READBACK_FLAG_NAME = (
+    "VAULTAI_ZK_LINKED_BENEFICIARY_RELEASE_READBACK_ENABLED"
+)
 _KEYCHECK_INFO = b"vaultai.inh-v2-beneficiary-keycheck.v1"
 _CHALLENGE_LIFETIME = timedelta(minutes=5)
 
@@ -73,8 +77,14 @@ _LINK_FIELDS = (
     "access_requested_at", "cooldown_ends_at", "decision_at",
 )
 _CREDENTIAL_FIELDS = (
-    "id", "crypto_version", "encrypted_payload", "payload_nonce",
+    "id", "owner_vault_id", "crypto_version", "encrypted_payload", "payload_nonce",
     "wrapped_key", "wrapping_ephemeral_pk", "wrapping_nonce", "state",
+)
+_SOURCE_LINK_FIELDS = (
+    "id", "passer_vault_id", "beneficiary_vault_id", "wrapped_vault_key",
+)
+_SOURCE_CREDENTIAL_FIELDS = tuple(
+    field for field in _CREDENTIAL_FIELDS if field != "state"
 )
 _ENVELOPE_FIELDS = (
     "encrypted_payload", "payload_nonce", "wrapped_key",
@@ -93,6 +103,12 @@ def _enabled() -> None:
 def _keycheck_enabled() -> None:
     _enabled()
     if os.getenv(KEYCHECK_FLAG_NAME, "false").strip().lower() != "true":
+        raise HTTPException(status_code=404, detail="not_found")
+
+
+def _release_readback_enabled() -> None:
+    _keycheck_enabled()
+    if os.getenv(RELEASE_READBACK_FLAG_NAME, "false").strip().lower() != "true":
         raise HTTPException(status_code=404, detail="not_found")
 
 
@@ -136,10 +152,15 @@ def _feed(h, value: object) -> None:
 
 
 def _source_snapshot(link: dict, credential: dict | None) -> str:
-    h = hashlib.sha256(b"linked-inheritance-v2-old-source/v1\x00")
-    for name in _LINK_FIELDS:
+    # The V2 package is staged before an access request. Pairing state,
+    # timestamps, and the escrow state then change during the legitimate
+    # cooldown. Bind only identity and ciphertext, and check release state
+    # separately when the beneficiary requests the package. The v2 domain
+    # makes any QA row staged under the earlier mutable digest fail closed.
+    h = hashlib.sha256(b"linked-inheritance-v2-old-source/v2\x00")
+    for name in _SOURCE_LINK_FIELDS:
         _feed(h, link.get(name))
-    for name in _CREDENTIAL_FIELDS:
+    for name in _SOURCE_CREDENTIAL_FIELDS:
         _feed(h, credential.get(name) if credential else None)
     return _b64(h.digest())
 
@@ -175,7 +196,7 @@ def _load_old_link(
             ))):
         raise HTTPException(status_code=409, detail="old_link_not_idle_and_linked")
     cur.execute(
-        """SELECT id,crypto_version,encrypted_payload,payload_nonce,
+        """SELECT id,owner_vault_id,crypto_version,encrypted_payload,payload_nonce,
                   wrapped_key,wrapping_ephemeral_pk,wrapping_nonce,state
              FROM inheritance_credentials
             WHERE beneficiary_link_id=%s AND deleted_at IS NULL
@@ -183,6 +204,8 @@ def _load_old_link(
         (link_id,),
     )
     credential = cur.fetchone()
+    if credential and str(credential["owner_vault_id"]) != str(link["passer_vault_id"]):
+        raise HTTPException(status_code=409, detail="old_link_package_owner_changed")
     if credential and int(credential["crypto_version"]) != 1:
         raise HTTPException(status_code=409, detail="old_link_package_protocol_changed")
     if ((credential is None and link.get("pairing_state") == "credentials_saved") or
@@ -285,6 +308,54 @@ def _encrypt_challenge(public_key: bytes, secret: bytes, aad: bytes) -> dict:
         "challenge_nonce": _b64(nonce),
         "challenge_ephemeral_pk": _b64(ephemeral_public),
     }
+
+
+def _load_releasable_old_link(
+    cur, *, link_id: int, beneficiary_vault_id: str,
+) -> tuple[dict, dict, str]:
+    """Lock old source before checking the existing approval/cooldown state."""
+    cur.execute(
+        f"SELECT {', '.join(_LINK_FIELDS)} FROM beneficiary_links "
+        "WHERE id=%s AND beneficiary_vault_id=%s FOR UPDATE",
+        (link_id, beneficiary_vault_id),
+    )
+    link = cur.fetchone()
+    if (not link or link["status"] != "linked" or
+            not isinstance(link["wrapped_vault_key"], str) or
+            not link["wrapped_vault_key"] or
+            link["wrapped_vault_key"] == ZK_BENEFICIARY_V2_MARKER or
+            str(link["passer_vault_id"]) ==
+            str(link["beneficiary_vault_id"])):
+        raise HTTPException(status_code=404, detail="released_package_unavailable")
+    state = link.get("pairing_state")
+    now = datetime.now(timezone.utc)
+    if state == "approved":
+        if link.get("decision_at") is None:
+            raise HTTPException(status_code=409, detail="approval_state_incomplete")
+    elif state == "claimable":
+        ends = link.get("cooldown_ends_at")
+        if (link.get("access_requested_at") is None or
+                ends is None or ends > now):
+            raise HTTPException(status_code=409, detail="cooldown_not_complete")
+    elif state != "released":
+        raise HTTPException(status_code=409, detail="release_not_permitted")
+    cur.execute(
+        """SELECT id,owner_vault_id,crypto_version,encrypted_payload,
+                  payload_nonce,wrapped_key,wrapping_ephemeral_pk,
+                  wrapping_nonce,state,released_at
+             FROM inheritance_credentials
+            WHERE beneficiary_link_id=%s AND deleted_at IS NULL
+            FOR UPDATE""",
+        (link_id,),
+    )
+    credential = cur.fetchone()
+    if (not credential or
+            str(credential["owner_vault_id"]) != str(link["passer_vault_id"]) or
+            int(credential["crypto_version"]) != 1 or
+            credential["state"] != state or
+            (state == "released" and credential.get("released_at") is None)):
+        raise HTTPException(status_code=409, detail="old_package_state_changed")
+    return link, credential, state
 
 
 @router.post("/inheritance/old-link-v2/stage")
@@ -545,3 +616,100 @@ def readback_linked_v2_package(
         }
     finally:
         conn.close()
+
+
+@router.post("/inheritance/old-link-v2/{link_id}/released-package")
+def read_released_linked_v2_package(
+    link_id: int,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    """Release only after the existing owner approval or completed cooldown.
+
+    This returns the staged V2 ciphertext, not an owner plaintext key. The old
+    credential package and wrapped key remain available while the beneficiary
+    verifies decryption locally; this route does not retire the old protocol.
+    """
+    _release_readback_enabled()
+    if link_id <= 0:
+        raise HTTPException(status_code=404, detail="not_found")
+    conn = get_db()
+    transitioned = False
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        link, credential, state = _load_releasable_old_link(
+            cur, link_id=link_id,
+            beneficiary_vault_id=principal["vault_id"],
+        )
+        pk_hash = hashlib.sha256(
+            _beneficiary_pk(cur, str(link["beneficiary_vault_id"])),
+        ).digest()
+        cur.execute(
+            """SELECT owner_vault_id,beneficiary_vault_id,
+                      old_source_snapshot,beneficiary_pk_sha256,
+                      encrypted_payload,payload_nonce,wrapped_key,
+                      wrapping_ephemeral_pk,wrapping_nonce,
+                      stage_revision,state,beneficiary_keycheck_revision,
+                      beneficiary_keycheck_at
+                 FROM beneficiary_link_v2_upgrades
+                WHERE old_link_id=%s FOR UPDATE""",
+            (link_id,),
+        )
+        stage = cur.fetchone()
+        if (not stage or stage["state"] != "staged" or
+                str(stage["owner_vault_id"]) != str(link["passer_vault_id"]) or
+                str(stage["beneficiary_vault_id"]) !=
+                str(link["beneficiary_vault_id"]) or
+                stage["old_source_snapshot"] !=
+                _source_snapshot(link, credential) or
+                bytes(stage["beneficiary_pk_sha256"]) != pk_hash or
+                stage["beneficiary_keycheck_revision"] !=
+                stage["stage_revision"] or
+                stage["beneficiary_keycheck_at"] is None):
+            raise HTTPException(status_code=409, detail="v2_package_not_verified")
+        enforce_export_rate_limit(vault_id=str(principal["vault_id"]))
+        released_at = credential.get("released_at")
+        if state != "released":
+            released_at = datetime.now(timezone.utc)
+            cur.execute(
+                """UPDATE inheritance_credentials
+                      SET released_at=COALESCE(released_at,%s),
+                          state='released',updated_at=NOW()
+                    WHERE id=%s AND deleted_at IS NULL""",
+                (released_at, credential["id"]),
+            )
+            cur.execute(
+                """UPDATE beneficiary_links SET pairing_state='released',
+                          updated_at=NOW() WHERE id=%s""",
+                (link_id,),
+            )
+            transitioned = True
+        result = {
+            "beneficiary_link_id": link_id,
+            "owner_vault_id": str(link["passer_vault_id"]),
+            "crypto_version": 2,
+            "stage_revision": int(stage["stage_revision"]),
+            "offer_commitment": _offer_commitment(link_id, stage),
+            "old_source_snapshot": stage["old_source_snapshot"],
+            "pairing_state": "released",
+            "released_at": released_at.isoformat(),
+            "legacy_package_preserved": True,
+            "package_decryption_verified": False,
+            **{name: _b64(bytes(stage[name])) for name in _ENVELOPE_FIELDS},
+        }
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    if transitioned:
+        from routes.inheritance_release_routes import (
+            _notify, _NOTIFY_KIND_RELEASED,
+        )
+        _notify(
+            str(principal["vault_id"]), _NOTIFY_KIND_RELEASED,
+            title="Inheritance: private package released",
+            body="The encrypted inheritance package is available to open.",
+            metadata={"beneficiary_link_id": link_id},
+        )
+    return result

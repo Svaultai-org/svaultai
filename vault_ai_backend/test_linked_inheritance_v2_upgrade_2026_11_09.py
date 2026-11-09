@@ -48,13 +48,15 @@ class FakeDb:
             "decision_at": None,
         }
         self.credential = {
-            "id": 91, "crypto_version": 1,
+            "id": 91, "owner_vault_id": OWNER["vault_id"],
+            "crypto_version": 1,
             "encrypted_payload": b"old-encrypted-credential",
             "payload_nonce": b"old-nonce",
             "wrapped_key": b"old-wrapped-key",
             "wrapping_ephemeral_pk": b"old-ephemeral-key",
             "wrapping_nonce": b"old-wrap-nonce",
             "state": "credentials_saved",
+            "released_at": None,
         }
         self.pk = bytes(range(32))
         self.stage = None
@@ -164,6 +166,14 @@ class FakeCursor:
                 "beneficiary_keycheck_at": None,
             })
             self.value = {"stage_revision": self.db.stage["stage_revision"]}
+        elif normalized.startswith("UPDATE INHERITANCE_CREDENTIALS"):
+            released_at, credential_id = params
+            assert credential_id == self.db.credential["id"]
+            self.db.credential["released_at"] = released_at
+            self.db.credential["state"] = "released"
+        elif normalized.startswith("UPDATE BENEFICIARY_LINKS"):
+            assert params == (41,)
+            self.db.link["pairing_state"] = "released"
         else:
             raise AssertionError(sql)
 
@@ -436,3 +446,129 @@ def test_keycheck_fails_when_link_or_registered_key_changes(ready, monkeypatch):
     assert active_link.value.status_code == 409
     assert db.stage["beneficiary_keycheck_revision"] is None
     assert proof.call_count == 1
+
+
+def _keychecked_release_ready(ready, monkeypatch):
+    from routes import inheritance_release_routes
+
+    db, proof, private, payload = _prepared_beneficiary(ready, monkeypatch)
+    challenge = upgrade.issue_beneficiary_key_challenge(41, BENEFICIARY)
+    upgrade.complete_beneficiary_key_check(
+        _solve_challenge(private, challenge), BENEFICIARY,
+    )
+    monkeypatch.setenv(upgrade.RELEASE_READBACK_FLAG_NAME, "true")
+    limiter = mock.Mock()
+    notify = mock.Mock()
+    monkeypatch.setattr(upgrade, "enforce_export_rate_limit", limiter)
+    monkeypatch.setattr(inheritance_release_routes, "_notify", notify)
+    return db, proof, payload, limiter, notify
+
+
+def test_released_package_requires_feature_flag_and_beneficiary(ready, monkeypatch):
+    release_route = next(
+        route for route in upgrade.router.routes
+        if route.path == "/inheritance/old-link-v2/{link_id}/released-package"
+    )
+    assert release_route.methods == {"POST"}
+    db, _, _, _, _ = _keychecked_release_ready(ready, monkeypatch)
+    db.link["pairing_state"] = "approved"
+    db.link["decision_at"] = datetime.now(timezone.utc)
+    db.credential["state"] = "approved"
+    monkeypatch.delenv(upgrade.RELEASE_READBACK_FLAG_NAME)
+    with pytest.raises(HTTPException) as off:
+        upgrade.read_released_linked_v2_package(41, BENEFICIARY)
+    assert off.value.status_code == 404
+    monkeypatch.setenv(upgrade.RELEASE_READBACK_FLAG_NAME, "true")
+    with pytest.raises(HTTPException) as outsider:
+        upgrade.read_released_linked_v2_package(41, OWNER)
+    assert outsider.value.status_code == 404
+    assert db.link["pairing_state"] == "approved"
+
+
+def test_approved_release_returns_same_v2_ciphertext_and_keeps_old_package(
+        ready, monkeypatch):
+    db, _, payload, limiter, notify = _keychecked_release_ready(
+        ready, monkeypatch,
+    )
+    stable = upgrade._source_snapshot(db.link, db.credential)
+    old_link_key = db.link["wrapped_vault_key"]
+    old_ciphertext = db.credential["encrypted_payload"]
+    db.link["pairing_state"] = "approved"
+    db.link["decision_at"] = datetime.now(timezone.utc)
+    db.credential["state"] = "approved"
+    assert upgrade._source_snapshot(db.link, db.credential) == stable
+    released = upgrade.read_released_linked_v2_package(41, BENEFICIARY)
+    assert released["crypto_version"] == 2
+    assert released["encrypted_payload"] == payload.encrypted_payload
+    assert released["wrapped_key"] == payload.wrapped_key
+    assert released["pairing_state"] == "released"
+    assert released["legacy_package_preserved"] is True
+    assert released["package_decryption_verified"] is False
+    assert db.link["wrapped_vault_key"] == old_link_key
+    assert db.credential["encrypted_payload"] == old_ciphertext
+    assert db.link["pairing_state"] == db.credential["state"] == "released"
+    limiter.assert_called_once()
+    notify.assert_called_once()
+    again = upgrade.read_released_linked_v2_package(41, BENEFICIARY)
+    assert again["offer_commitment"] == released["offer_commitment"]
+    notify.assert_called_once()
+
+
+def test_release_rejects_early_cooldown_or_changed_source(ready, monkeypatch):
+    db, _, _, limiter, _ = _keychecked_release_ready(ready, monkeypatch)
+    db.link["pairing_state"] = "cooldown_active"
+    db.link["access_requested_at"] = datetime.now(timezone.utc)
+    db.link["cooldown_ends_at"] = (
+        datetime.now(timezone.utc) + timedelta(days=30)
+    )
+    db.credential["state"] = "cooldown_active"
+    with pytest.raises(HTTPException) as early:
+        upgrade.read_released_linked_v2_package(41, BENEFICIARY)
+    assert early.value.status_code == 409
+    db.link["pairing_state"] = "claimable"
+    db.credential["state"] = "claimable"
+    with pytest.raises(HTTPException) as forged_claim:
+        upgrade.read_released_linked_v2_package(41, BENEFICIARY)
+    assert forged_claim.value.status_code == 409
+    db.link["cooldown_ends_at"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=1)
+    )
+    db.credential["encrypted_payload"] = b"changed-old-source"
+    with pytest.raises(HTTPException) as changed:
+        upgrade.read_released_linked_v2_package(41, BENEFICIARY)
+    assert changed.value.status_code == 409
+    assert db.link["pairing_state"] == "claimable"
+    limiter.assert_not_called()
+
+
+def test_release_rejects_unverified_stage_or_revoked_link(ready, monkeypatch):
+    db, _, _, limiter, _ = _keychecked_release_ready(ready, monkeypatch)
+    db.link["pairing_state"] = "approved"
+    db.link["decision_at"] = datetime.now(timezone.utc)
+    db.credential["state"] = "approved"
+    db.stage["beneficiary_keycheck_revision"] = None
+    with pytest.raises(HTTPException) as unverified:
+        upgrade.read_released_linked_v2_package(41, BENEFICIARY)
+    assert unverified.value.status_code == 409
+    db.stage["beneficiary_keycheck_revision"] = db.stage["stage_revision"]
+    db.link["status"] = "revoked"
+    with pytest.raises(HTTPException) as revoked:
+        upgrade.read_released_linked_v2_package(41, BENEFICIARY)
+    assert revoked.value.status_code == 404
+    limiter.assert_not_called()
+
+
+def test_completed_cooldown_can_release_without_old_credential_retrieval(
+        ready, monkeypatch):
+    db, _, _, _, _ = _keychecked_release_ready(ready, monkeypatch)
+    db.link["pairing_state"] = "claimable"
+    db.link["access_requested_at"] = (
+        datetime.now(timezone.utc) - timedelta(days=31)
+    )
+    db.link["cooldown_ends_at"] = (
+        datetime.now(timezone.utc) - timedelta(days=1)
+    )
+    db.credential["state"] = "claimable"
+    released = upgrade.read_released_linked_v2_package(41, BENEFICIARY)
+    assert released["pairing_state"] == "released"
+    assert db.link["pairing_state"] == "released"

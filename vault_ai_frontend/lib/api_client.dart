@@ -32,6 +32,8 @@ import 'services/file_v2_writer.dart';
 import 'services/inheritance_v2_file_stream_transfer.dart';
 import 'services/linked_inheritance_v2_stage.dart' as linked_inh_stage;
 import 'services/linked_inheritance_v2_keycheck.dart' as linked_inh_keycheck;
+import 'services/linked_inheritance_v2_release_readback.dart'
+    as linked_inh_release;
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/private_content_pin_guard.dart' as private_content_guard;
 
@@ -3140,6 +3142,68 @@ class VaultAIClient {
       submitResponse: (body) => request(
         '/inheritance/old-link-v2/beneficiary-keycheck', body,
       ),
+      accessIsCurrent: () {
+        try {
+          checkAccess();
+          return true;
+        } catch (_) {
+          return false;
+        }
+      },
+    );
+  }
+
+  /// Read a linked old-link V2 package only after the server's existing
+  /// approval/cooldown state releases it. The old package remains available.
+  Future<linked_inh_release.ReleasedLinkedInheritanceV2>
+      readReleasedLinkedOldInheritanceV2({
+    required String authToken,
+    required int linkId,
+    required String beneficiaryVaultId,
+    required SecretKey beneficiaryPrivateKey,
+    bool Function()? responseIsCurrent,
+  }) async {
+    const enabled = bool.fromEnvironment(
+      'VAULTAI_ENABLE_LINKED_INHERITANCE_RELEASE_READBACK',
+      defaultValue: false,
+    );
+    if (!enabled) {
+      throw StateError('Linked inheritance release is unavailable');
+    }
+    void checkAccess() {
+      if (zk_sk_store.ZkActiveSkVault.currentVaultId() !=
+              beneficiaryVaultId ||
+          !identical(zk_sk_store.ZkActiveSkVault.current(),
+              beneficiaryPrivateKey) ||
+          responseIsCurrent?.call() == false) {
+        throw StateError('Beneficiary vault access changed');
+      }
+    }
+
+    checkAccess();
+    return linked_inh_release.readReleasedLinkedInheritanceV2(
+      linkId: linkId,
+      beneficiaryPrivateKey: beneficiaryPrivateKey,
+      fetchReleased: (id) async {
+        checkAccess();
+        final response = await _sessionHttpWithGuard(checkAccess).post(
+          Uri.parse(
+            '$baseUrl/inheritance/old-link-v2/$id/released-package',
+          ),
+          headers: _defaultHeaders(authToken: authToken),
+        );
+        checkAccess();
+        if (response.statusCode != 200) {
+          _throwIfAuthExpired(response.statusCode, response.body);
+          _throwIfDeviceNotTrusted(response.statusCode, response.body);
+          throw StateError('Released inheritance package unavailable');
+        }
+        final decoded = jsonDecode(response.body);
+        if (decoded is! Map<String, dynamic>) {
+          throw const FormatException('Invalid inheritance package response');
+        }
+        return decoded;
+      },
       accessIsCurrent: () {
         try {
           checkAccess();
