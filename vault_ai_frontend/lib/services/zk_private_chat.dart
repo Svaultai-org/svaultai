@@ -58,14 +58,14 @@ class ZkLocalChatResult {
   final List<ZkLocalChatRecord> matches;
   final ZkLocalChatRecord? selection;
   final ZkLocalChatAction action;
-  final bool colorOnlyEvidence;
+  final bool visualColorEvidence;
 
   const ZkLocalChatResult(
     this.disposition, {
     this.matches = const [],
     this.selection,
     this.action = ZkLocalChatAction.none,
-    this.colorOnlyEvidence = false,
+    this.visualColorEvidence = false,
   });
 
   bool get maySendToGeneralAi => disposition == ZkLocalChatDisposition.general;
@@ -386,10 +386,12 @@ class ZkLocalChatRouter {
       ZkLocalChatDisposition.found,
       matches: top,
       selection: top.single,
-      colorOnlyEvidence: mediaKind == ZkLocalMediaKind.photo &&
-          top.single.visualColors.intersection(queryTerms).isNotEmpty &&
-          _terms(top.single.title).intersection(queryTerms).isEmpty &&
-          _terms(top.single.searchText).intersection(queryTerms).isEmpty,
+      visualColorEvidence: top.single.visualColors
+          .difference(_terms(top.single.title).union(
+            _terms(top.single.searchText),
+          ))
+          .intersection(queryTerms)
+          .isNotEmpty,
     );
   }
 
