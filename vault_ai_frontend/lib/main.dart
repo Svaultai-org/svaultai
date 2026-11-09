@@ -21254,7 +21254,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           accessIsCurrent: currentAccess,
           indexPhotoColors: kEnableZkLocalPhotoColorIndex,
           legacyItemInventory:
-              ZkPinFreeItemReadSession.instance.activeForToken(token)
+              ZkPinFreeItemReadSession.instance.activeForToken(token) &&
+                      (signedSavedItemMutationOfferedForToken(token) ||
+                          kEnableZkPinFreeSavedItemIndex)
                   ? () => client.listZkItemMetadataRaw(
                         authToken: token, maxRecords: 500,
                       )

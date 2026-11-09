@@ -875,6 +875,37 @@ void main() {
     expect(paths.join(' '), isNot(contains('must-not-be-read')));
   });
 
+  test('older item metadata cannot exceed the combined private index cap',
+      () async {
+    final key = await VaultKeyHierarchy(_mvk).metadataKey();
+    final service = await _wrap(key, 'Verified');
+    final type = await _wrap(key, 'note');
+    final payload = await _wrap(key, '{}');
+    final loader = ZkPrivateChatIndexLoader(
+      mvk: _mvk,
+      accessIsCurrent: () => true,
+      get: (path) async {
+        if (path == '/vault/ciphertext/vault-items') {
+          return List.generate(ZkPrivateChatIndexLoader.maxSavedItems, (i) => {
+                'item_id': i + 1,
+                'service_ciphertext': service,
+                'item_type_ciphertext': type,
+                'payload_ciphertext': payload,
+              });
+        }
+        if (path == '/vault/file-v2') return {'files': []};
+        fail('Unexpected private GET: $path');
+      },
+      legacyItemInventory: () async => [
+        {'item_id': 501, 'is_legacy': true, 'service': 'First', 'item_type': 'note'},
+      ],
+    );
+    final index = await loader.load();
+    expect(index.savedItems, hasLength(ZkPrivateChatIndexLoader.maxSavedItems));
+    expect(index.savedItems.every((item) => item.title == 'Verified'), isTrue);
+    expect(index.incomplete, isTrue);
+  });
+
   test('description not present in encrypted metadata is not invented', () {
     const photo = ZkLocalChatRecord(
       kind: ZkLocalChatKind.file,

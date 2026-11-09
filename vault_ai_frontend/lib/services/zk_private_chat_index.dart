@@ -216,6 +216,10 @@ class ZkPrivateChatIndexLoader {
                 type.length > 128) {
               throw const FormatException('Invalid older item label');
             }
+            if (savedItems.length >= maxSavedItems) {
+              incomplete = true;
+              break;
+            }
             savedItems.add(ZkLocalChatRecord(
               kind: ZkLocalChatKind.savedItem,
               id: '$id',
