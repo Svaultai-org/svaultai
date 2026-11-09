@@ -173,7 +173,9 @@ def _issued_session() -> Dict[str, Any]:
 
 
 def _run_register(payload: Dict[str, Any], *, verifier_free: bool = False,
-                  raw_pin_disabled: bool = False):
+                  raw_pin_disabled: bool = False,
+                  strict_ingress: bool = False,
+                  strict_client: bool = False):
     """Drive POST /auth/zk-register-finalize and return the response."""
     from fastapi.testclient import TestClient
     get_db, conn = _make_get_db([
@@ -186,6 +188,8 @@ def _run_register(payload: Dict[str, Any], *, verifier_free: bool = False,
                 "true" if verifier_free else "false",
             "VAULTAI_ZK_RAW_PIN_CONTENT_DISABLED":
                 "true" if raw_pin_disabled else "false",
+            "VAULTAI_STRICT_RAW_PIN_INGRESS_ENABLED":
+                "true" if strict_ingress else "false",
         }),
         mock.patch(
             "routes.auth_zk_routes.get_db",
@@ -209,9 +213,13 @@ def _run_register(payload: Dict[str, Any], *, verifier_free: bool = False,
         resp = client.post(
             "/auth/zk-register-finalize",
             json=payload,
-            headers={"User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Firefox/126.0"
-            )},
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Firefox/126.0"
+                ),
+                **({"X-SVaultAI-Strict-Pin-Free-Client": "v1"}
+                   if strict_client else {}),
+            },
         )
     return resp, conn
 

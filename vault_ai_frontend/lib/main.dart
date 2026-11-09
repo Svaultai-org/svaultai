@@ -5553,7 +5553,8 @@ Future<Map<String, dynamic>> _zkHttpPost(
   }
   if (path == '/auth/zk-login-finalize' ||
       path == '/auth/zk-register-finalize') {
-    headers.addAll(strictPinFreeClientHeaders(
+    headers.addAll(strictPinFreeAuthHeaders(
+      path,
       privateOnlyBuild: kPrivateOnlyUnlockEnabled,
       clientReady:
           kZkPrivateOnlyClientReady && kPrivateWalletFeatureParityReady,

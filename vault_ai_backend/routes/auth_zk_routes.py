@@ -480,10 +480,17 @@ async def zk_register_finalize(
 def _zk_register_finalize_sync(
     payload: ZkRegisterFinalizeRequest, request: Request,
 ) -> ZkRegisterFinalizeResponse:
+    # In strict mode, the client must declare the complete private protocol
+    # before any account row can be created. The ASGI fence rejects older
+    # clients before reading their body; this is a second route-level check.
+    from strict_raw_pin_ingress_gate import (
+        require_strict_private_client, strict_raw_pin_ingress_enabled,
+    )
+    require_strict_private_client(request)
     enforce_signup_rate_limit(request)
 
     verifier_free = _verifier_free_registration_enabled()
-    if raw_pin_content_disabled() and not verifier_free:
+    if (raw_pin_content_disabled() or strict_raw_pin_ingress_enabled()) and not verifier_free:
         # An incomplete server rollout must not create a new ZK row with a
         # reusable offline PIN verifier. Require the deliberate paired flag.
         raise HTTPException(
