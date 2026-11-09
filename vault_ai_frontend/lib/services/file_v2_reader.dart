@@ -21,6 +21,16 @@ class FileV2ReadException implements Exception {
   String toString() => 'V2 file request failed ($statusCode)';
 }
 
+class FileV2LocalSizeLimitException implements Exception {
+  final int totalBytes;
+  final int limitBytes;
+
+  const FileV2LocalSizeLimitException(this.totalBytes, this.limitBytes);
+
+  @override
+  String toString() => 'V2 file exceeds local size limit';
+}
+
 class FileV2Manifest {
   final String fileId;
   final int totalBytes;
@@ -272,30 +282,47 @@ class FileV2Reader {
     String fileId, {
     bool requireRetired = false,
     bool requireReady = false,
+    // Enforced after manifest validation, before allocating the output.
+    int maxBytes = maxDownloadBytes,
   }) async {
+    if (maxBytes < 0 || maxBytes > maxDownloadBytes) {
+      throw ArgumentError.value(maxBytes, 'maxBytes');
+    }
     final manifest = await readManifest(
       fileId,
       requireRetired: requireRetired,
       requireReady: requireReady,
     );
+    if (manifest.totalBytes > maxBytes) {
+      throw FileV2LocalSizeLimitException(manifest.totalBytes, maxBytes);
+    }
     final key = await VaultKeyHierarchy(mvk).fileContentKey();
     final out = Uint8List(manifest.totalBytes);
     var offset = 0;
-    for (var i = 0; i < manifest.chunkCount; i++) {
-      final plain = await _readChunk(fileId, i, key);
-      final expectedLength = i == manifest.chunkCount - 1
-          ? manifest.totalBytes - offset
-          : manifest.chunkSize;
-      if (plain.length != expectedLength) {
-        throw const FormatException('V2 file chunk length mismatch');
+    try {
+      for (var i = 0; i < manifest.chunkCount; i++) {
+        final plain = await _readChunk(fileId, i, key);
+        try {
+          final expectedLength = i == manifest.chunkCount - 1
+              ? manifest.totalBytes - offset
+              : manifest.chunkSize;
+          if (plain.length != expectedLength) {
+            throw const FormatException('V2 file chunk length mismatch');
+          }
+          out.setRange(offset, offset + plain.length, plain);
+          offset += plain.length;
+        } finally {
+          plain.fillRange(0, plain.length, 0);
+        }
       }
-      out.setRange(offset, offset + plain.length, plain);
-      offset += plain.length;
+      if (offset != manifest.totalBytes) {
+        throw const FormatException('V2 file length mismatch');
+      }
+      return FileV2Download(manifest: manifest, bytes: out);
+    } catch (_) {
+      out.fillRange(0, out.length, 0);
+      rethrow;
     }
-    if (offset != manifest.totalBytes) {
-      throw const FormatException('V2 file length mismatch');
-    }
-    return FileV2Download(manifest: manifest, bytes: out);
   }
 
   /// Recheck a staged upload without allocating a second full-file buffer.

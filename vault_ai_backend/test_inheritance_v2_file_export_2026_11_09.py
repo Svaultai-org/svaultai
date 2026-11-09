@@ -164,6 +164,21 @@ def test_released_file_inventory_manifest_and_chunk_are_ciphertext_only(ready):
     assert base64.urlsafe_b64decode(chunk["ciphertext"] + "==") == CHUNK
     assert "file_name" not in str(listed) + str(manifest) + str(chunk)
     assert export.require_file_read.call_count == 2
+    link_queries = [sql for sql, _ in ready.queries
+                    if "FROM BENEFICIARY_LINKS BL" in sql]
+    assert len(link_queries) == 3
+    assert all("FOR SHARE OF BL, IC" in sql for sql in link_queries)
+
+
+def test_revoked_link_blocks_following_chunk_request(ready):
+    export.get_released_v2_file_manifest(17, FILE_ID, BENEFICIARY)
+    ready.link["pairing_state"] = "paired_no_credentials"
+    ready.queries.clear()
+    with pytest.raises(HTTPException) as revoked:
+        export.get_released_v2_file_chunk(17, FILE_ID, 0, BENEFICIARY)
+    assert revoked.value.status_code == 404
+    assert len(ready.queries) == 1
+    assert "FOR SHARE OF BL, IC" in ready.queries[0][0]
 
 
 def test_corrupt_or_missing_chunk_fails_closed(ready):

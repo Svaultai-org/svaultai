@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vault_ai_frontend/services/file_v2_reader.dart';
 import 'package:vault_ai_frontend/services/file_v2_writer.dart';
 import 'package:vault_ai_frontend/services/inheritance_mvk_v2.dart';
 import 'package:vault_ai_frontend/services/inheritance_v2_file_reader.dart';
@@ -108,5 +109,73 @@ void main() {
       throwsFormatException,
     );
     expect(requests, 1);
+  });
+
+  test('revocation between chunks aborts the inherited read', () async {
+    final ownerMvk = SecretKey(List<int>.filled(32, 51));
+    final beneficiaryPair = await X25519().newKeyPair();
+    final beneficiaryPublic = await beneficiaryPair.extractPublicKey();
+    final beneficiaryPrivate =
+        SecretKey(await beneficiaryPair.extractPrivateKeyBytes());
+    final package = (await encryptInheritanceMvk(
+      beneficiaryLinkId: 23,
+      ownerVaultId: 'synthetic-owner',
+      ownerMvk: ownerMvk,
+      beneficiaryPublicKey: Uint8List.fromList(beneficiaryPublic.bytes),
+    ))
+        .toRequestBody(23);
+    final fileId = FileV2Writer.newFileId();
+    final prepared = await FileV2Writer(ownerMvk).prepare(
+      fileId: fileId,
+      fileName: 'synthetic.txt',
+      bytes: Uint8List.fromList(List<int>.generate(20, (i) => i)),
+      chunkSize: 8,
+    );
+    final requests = <String>[];
+    await expectLater(
+      readReleasedV2File(
+        linkId: 23,
+        fileId: fileId,
+        beneficiaryPrivateKey: beneficiaryPrivate,
+        releasedPackage: package,
+        fetch: (path) async {
+          requests.add(path);
+          if (path.endsWith('/manifest')) {
+            return <String, dynamic>{
+              'beneficiary_link_id': 23,
+              'owner_vault_id': 'synthetic-owner',
+              'file_id': fileId,
+              'crypto_version': 'client_mvk_v2',
+              'manifest_ciphertext': prepared.manifestCiphertext,
+              'total_bytes': prepared.totalBytes,
+              'chunk_size': prepared.chunkSize,
+              'chunk_count': prepared.chunkCount,
+              'lifecycle_state': 'client_v2_ready',
+              'verification_state': 'client_verified',
+              'name_version': 0,
+              'migration_metadata_version': 1,
+              'saved_name_override_ciphertext': null,
+            };
+          }
+          if (path.endsWith('/chunk/0')) {
+            return <String, dynamic>{
+              'beneficiary_link_id': 23,
+              'owner_vault_id': 'synthetic-owner',
+              'file_id': fileId,
+              'chunk_index': 0,
+              'ciphertext': prepared.chunkCiphertexts[0],
+            };
+          }
+          throw const FileV2ReadException(404);
+        },
+        accessIsCurrent: () => true,
+      ),
+      throwsA(isA<FileV2ReadException>()),
+    );
+    expect(requests, <String>[
+      '/inheritance/v2/23/files/$fileId/manifest',
+      '/inheritance/v2/23/files/$fileId/chunk/0',
+      '/inheritance/v2/23/files/$fileId/chunk/1',
+    ]);
   });
 }

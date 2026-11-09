@@ -14,6 +14,10 @@ typedef FetchInheritedFileCiphertext = Future<Map<String, dynamic>> Function(
   String path,
 );
 
+// The inheritance path currently stages a whole file in memory. Keep it well
+// below the regular reader's 512 MiB ceiling until a streaming import exists.
+const int maxInheritedFileInMemoryBytes = 16 * 1024 * 1024;
+
 Future<FileV2Download> readReleasedV2File({
   required int linkId,
   required String fileId,
@@ -61,7 +65,16 @@ Future<FileV2Download> readReleasedV2File({
       return response;
     },
   );
-  final result = await reader.download(fileId, requireReady: true);
-  checkAccess();
-  return result;
+  final result = await reader.download(
+    fileId,
+    requireReady: true,
+    maxBytes: maxInheritedFileInMemoryBytes,
+  );
+  try {
+    checkAccess();
+    return result;
+  } catch (_) {
+    result.bytes.fillRange(0, result.bytes.length, 0);
+    rethrow;
+  }
 }
