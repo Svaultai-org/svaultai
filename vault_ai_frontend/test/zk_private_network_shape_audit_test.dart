@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:vault_ai_frontend/api_client.dart';
+import 'package:vault_ai_frontend/services/private_content_pin_guard.dart';
 import 'package:vault_ai_frontend/services/session_termination.dart' as st;
 
 void main() {
@@ -55,23 +56,24 @@ void main() {
       expect(request.body, isNot(contains('"pin"')));
     }
 
-    final legacyPinActions = <Future<Object?> Function()>[
-      () => client.analyzePasswords(
-            authToken: token,
-            vaultName: 'Synthetic vault',
-            pin: rawPin,
-          ),
-      // Deliberately omit the handle: the transport guard is a second line
-      // of defense even if a caller forgets the related-files UI guard.
-      () => client.fetchRelatedFiles(
-            fileId: 'synthetic-file',
-            pin: rawPin,
-            authToken: token,
-          ),
-    ];
-    for (final action in legacyPinActions) {
-      await expectLater(action(), throwsStateError);
-    }
+    await expectLater(
+      client.analyzePasswords(
+        authToken: token,
+        vaultName: 'Synthetic vault',
+        pin: rawPin,
+      ),
+      throwsStateError,
+    );
+    // The related-files method now rejects earlier than the shared
+    // transport guard, even when a caller omits the vault handle.
+    await expectLater(
+      client.fetchRelatedFiles(
+        fileId: 'synthetic-file',
+        pin: rawPin,
+        authToken: token,
+      ),
+      throwsA(isA<PrivateContentSearchUnavailable>()),
+    );
     expect(requests, hasLength(2));
   }, skip: !kEnableZkPrivateOnlyUnlock);
 }
