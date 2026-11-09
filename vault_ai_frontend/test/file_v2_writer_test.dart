@@ -83,4 +83,44 @@ void main() {
       bytes: Uint8List(FileV2Writer.maxFileBytes + 1),
     ), throwsFormatException);
   });
+
+  test('folder path is encrypted and readable on web and native clients',
+      () async {
+    final id = FileV2Writer.newFileId();
+    const privatePath = 'Holiday/Beach/red shoes.jpg';
+    final bytes = Uint8List.fromList(<int>[9, 8, 7]);
+    final prepared = await writer.prepare(
+      fileId: id,
+      fileName: 'red shoes.jpg',
+      relativePath: privatePath,
+      bytes: bytes,
+    );
+    final body = jsonEncode(prepared.toManifestBody());
+    expect(body, isNot(contains('Holiday')));
+    expect(body, isNot(contains('Beach')));
+    expect(body, isNot(contains('red shoes')));
+    final manifest = await FileV2Reader(
+      mvk: mvk,
+      get: (path) async => <String, dynamic>{
+        ...prepared.toManifestBody(),
+        'lifecycle_state': 'file_v2_written',
+        'verification_state': 'not_verified',
+      },
+    ).readManifest(id);
+    expect(manifest.relativePath, privatePath);
+    expect(manifest.fileName, 'red shoes.jpg');
+    for (final invalid in <String>[
+      '/Holiday/red shoes.jpg',
+      'Holiday/../red shoes.jpg',
+      'Holiday/other.jpg',
+      'Holiday\\red shoes.jpg',
+      'red shoes.jpg',
+    ]) {
+      await expectLater(
+        writer.prepare(fileId: FileV2Writer.newFileId(),
+            fileName: 'red shoes.jpg', relativePath: invalid, bytes: bytes),
+        throwsFormatException,
+      );
+    }
+  });
 }

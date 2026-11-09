@@ -7,6 +7,7 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
+import 'file_v2_folder_path.dart';
 import 'vault_key_hierarchy.dart';
 
 typedef FileV2Get = Future<Map<String, dynamic>> Function(String path);
@@ -234,12 +235,22 @@ class FileV2Reader {
     if (contentType != null && contentType is! String) {
       throw const FormatException('Invalid file content type');
     }
+    final fileName = await unwrapMetadata('file_name_ciphertext');
+    final privatePath = await unwrapMetadata('relative_path_ciphertext');
+    if (privatePath != null) {
+      if (migrationMetadataVersion != 1 || fileName == null) {
+        throw const FormatException('Invalid private folder manifest');
+      }
+      relativePath = requirePrivateV2RelativePath(
+        privatePath, fileName: fileName,
+      );
+    }
     return FileV2Manifest(
       fileId: fileId,
       totalBytes: total,
       chunkSize: chunkSize,
       chunkCount: chunkCount,
-      fileName: await unwrapMetadata('file_name_ciphertext'),
+      fileName: fileName,
       savedName:
           savedNameOverride ?? await unwrapMetadata('saved_name_ciphertext'),
       contentType: contentType as String?,

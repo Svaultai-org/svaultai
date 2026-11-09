@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 
 import 'file_v2_reader.dart';
+import 'file_v2_folder_path.dart';
 import 'vault_key_hierarchy.dart';
 
 class PreparedNewFileV2 {
@@ -63,6 +64,7 @@ class FileV2Writer {
     required Uint8List bytes,
     String? savedName,
     String? contentType,
+    String? relativePath,
     int chunkSize = defaultChunkSize,
   }) async {
     if (!RegExp(r'^v2-[A-Za-z0-9_-]{27}$').hasMatch(fileId) ||
@@ -86,6 +88,10 @@ class FileV2Writer {
         'saved_name_ciphertext': await wrapMetadata(savedName),
       if (contentType != null && contentType.isNotEmpty)
         'content_type_ciphertext': await wrapMetadata(contentType),
+      if (relativePath != null)
+        'relative_path_ciphertext': await wrapMetadata(
+          requirePrivateV2RelativePath(relativePath, fileName: fileName),
+        ),
     };
     final chunks = <String>[];
     for (var offset = 0; offset < bytes.length; offset += chunkSize) {

@@ -98,6 +98,7 @@ import 'services/vault_chat_stream_parser.dart' as vcs_parser;
 import 'ui/chat/duplicate_dialog.dart';
 import 'ui/chat/storage_limit_dialog.dart';
 import 'services/folder_picker.dart';
+import 'services/private_v2_folder_tree.dart';
 import 'ui/folder_browser/folder_browser.dart';
 import 'device_id.dart';
 import 'device_pending_page.dart';
@@ -10507,6 +10508,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   String _currentFolderPath = '';
   FolderTreeData? _folderTreeData;
+  String? _folderTreeSessionToken;
+  final Set<String> _serverKnownFolderPaths = <String>{};
   String _folderSearchQuery = '';
   List<VaultLoginItem> vaultLogins = [];
   _VaultLocalDeleteTarget? _pendingLocalDelete;
@@ -15498,8 +15501,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (!accessIsCurrent()) {
         throw StateError('Private upload session changed');
       }
-      if (job.relativePath != null || job.importId != null) {
-        throw StateError('Private folder upload is not available yet');
+      if (job.importId != null) {
+        throw StateError('Private file cannot use a legacy import session');
       }
       final writer = FileV2Writer(ctx.v2Mvk!);
       final prepared = job.preparedNewV2 ??= await writer.prepare(
@@ -15507,6 +15510,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         fileName: job.name,
         savedName: job.displayName,
         contentType: job.mimeType,
+        relativePath: job.relativePath,
         bytes: bytes,
       );
       if (!accessIsCurrent()) {
@@ -15924,15 +15928,72 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final app = context.read<AppState>();
     final token = app.sessionToken;
     if (token == null) return;
+    if (_folderTreeSessionToken != token) {
+      // A dashboard may survive an account switch. Never reuse a decrypted
+      // folder path or server-known-path allowlist from the previous session.
+      setState(() {
+        _folderTreeSessionToken = token;
+        _serverKnownFolderPaths.clear();
+        _currentFolderPath = '';
+        _folderTreeData = null;
+        _folderSearchQuery = '';
+      });
+    }
+    final path = _currentFolderPath;
     final labelMutationGeneration = _savedFileLabelMutationGeneration;
 
     try {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
-      final response = await client.listFolder(
-        authToken: token,
-        path: _currentFolderPath.isEmpty ? null : _currentFolderPath,
-      );
-      if (kEnableFileV2UiRead &&
+      final localPrivateFolders = kEnableFileV2UiRead &&
+          zk_mvk_store.ZkActiveMvk.current() != null;
+      // Never put a newly decrypted private folder name in /folders?path=.
+      // A path returned by the older server folder tree is already known to
+      // that server and may still be requested to preserve older content.
+      final askServer = !localPrivateFolders || path.isEmpty ||
+          _serverKnownFolderPaths.contains(path);
+      final serverTree = askServer
+          ? await client.listFolder(
+              authToken: token, path: path.isEmpty ? null : path,
+            )
+          : null;
+      if (!mounted || app.sessionToken != token ||
+          _currentFolderPath != path || _fileListRefreshRequired ||
+          labelMutationGeneration != _savedFileLabelMutationGeneration) return;
+      if (serverTree != null && localPrivateFolders) {
+        for (final raw in (serverTree['folders'] as List? ?? const [])) {
+          if (raw is! Map || raw['name'] is! String) continue;
+          final name = raw['name'] as String;
+          if (name.isEmpty) continue;
+          _serverKnownFolderPaths.add(
+              path.isEmpty ? name : '$path/$name');
+        }
+      }
+      final Map<String, dynamic> response;
+      if (localPrivateFolders) {
+        response = mergePrivateV2FolderTree(
+          path: path,
+          serverTree: serverTree,
+          privateFiles: <Map<String, dynamic>>[
+            for (final file in vaultFiles)
+              if (file.v2Available)
+                <String, dynamic>{
+                  'id': file.id,
+                  'file_name': file.fileName,
+                  'saved_name': file.savedName,
+                  'content_type': file.contentType,
+                  'asset_type': file.assetType,
+                  'file_size': file.fileSize,
+                  'needs_naming': file.needsNaming,
+                  'relative_path': file.relativePath,
+                  'v2_retired': file.v2Retired,
+                  'v2_ready': file.v2Ready,
+                },
+          ],
+        );
+      } else {
+        response = serverTree!;
+      }
+      if (!localPrivateFolders && kEnableFileV2UiRead &&
           zk_mvk_store.ZkActiveMvk.current() != null &&
           response['files'] is List) {
         final readyById = <String, _VaultStoredFile>{
@@ -15959,7 +16020,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               }(),
         ];
       }
-      if (!mounted || _fileListRefreshRequired ||
+      if (!mounted || app.sessionToken != token ||
+          _currentFolderPath != path || _fileListRefreshRequired ||
           labelMutationGeneration != _savedFileLabelMutationGeneration) return;
       setState(() {
         _folderTreeData = FolderTreeData.fromJson(response);
@@ -17016,10 +17078,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         app.vaultHandle?.isNotEmpty == true) {
       throw StateError('Vault encryption key changed. Unlock and try again.');
     }
-    if (v2Mvk != null &&
-        freshAttachments.any((attachment) => attachment.relativePath != null)) {
-      throw StateError('Private folder upload is not available yet');
-    }
     final hasAccompanyingText =
         accompanyingText != null && accompanyingText.isNotEmpty;
     final freshCount = freshAttachments.length;
@@ -17039,7 +17097,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final zkImportSessionOnly =
         signedImportOfferedForToken(authToken) ||
         (kEnableZkImportSessionActions && app.vaultHandle?.isNotEmpty == true);
-    if (zkImportSessionOnly && hasFolderContext) {
+    if (v2Mvk == null && zkImportSessionOnly && hasFolderContext) {
       throw StateError('Private folder import is not available yet');
     }
     final shouldCreateBatch =

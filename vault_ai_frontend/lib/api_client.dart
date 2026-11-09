@@ -4707,9 +4707,8 @@ class VaultAIClient {
       if (zk_mvk_store.ZkActiveMvk.current() == null) {
         throw StateError('Vault encryption key is unavailable');
       }
-      final result = await listZkFileMetadata(
-        authToken: authToken,
-        requireLegacyComplete: true,
+      final result = await listZkVaultFilesWithRetiredV2(
+        authToken: authToken, requireLegacyComplete: true,
       );
       final files = (result['files'] as List).cast<Map<String, dynamic>>();
       files.sort((a, b) {
@@ -5013,6 +5012,7 @@ class VaultAIClient {
           'content_type': file.contentType,
           'asset_type': file.assetType,
           'file_size': file.totalBytes,
+          'relative_path': file.relativePath,
           'needs_naming': false,
           'v2_retired': true,
         },
@@ -5034,6 +5034,7 @@ class VaultAIClient {
           'content_type': file.contentType,
           'asset_type': file.assetType,
           'file_size': file.totalBytes,
+          'relative_path': file.relativePath,
           'needs_naming': false,
           'v2_retired': file.retired,
           'v2_ready': file.readyForUse && !file.retired,
@@ -5043,11 +5044,22 @@ class VaultAIClient {
 
   Future<Map<String, dynamic>> listZkVaultFilesWithRetiredV2({
     required String authToken,
+    bool requireLegacyComplete = false,
   }) async {
-    final inventory = await listZkFileMetadata(authToken: authToken);
+    final inventory = await listZkFileMetadata(
+      authToken: authToken,
+      requireLegacyComplete: requireLegacyComplete,
+    );
     final files = (inventory['files'] as List)
         .map((row) => Map<String, dynamic>.from(row as Map))
         .toList();
+    // Older vaults can receive a signed list offer before any V2 copy exists.
+    // Their metadata inventory is complete already; do not require the V2
+    // route just to display those files.
+    if (!files.any((row) =>
+        row['v2_retired'] == true || row['v2_ready'] == true)) {
+      return <String, dynamic>{'files': files};
+    }
     final retired = await listReadyV2Files(authToken: authToken);
     final byId = <String, Map<String, dynamic>>{
       for (final row in retired) row['id'] as String: row,
