@@ -260,6 +260,8 @@ async def memory_create_endpoint(
         )
         if result.get("conflict") == "memory_v2_owner_edit_conflict":
             raise HTTPException(status_code=409, detail="memory_updated_in_newer_app")
+        if result.get("conflict") == "memory_client_update_required":
+            raise HTTPException(status_code=409, detail="memory_client_update_required")
         if not result.get("ok"):
             raise HTTPException(status_code=500, detail="Memory save failed")
         return result
@@ -302,6 +304,8 @@ async def memory_update_endpoint(
         )
         if result.get("conflict") == "memory_v2_owner_edit_conflict":
             raise HTTPException(status_code=409, detail="memory_updated_in_newer_app")
+        if result.get("conflict") == "memory_client_update_required":
+            raise HTTPException(status_code=409, detail="memory_client_update_required")
         if not result.get("ok"):
             raise HTTPException(status_code=404, detail="Memory not found")
         return result
@@ -335,6 +339,8 @@ async def memory_delete_endpoint(
         )
         if result.get("conflict") == "memory_v2_owner_edit_conflict":
             raise HTTPException(status_code=409, detail="memory_updated_in_newer_app")
+        if result.get("conflict") == "memory_client_update_required":
+            raise HTTPException(status_code=409, detail="memory_client_update_required")
         if not result.get("ok"):
             raise HTTPException(status_code=404, detail="Memory not found")
         return result

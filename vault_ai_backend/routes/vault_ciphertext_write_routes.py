@@ -828,10 +828,11 @@ def _verify_memory_inventory_generation(
         os.getenv("VAULTAI_ZK_LEGACY_MEMORY_ACTIVE_ENABLED", "false")
         .strip().lower() == "true"
     )
-    if expected is None and not (active_copies and signed_memory):
-        return
     cur.execute(
-        "SELECT memory_inventory_generation FROM vaults "
+        "SELECT memory_inventory_generation, "
+        "COALESCE((to_jsonb(vaults)->>'memory_mixed_title_fence_enabled')::boolean, "
+        "FALSE) AS memory_mixed_title_fence_enabled "
+        "FROM vaults "
         "WHERE vault_id=%s FOR UPDATE",
         (vault_id,),
     )
@@ -842,15 +843,19 @@ def _verify_memory_inventory_generation(
         if int(row["memory_inventory_generation"]) != int(expected) + own_advances:
             raise HTTPException(status_code=409, detail="memory_inventory_changed")
         return
+    if not ((active_copies and signed_memory) or
+            row["memory_mixed_title_fence_enabled"]):
+        return
     # A previously signed native-only client can still write a native-only
     # vault. If an older row now exists, it cannot safely check that title.
     cur.execute(
         """SELECT 1 FROM vault_ai_memory WHERE vault_id=%s
              AND superseded_at IS NULL
-             AND (payload_ciphertext IS NULL
-               OR OCTET_LENGTH(payload_ciphertext) < 29
-               OR GET_BYTE(payload_ciphertext,0) <> 1
-               OR memory_record_id IS NULL)
+             AND (CASE WHEN OCTET_LENGTH(payload_ciphertext) >= 29
+                    THEN GET_BYTE(payload_ciphertext,0) <> 1
+                    ELSE TRUE END
+               OR memory_record_id IS NULL
+               OR memory_lookup_hash IS NULL)
              LIMIT 1""",
         (vault_id,),
     )

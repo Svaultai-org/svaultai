@@ -27,6 +27,11 @@ _OWNER_V2_EDIT_CONFLICT = "memory_v2_owner_edit_conflict"
 _OWNER_V2_EDIT_REPLY = (
     "This Memory was updated in a newer app. Open that app to change it."
 )
+_MIXED_TITLE_FENCE_CONFLICT = "memory_client_update_required"
+_MIXED_TITLE_FENCE_REPLY = (
+    "This vault has newer private Memories. Update SVaultAI before "
+    "adding or changing a Memory."
+)
 
 
 def _is_owner_v2_edit_conflict(exc: Exception) -> bool:
@@ -34,6 +39,14 @@ def _is_owner_v2_edit_conflict(exc: Exception) -> bool:
         getattr(exc, "pgcode", None) == "23514"
         and getattr(getattr(exc, "diag", None), "constraint_name", None)
         == "memory_v2_verified_edit_fence"
+    )
+
+
+def _is_mixed_title_fence_conflict(exc: Exception) -> bool:
+    return (
+        getattr(exc, "pgcode", None) == "23514"
+        and getattr(getattr(exc, "diag", None), "constraint_name", None)
+        == "memory_mixed_title_fence"
     )
 
 
@@ -1746,6 +1759,8 @@ def _save_memory(
             pass
         if _is_owner_v2_edit_conflict(exc):
             return _OWNER_V2_EDIT_REPLY
+        if _is_mixed_title_fence_conflict(exc):
+            return _MIXED_TITLE_FENCE_REPLY
         logger.warning(
             "personal memory save failed vault=%s error_type=%s",
             (vault_id or "")[:8],
@@ -2107,6 +2122,9 @@ def save_memory_payload(
     if reply == _OWNER_V2_EDIT_REPLY:
         return {"ok": False, "conflict": _OWNER_V2_EDIT_CONFLICT,
                 "message": reply}
+    if reply == _MIXED_TITLE_FENCE_REPLY:
+        return {"ok": False, "conflict": _MIXED_TITLE_FENCE_CONFLICT,
+                "message": reply}
     if reply.startswith("I couldn't"):
         return {"ok": False, "message": reply}
     item = get_memory_by_lookup(vault_id=vault_id, key=key, intent=intent)
@@ -2227,6 +2245,9 @@ def update_memory_item(
         if _is_owner_v2_edit_conflict(exc):
             return {"ok": False, "conflict": _OWNER_V2_EDIT_CONFLICT,
                     "message": _OWNER_V2_EDIT_REPLY}
+        if _is_mixed_title_fence_conflict(exc):
+            return {"ok": False, "conflict": _MIXED_TITLE_FENCE_CONFLICT,
+                    "message": _MIXED_TITLE_FENCE_REPLY}
         logger.warning(
             "personal memory update failed vault=%s error_type=%s",
             (vault_id or "")[:8],
@@ -2270,6 +2291,9 @@ def delete_memory_item(
         if _is_owner_v2_edit_conflict(exc):
             return {"ok": False, "conflict": _OWNER_V2_EDIT_CONFLICT,
                     "message": _OWNER_V2_EDIT_REPLY}
+        if _is_mixed_title_fence_conflict(exc):
+            return {"ok": False, "conflict": _MIXED_TITLE_FENCE_CONFLICT,
+                    "message": _MIXED_TITLE_FENCE_REPLY}
         logger.warning(
             "personal memory delete failed vault=%s error_type=%s",
             (vault_id or "")[:8],
