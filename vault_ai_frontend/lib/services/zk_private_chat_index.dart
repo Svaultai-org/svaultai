@@ -190,10 +190,11 @@ class ZkPrivateChatIndexLoader {
     );
     final files = <ZkLocalChatRecord>[];
     // Caption sidecars are a useful local content source for media, including
-    // older media opened through the proof-only reader. Never guess across
-    // folders or duplicate names: only unique root-level stems may pair.
-    final rootMediaIds = <String>{};
-    final rootCaptions = <(String, String)>[];
+    // older media opened through the proof-only reader. Pair only an exact
+    // folder and stem with a unique playable file. V2 paths are decrypted on
+    // this device; no folder or caption text is sent in the lookup request.
+    final mediaPairKeys = <String, String>{};
+    final captionPairs = <(String, String)>[];
     var textFiles = 0;
     var textBytes = 0;
     var contentIndexedFiles = 0;
@@ -253,22 +254,23 @@ class ZkPrivateChatIndexLoader {
           manifest.contentType,
           manifest.displayName,
         );
-        if ((mediaKind == ZkLocalMediaKind.video ||
-                mediaKind == ZkLocalMediaKind.audio) &&
-            (manifest.relativePath?.trim().isEmpty ?? true)) {
-          rootMediaIds.add(manifest.fileId);
+        if (mediaKind == ZkLocalMediaKind.video ||
+            mediaKind == ZkLocalMediaKind.audio) {
+          final key = _captionPairKey(
+              manifest.displayName, manifest.relativePath);
+          if (key != null) mediaPairKeys[manifest.fileId] = key;
         }
         if (_isCaptionFile(manifest.contentType, manifest.displayName) &&
-            fullTextRead &&
-            (manifest.relativePath?.trim().isEmpty ?? true)) {
-          final stem = _mediaStem(manifest.displayName);
+            fullTextRead) {
+          final key = _captionPairKey(
+              manifest.displayName, manifest.relativePath);
           final fullTranscript = _captionTranscript(content);
           if (fullTranscript.length > 8192) incomplete = true;
           final transcript = fullTranscript.length > 8192
               ? fullTranscript.substring(0, 8192)
               : fullTranscript;
-          if (stem != null && transcript.isNotEmpty) {
-            rootCaptions.add((stem, transcript));
+          if (key != null && transcript.isNotEmpty) {
+            captionPairs.add((key, transcript));
           }
         }
         files.add(
@@ -353,35 +355,33 @@ class ZkPrivateChatIndexLoader {
           ),
         );
         final path = raw['relative_path'];
-        if (path == null || (path is String && path.trim().isEmpty)) {
-          if (kind == ZkLocalMediaKind.video ||
-              kind == ZkLocalMediaKind.audio) {
-            rootMediaIds.add(id);
-          }
+        if (kind == ZkLocalMediaKind.video ||
+            kind == ZkLocalMediaKind.audio) {
+          final key = _captionPairKey(name, path);
+          if (key != null) mediaPairKeys[id] = key;
         }
         seenIds.add(id);
       }
     }
     // A caption is associated only when it and one playable media record
-    // share a unique root-level basename. Otherwise leave the caption as its
+    // share a unique folder and basename. Otherwise leave the caption as its
     // own searchable file; guessing a media match could show the wrong item.
-    final captionsByStem = <String, List<String>>{};
-    for (final (stem, transcript) in rootCaptions) {
-      captionsByStem.putIfAbsent(stem, () => []).add(transcript);
+    final captionsByKey = <String, List<String>>{};
+    for (final (key, transcript) in captionPairs) {
+      captionsByKey.putIfAbsent(key, () => []).add(transcript);
     }
-    final mediaByStem = <String, List<int>>{};
+    final mediaByKey = <String, List<int>>{};
     for (var i = 0; i < files.length; i++) {
       final file = files[i];
-      if (!rootMediaIds.contains(file.id)) continue;
-      final stem = _mediaStem(file.title);
-      if (stem != null) mediaByStem.putIfAbsent(stem, () => []).add(i);
+      final key = mediaPairKeys[file.id];
+      if (key != null) mediaByKey.putIfAbsent(key, () => []).add(i);
     }
     // An omitted file could have the same stem, so a partial inventory
     // cannot establish the uniqueness required for pairing.
     final pairingInventoryComplete = !incomplete;
-    for (final entry in captionsByStem.entries) {
+    for (final entry in captionsByKey.entries) {
       if (!pairingInventoryComplete) break;
-      final positions = mediaByStem[entry.key];
+      final positions = mediaByKey[entry.key];
       if (entry.value.length != 1 ||
           positions == null ||
           positions.length != 1) {
@@ -438,6 +438,27 @@ class ZkPrivateChatIndexLoader {
     if (dot <= 0) return null;
     final stem = trimmed.substring(0, dot).trim();
     return stem.isEmpty ? null : stem;
+  }
+
+  static String? _captionPairKey(String displayName, Object? relativePath) {
+    var name = displayName;
+    var folder = '';
+    if (relativePath != null) {
+      if (relativePath is! String) return null;
+      final path = relativePath.trim();
+      if (path.isNotEmpty) {
+        final parts = path.split('/');
+        if (parts.any((part) => part.isEmpty || part == '.' || part == '..')) {
+          return null;
+        }
+        name = parts.last;
+        folder = parts.length == 1
+            ? ''
+            : parts.sublist(0, parts.length - 1).join('/');
+      }
+    }
+    final stem = _mediaStem(name);
+    return stem == null ? null : '$folder\u0000$stem';
   }
 
   static String _captionTranscript(String raw) {

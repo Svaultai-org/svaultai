@@ -18,6 +18,7 @@ Future<Map<String, dynamic>> _fileManifest({
   required String mime,
   required int size,
   String? extractedText,
+  String? relativePath,
 }) async {
   final key = await VaultKeyHierarchy(_mvk).metadataKey();
   final metadata = <String, String>{
@@ -25,7 +26,7 @@ Future<Map<String, dynamic>> _fileManifest({
     'content_type_ciphertext': await _wrap(key, mime),
   };
   final body = <String, dynamic>{
-    'schema': extractedText == null
+    'schema': extractedText == null && relativePath == null
         ? 'vaultai.file.migrated.v1'
         : 'vaultai.file.migrated.v2',
     'file_id': id,
@@ -34,14 +35,18 @@ Future<Map<String, dynamic>> _fileManifest({
     'chunk_size': size == 0 ? 1 : size,
     'chunk_count': size == 0 ? 0 : 1,
     'encrypted_metadata': metadata,
-    if (extractedText != null)
-      'legacy_extra': {'relative_path': null, 'extracted_text': extractedText},
+    if (extractedText != null || relativePath != null)
+      'legacy_extra': {
+        'relative_path': relativePath,
+        'extracted_text': extractedText,
+      },
   };
   return <String, dynamic>{
     'file_id': id,
     'crypto_version': 'client_mvk_v2',
     'manifest_ciphertext': await _wrap(key, jsonEncode(body)),
-    if (extractedText != null) 'migration_metadata_version': 2,
+    if (extractedText != null || relativePath != null)
+      'migration_metadata_version': 2,
     'total_bytes': size,
     'chunk_size': body['chunk_size'],
     'chunk_count': body['chunk_count'],
@@ -255,6 +260,96 @@ void main() {
       expect(match.maySendToGeneralAi, isFalse);
     },
   );
+
+  test('folder caption pairs only with the same private folder', () async {
+    const caption = 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n'
+        'orchids beside the promenade\n';
+    final bytes = utf8.encode(caption);
+    final contentKey = await VaultKeyHierarchy(_mvk).fileContentKey();
+    final manifests = <String, Map<String, dynamic>>{
+      'caption': await _fileManifest(
+        id: 'caption', name: 'holiday.vtt', mime: 'text/vtt',
+        size: bytes.length, relativePath: 'Trips/holiday.vtt',
+      ),
+      'folder-video': await _fileManifest(
+        id: 'folder-video', name: 'holiday.mp4', mime: 'video/mp4',
+        size: 0, relativePath: 'Trips/holiday.mp4',
+      ),
+      'root-video': await _fileManifest(
+        id: 'root-video', name: 'holiday.mp4', mime: 'video/mp4', size: 0,
+      ),
+    };
+    final requests = <String>[];
+    Future<ZkPrivateChatIndex> load({bool older = false}) =>
+        ZkPrivateChatIndexLoader(
+          mvk: _mvk,
+          accessIsCurrent: () => true,
+          get: (path) async {
+            requests.add(path);
+            if (path == '/vault/ciphertext/vault-items') return [];
+            if (path == '/vault/file-v2') {
+              return {
+                'files': [
+                  for (final id in older
+                      ? const ['caption']
+                      : manifests.keys)
+                    {
+                      'file_id': id,
+                      'verification_state': 'client_verified',
+                      'lifecycle_state': 'client_v2_ready',
+                    },
+                ],
+              };
+            }
+            if (path.endsWith('/manifest')) {
+              return manifests[path.split('/')[3]];
+            }
+            if (path == '/vault/file-v2/caption/chunk/0') {
+              return {
+                'file_id': 'caption',
+                'chunk_index': 0,
+                'ciphertext': b64urlEncode(await aesGcmWrap(contentKey, bytes)),
+              };
+            }
+            fail('Unexpected private GET: $path');
+          },
+          legacyFileInventory: older
+              ? () async => {
+                    'files': [
+                      {
+                        'id': 'older-folder-video',
+                        'upload_status': 'complete',
+                        'v2_ready': false,
+                        'v2_retired': false,
+                        'file_name': 'holiday.mp4',
+                        'relative_path': 'Trips/holiday.mp4',
+                        'content_type': 'video/mp4',
+                        'storage_mode': 'inline',
+                      },
+                    ],
+                  }
+              : null,
+        ).load();
+
+    final v2 = await load();
+    expect(v2.incomplete, isFalse);
+    expect(v2.files.singleWhere((f) => f.id == 'folder-video').searchText,
+        contains('orchids beside the promenade'));
+    expect(v2.files.singleWhere((f) => f.id == 'root-video').searchText,
+        isEmpty);
+
+    final old = await load(older: true);
+    expect(old.incomplete, isFalse);
+    final match = ZkLocalChatRouter.resolve(
+      prompt: 'Find my video of orchids beside the promenade',
+      savedItems: old.savedItems,
+      files: old.files,
+    );
+    expect(match.selection?.id, 'older-folder-video');
+    expect(match.selection?.legacyProofRequired, isTrue);
+    expect(requests.join(' '), isNot(contains('Trips')));
+    expect(requests.join(' '), isNot(contains('orchids')));
+  });
 
   test('caption links do not guess across duplicate or folder media', () async {
     const caption = 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n'
