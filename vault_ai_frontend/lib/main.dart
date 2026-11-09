@@ -13,6 +13,7 @@ import 'package:flutter/foundation.dart'
         kIsWeb,
         kReleaseMode,
         kDebugMode,
+        compute,
         defaultTargetPlatform,
         TargetPlatform,
         visibleForTesting,
@@ -68,6 +69,7 @@ import 'services/zk_private_chat.dart' as zk_private_chat;
 import 'services/zk_general_chat_bridge.dart' as zk_general_bridge;
 import 'services/zk_private_chat_flow.dart' as zk_chat_flow;
 import 'services/zk_private_chat_index.dart' as zk_chat_index;
+import 'services/local_image_inspection.dart' as local_image;
 import 'services/zk_private_credential_scan.dart' as zk_credential_scan;
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/vault_key_hierarchy.dart' as vk_hier;
@@ -20627,6 +20629,47 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     return true;
   }
 
+  /// Inspect a verified V2 image on this device after an explicit pixel
+  /// question. Size and format checks happen before decoding any pixels.
+  Future<String> _inspectSelectedV2Image({
+    required VaultAIClient client,
+    required String token,
+    required String fileId,
+    required String fileName,
+    required String? mimeType,
+    required int? sizeBytes,
+    required bool v2Ready,
+    required bool Function() accessIsCurrent,
+  }) async {
+    if (!v2Ready) {
+      return 'Local image inspection is available after this older file is upgraded.';
+    }
+    final lowerMime = (mimeType ?? '').toLowerCase();
+    final lowerName = fileName.toLowerCase();
+    if (lowerMime != 'image/png' &&
+        lowerMime != 'image/jpeg' &&
+        !RegExp(r'\.(png|jpe?g)$').hasMatch(lowerName)) {
+      return 'Local image inspection currently supports PNG and JPEG files.';
+    }
+    if (sizeBytes != null &&
+        sizeBytes > local_image.LocalImageInspector.maxEncodedBytes) {
+      return 'This image exceeds the 12 MB local inspection limit.';
+    }
+    if (!accessIsCurrent()) throw StateError('Vault session changed');
+    final download = await client.downloadAvailableV2File(
+      authToken: token, fileId: fileId,
+    );
+    if (!accessIsCurrent()) throw StateError('Vault session changed');
+    if (download.bytes.length > local_image.LocalImageInspector.maxEncodedBytes) {
+      return 'This image exceeds the 12 MB local inspection limit.';
+    }
+    final description = await compute(
+      local_image.inspectLocalImageDescription, download.bytes,
+    );
+    if (!accessIsCurrent()) throw StateError('Vault session changed');
+    return description ?? 'I could not inspect this image on this device.';
+  }
+
   /// A private chat filename lookup reads only session-scoped metadata. An
   /// older match becomes a card only when the same session has the proof-only
   /// download offer; opening that card derives its key on this device.
@@ -20727,6 +20770,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       zk_private_chat.ZkLocalChatAction.readText => 'open',
       _ => null,
     };
+    final inspection = action == zk_private_chat.ZkLocalChatAction.inspectImage
+        ? await _inspectSelectedV2Image(
+            client: client,
+            token: token,
+            fileId: file.id,
+            fileName: file.fileName,
+            mimeType: file.contentType,
+            sizeBytes: file.fileSize,
+            v2Ready: file.v2Available,
+            accessIsCurrent: accessIsCurrent,
+          )
+        : null;
+    if (!accessIsCurrent()) return true;
     _zkPrivateChatFlow?.clear();
     _pinFreeSelectedFileId = file.id;
     _pinFreeSelectedFileToken = token;
@@ -20734,11 +20790,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _pinFreeSelectedFileMvk = mvk;
     final card = _Msg(
       'assistant',
-      pendingAction == 'download'
+      inspection ?? (pendingAction == 'download'
           ? 'Downloading “$displayLabel” from your vault.'
           : pendingAction == 'open'
               ? 'Opening “$displayLabel” from your vault.'
-              : 'Found “$displayLabel” among your saved files.',
+              : 'Found “$displayLabel” among your saved files.'),
       kind: ChatMessage.kVaultFile,
       fileId: file.id,
       fileName: file.fileName,
@@ -21071,9 +21127,23 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               zk_private_chat.ZkLocalChatAction.readText when excerpt == null => 'open',
               _ => null,
             };
+            final inspection =
+                local.action == zk_private_chat.ZkLocalChatAction.inspectImage
+                    ? await _inspectSelectedV2Image(
+                        client: client,
+                        token: token,
+                        fileId: selected.id,
+                        fileName: selected.title,
+                        mimeType: selected.mimeType,
+                        sizeBytes: selected.sizeBytes,
+                        v2Ready: !selected.legacyProofRequired,
+                        accessIsCurrent: currentAccess,
+                      )
+                    : null;
+            if (!currentAccess()) return;
             answer = _Msg(
               'assistant',
-              excerpt ??
+              inspection ?? excerpt ??
                   (pendingAction == 'download'
                       ? 'Downloading “${selected.title}” from your vault.'
                       : pendingAction == 'open'

@@ -279,6 +279,7 @@ class ZkPrivateChatIndexLoader {
             searchText: content,
             mimeType: manifest.contentType,
             mediaKind: mediaKind,
+            sizeBytes: manifest.totalBytes,
           ),
         );
       } catch (_) {
@@ -348,6 +349,7 @@ class ZkPrivateChatIndexLoader {
             mimeType: mime,
             mediaKind: kind,
             legacyProofRequired: true,
+            sizeBytes: raw['file_size'] is int ? raw['file_size'] as int : null,
           ),
         );
         final path = raw['relative_path'];
@@ -397,6 +399,7 @@ class ZkPrivateChatIndexLoader {
         mimeType: media.mimeType,
         mediaKind: media.mediaKind,
         legacyProofRequired: media.legacyProofRequired,
+        sizeBytes: media.sizeBytes,
       );
     }
     _checkAccess();

@@ -52,6 +52,8 @@ void main() {
       ('please open it', ZkLocalChatAction.open),
       ('download that', ZkLocalChatAction.download),
       ('what does it say?', ZkLocalChatAction.readText),
+      ('what colors are in it?', ZkLocalChatAction.inspectImage),
+      ('what is its resolution?', ZkLocalChatAction.inspectImage),
     ]) {
       expect(ZkLocalChatRouter.isSelectedFileFollowUp(prompt), isTrue);
       final result = ZkLocalChatRouter.resolve(
@@ -69,6 +71,12 @@ void main() {
     );
     expect(unbound.disposition, ZkLocalChatDisposition.notFound);
     expect(unbound.maySendToGeneralAi, isFalse);
+    final imageQuestion = ZkLocalChatRouter.resolve(
+      prompt: 'what colors are in it?',
+      savedItems: const [], files: const [file],
+    );
+    expect(imageQuestion.disposition, ZkLocalChatDisposition.notFound);
+    expect(imageQuestion.maySendToGeneralAi, isFalse);
     final excerpt = localFileTextExcerpt(file, maxCharacters: 3);
     expect(excerpt, contains('🗝️a'));
     expect(excerpt, isNot(contains('bcdef')));

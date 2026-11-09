@@ -23,7 +23,7 @@ enum ZkLocalChatDisposition {
 
 /// A device-local action on an exact file selection. These actions never
 /// become a request to the general AI endpoint.
-enum ZkLocalChatAction { none, open, download, readText }
+enum ZkLocalChatAction { none, open, download, readText, inspectImage }
 
 class ZkLocalChatRecord {
   final ZkLocalChatKind kind;
@@ -32,6 +32,7 @@ class ZkLocalChatRecord {
   final String searchText;
   final String? mimeType;
   final ZkLocalMediaKind mediaKind;
+  final int? sizeBytes;
 
   /// The file card must use the owner-proof legacy reader, never V2 download.
   final bool legacyProofRequired;
@@ -43,6 +44,7 @@ class ZkLocalChatRecord {
     this.searchText = '',
     this.mimeType,
     this.mediaKind = ZkLocalMediaKind.other,
+    this.sizeBytes,
     this.legacyProofRequired = false,
   });
 }
@@ -119,6 +121,12 @@ class ZkLocalChatRouter {
     r'what\s+is\s+written\s+in\s+(?:it|that|this))[?.!]*$',
     caseSensitive: false,
   );
+  static final RegExp _inspectImageFollowUp = RegExp(
+    r'^(?:please\s+)?(?:what\s+colou?rs?\s+are\s+in\s+(?:it|that|this)|'
+    r'what\s+(?:is|are)\s+(?:its|the)\s+(?:resolution|dimensions?|pixel\s+size)|'
+    r'how\s+many\s+pixels\s+(?:wide|tall)\s+is\s+(?:it|that|this))[?.!]*$',
+    caseSensitive: false,
+  );
   static final RegExp _contextReference = RegExp(
     r'\b(it|its|that|this|these|those|one|ones|same)\b',
     caseSensitive: false,
@@ -145,7 +153,8 @@ class ZkLocalChatRouter {
     final query = prompt.trim();
     return _followUp.hasMatch(query) ||
         _fileActionFollowUp.hasMatch(query) ||
-        _readTextFollowUp.hasMatch(query);
+        _readTextFollowUp.hasMatch(query) ||
+        _inspectImageFollowUp.hasMatch(query);
   }
 
   static ZkLocalChatAction _actionFor(String query) {
@@ -155,6 +164,9 @@ class ZkLocalChatRouter {
         .split(RegExp(r'\s+'))
         .first
         .toLowerCase();
+    if (_inspectImageFollowUp.hasMatch(query)) {
+      return ZkLocalChatAction.inspectImage;
+    }
     if (first == 'download') return ZkLocalChatAction.download;
     if (first == 'read' || _readTextFollowUp.hasMatch(query)) {
       return ZkLocalChatAction.readText;
@@ -286,7 +298,8 @@ class ZkLocalChatRouter {
     }
     if (_followUp.hasMatch(query) ||
         _fileActionFollowUp.hasMatch(query) ||
-        _readTextFollowUp.hasMatch(query)) {
+        _readTextFollowUp.hasMatch(query) ||
+        _inspectImageFollowUp.hasMatch(query)) {
       final previous = previousSelection;
       if (previous == null ||
           !records.any(
