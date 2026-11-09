@@ -67,6 +67,7 @@ import 'services/vault_handle.dart' as vh;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/private_content_pin_guard.dart' as private_content_guard;
 import 'services/zk_private_chat.dart' as zk_private_chat;
+import 'services/zk_private_file_selection.dart' as zk_file_selection;
 import 'services/zk_general_chat_bridge.dart' as zk_general_bridge;
 import 'services/zk_private_chat_flow.dart' as zk_chat_flow;
 import 'services/zk_private_chat_index.dart' as zk_chat_index;
@@ -10579,10 +10580,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   String? _zkPrivateChatToken;
   String? _zkPrivateChatVaultId;
   SecretKey? _zkPrivateChatMvk;
-  String? _pinFreeSelectedFileId;
-  String? _pinFreeSelectedFileToken;
-  String? _pinFreeSelectedFileVaultId;
-  SecretKey? _pinFreeSelectedFileMvk;
+  final zk_file_selection.ZkPrivateFileSelection _privateFileSelection =
+      zk_file_selection.ZkPrivateFileSelection();
   zk_general_bridge.ZkGeneralChatBridge? _zkGeneralChatBridge;
   String? _zkGeneralChatBridgeToken;
   String? _zkGeneralChatBridgeVaultId;
@@ -20926,13 +20925,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final query = extractLocalFileLookupQuery(text);
     final isFollowUp =
         zk_private_chat.ZkLocalChatRouter.isSelectedFileFollowUp(text);
-    final selectedId = isFollowUp &&
-            _pinFreeSelectedFileToken == token &&
-            _pinFreeSelectedFileVaultId == vaultId &&
-            identical(_pinFreeSelectedFileMvk, mvk)
-        ? _pinFreeSelectedFileId
-        : null;
-    if (selectedId == null) _clearPinFreeSelectedFile();
+    final selectedId = _privateFileSelection.forFollowUp(
+      prompt: text, token: token, vaultId: vaultId, mvk: mvk,
+    );
     if (isFollowUp && selectedId == null) return false;
     if (query == null && selectedId == null) return false;
     final listOffered = ZkPinFreeFileSession.instance.listOfferedForToken(token);
@@ -21026,10 +21021,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         : null;
     if (!accessIsCurrent()) return true;
     _zkPrivateChatFlow?.clear();
-    _pinFreeSelectedFileId = file.id;
-    _pinFreeSelectedFileToken = token;
-    _pinFreeSelectedFileVaultId = vaultId;
-    _pinFreeSelectedFileMvk = mvk;
+    _privateFileSelection.bindExactResult(
+      fileId: file.id, token: token, vaultId: vaultId, mvk: mvk,
+    );
     final card = _Msg(
       'assistant',
       inspection ?? (pendingAction == 'download'
@@ -21060,10 +21054,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   void _clearPinFreeSelectedFile() {
-    _pinFreeSelectedFileId = null;
-    _pinFreeSelectedFileToken = null;
-    _pinFreeSelectedFileVaultId = null;
-    _pinFreeSelectedFileMvk = null;
+    _privateFileSelection.clear();
   }
 
   Future<void> _send() async {
@@ -21202,6 +21193,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     if (attachments.isNotEmpty) {
       _clearPinFreeSelectedFile();
+      _zkPrivateChatFlow?.clear();
       if (safeBridgeOnly) {
         _appendLocalVaultReply(text,
             'Private attachment analysis is unavailable in this version.');
@@ -21667,6 +21659,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         }
       }
       if (saved.isNotEmpty) {
+        final selectedUpload = _privateFileSelection.bindCommittedV2Uploads(
+          fileIds: [
+            for (final attachment in pending)
+              attachment.uploaded ? attachment.uploadedFileId : null,
+          ],
+          listOffered: ZkPinFreeFileSession.instance
+              .listOfferedForToken(token),
+          downloadOffered: ZkPinFreeFileSession.instance
+              .downloadOfferedForToken(token),
+          token: token,
+          vaultId: app.vaultId ?? '',
+          mvk: mvk,
+        );
         final summaries = <ChatAttachmentSummary>[
           for (final attachment in saved)
             ChatAttachmentSummary(
@@ -21680,6 +21685,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             ),
         ];
         final savedCount = saved.length;
+        final photoColorFollowUp = selectedUpload &&
+            saved.single.size <= local_image.LocalImageInspector.maxEncodedBytes &&
+            const {'image/png', 'image/jpeg'}
+                .contains((saved.single.mimeType ?? '').toLowerCase());
+        final followUpTip = selectedUpload
+            ? photoColorFollowUp
+                ? 'Say “open it”, “download it”, or “what colors are in it?” '
+                : 'Say “open it” or “download it” to use this file. '
+            : 'Open Files to view ${savedCount == 1 ? 'it' : 'them'}. ';
         setState(() {
           attachments.removeWhere(saved.contains);
           msgs.add(_Msg('user', text, attachments: summaries));
@@ -21687,8 +21701,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             _Msg(
               'assistant',
               '$savedCount ${savedCount == 1 ? 'file' : 'files'} saved privately. '
-                  'Open Files to view ${savedCount == 1 ? 'it' : 'them'}. '
-                  'AI analysis of attached files is not available in private chat yet.'
+                  '$followUpTip'
+                  'Object, scene, and spoken-content analysis is not available yet.'
                   '${failed.isNotEmpty ? ' ${failed.length} could not be saved; retry from the attachment panel.' : ''}',
             ),
           );
