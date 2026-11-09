@@ -10,7 +10,10 @@ from fastapi import HTTPException, Request
 
 import auth_local
 from routes import auth_zk_routes
-from signed_private_chat_prebody_gate import SignedPrivateChatPreBodyGate
+from signed_private_chat_prebody_gate import (
+    SignedPrivateChatPreBodyGate, _replaced_pin_route,
+)
+from strict_raw_pin_ingress_gate import LEGACY_PIN_ROUTES
 
 
 @pytest.fixture(autouse=True)
@@ -51,6 +54,25 @@ async def _probe(path: str, headers: list[tuple[bytes, bytes]],
 
 def _header(token: str) -> list[tuple[bytes, bytes]]:
     return [(b"authorization", f"Bearer {token}".encode("ascii"))]
+
+
+def test_every_signed_old_route_rejection_is_also_prebody():
+    # The authenticated route guard runs after FastAPI has parsed a request.
+    # Every old PIN route it rejects must have a matching body-free decision.
+    masks = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512 | 7,
+             1024, 2048 | 1, 4095)
+    for mask in masks:
+        principal = {"pin_free_read_offers": mask}
+        for method, template in LEGACY_PIN_ROUTES:
+            path = (template.replace("{file_id}", "synthetic")
+                    .replace("{import_id}", "synthetic")
+                    .replace("{job_id}", "synthetic"))
+            try:
+                auth_local.require_signed_offer_route(principal, path=path)
+            except HTTPException:
+                assert _replaced_pin_route(path, mask, method) is not None, (
+                    mask, method, path,
+                )
 
 
 @pytest.mark.parametrize("path", [
