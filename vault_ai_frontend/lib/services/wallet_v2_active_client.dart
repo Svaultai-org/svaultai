@@ -176,7 +176,14 @@ class WalletV2ActiveClient {
     slot.validate();
     _checkAccess();
     final verified = await findVerified(slot);
-    if (verified != null) return verified;
+    if (verified != null) {
+      // A lost publish response can leave a verified row behind. Do not
+      // report recovery from list metadata alone: prove this session's MVK
+      // still opens the exact account and its secret derives the address.
+      await readSigningSecret(verified);
+      _checkAccess();
+      return verified;
+    }
     final pending = await findPending(slot);
     if (pending == null) return null;
     if (pending.legacyItemId != null) throw WalletV2PendingStageError();

@@ -306,6 +306,49 @@ void main() {
     expect(posts, ['/vault/wallet-v2/$id/publish-new']);
   });
 
+  test('lost publish reply does not trust a verified list row by itself',
+      () async {
+    var detailReads = 0;
+    var pendingReads = 0;
+    var posts = 0;
+    final client = WalletV2ActiveClient(
+      codec: WalletV2EnvelopeCodec(SecretKey(List<int>.filled(32, 4))),
+      accessIsCurrent: () => true,
+      creationEnabled: true,
+      get: (path) async {
+        if (path == '/vault/wallet-v2') {
+          return {'wallets': [
+            {
+              'wallet_record_id': id, 'chain': 'evm',
+              'network': 'ethereum_mainnet', 'asset': 'ETH',
+              'public_address': address, 'wallet_label': 'Synthetic wallet',
+              'migration_state': 'v2_verified',
+            },
+          ]};
+        }
+        if (path == '/vault/wallet-v2/pending') {
+          pendingReads++;
+          return {'wallets': <Object>[]};
+        }
+        expect(path, '/vault/wallet-v2/$id');
+        detailReads++;
+        return {
+          'wallet_record_id': id, 'chain': 'evm',
+          'network': 'ethereum_mainnet', 'asset': 'ETH',
+          'public_address': address, 'wallet_label': 'Synthetic wallet',
+          'envelope_version': 'v2', 'migration_state': 'v2_verified',
+          'payload_ciphertext': 'corrupt-ciphertext',
+        };
+      },
+      post: (_, __) async { posts++; return {}; },
+    );
+    await expectLater(client.recoverPendingNew(slot),
+        throwsA(isA<Exception>()));
+    expect(detailReads, 1);
+    expect(pendingReads, 0);
+    expect(posts, 0);
+  });
+
   test('corrupt pending wallet blocks fresh creation without deleting it',
       () async {
     var posts = 0;
