@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart';
+import 'package:vault_ai_frontend/services/private_content_pin_guard.dart';
 import 'package:vault_ai_frontend/services/zk_private_chat.dart';
 import 'package:vault_ai_frontend/services/zk_private_chat_flow.dart';
 import 'package:vault_ai_frontend/services/zk_private_chat_index.dart';
@@ -108,6 +109,84 @@ Future<Map<String, Object?>> _fixture() async {
 }
 
 void main() {
+  test('related-file lookup uses only client-decrypted V2 names', () async {
+    final manifests = <String, Map<String, dynamic>>{
+      'front': await _fileManifest(
+        id: 'front', name: 'holiday-front.jpg', mime: 'image/jpeg', size: 0,
+      ),
+      'back': await _fileManifest(
+        id: 'back', name: 'holiday-back.jpg', mime: 'image/jpeg', size: 0,
+      ),
+      'note': await _fileManifest(
+        id: 'note', name: 'tax-note.txt', mime: 'text/plain', size: 32,
+      ),
+    };
+    final requested = <String>[];
+    Future<Object?> get(String path) async {
+      requested.add(path);
+      if (path == '/vault/file-v2') {
+        return {
+          'files': [
+            for (final id in manifests.keys)
+              {
+                'file_id': id,
+                'verification_state': 'client_verified',
+                'lifecycle_state': 'client_v2_ready',
+              },
+          ],
+        };
+      }
+      if (path.endsWith('/manifest')) {
+        return manifests[path.split('/')[3]];
+      }
+      fail('Unexpected request: $path');
+    }
+
+    final envelope = await loadZkLocalRelatedFilesEnvelope(
+      fileId: 'front', mvk: _mvk, get: get, accessIsCurrent: () => true,
+    );
+    final relationships = envelope['relationships'] as List;
+    expect(relationships, hasLength(1));
+    expect((relationships.single['file'] as Map)['file_id'], 'back');
+    expect(envelope['is_complete'], true);
+    expect(requested, [
+      '/vault/file-v2',
+      '/vault/file-v2/front/manifest',
+      '/vault/file-v2/back/manifest',
+      '/vault/file-v2/note/manifest',
+    ]);
+    expect(requested.join(' '), isNot(contains('holiday')));
+    expect(requested.every((path) => !path.contains('/chunk/')), isTrue);
+  });
+
+  test('unverified file cannot fall back to a PIN-based relation', () async {
+    final requested = <String>[];
+    await expectLater(
+      loadZkLocalRelatedFilesEnvelope(
+        fileId: 'pending',
+        mvk: _mvk,
+        accessIsCurrent: () => true,
+        get: (path) async {
+          requested.add(path);
+          if (path == '/vault/file-v2') {
+            return {
+              'files': [
+                {
+                  'file_id': 'pending',
+                  'verification_state': 'pending',
+                  'lifecycle_state': 'active',
+                },
+              ],
+            };
+          }
+          fail('Unexpected request: $path');
+        },
+      ),
+      throwsA(isA<PrivateContentSearchUnavailable>()),
+    );
+    expect(requested, ['/vault/file-v2']);
+  });
+
   test('encrypted media index and chat follow-ups stay on device', () async {
     final fixture = await _fixture();
     final manifests = fixture['files'] as Map<String, Map<String, dynamic>>;

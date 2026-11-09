@@ -118,5 +118,38 @@ void main() {
       vaultHandle: 'synthetic-zk-handle',
     );
     expect(blocksZkLegacyContentRoute(), false);
-  }, skip: kGuardZkPrivateContentPinRoutes);
+    expect(blocksZkRelatedFilesPinRoute(), false);
+  }, skip: kGuardZkPrivateContentPinRoutes || kEnableZkLocalRelatedFiles);
+
+  test('related-files opt-in blocks only the OPAQUE PIN request', () async {
+    ZkActiveMvk.set(
+      mvk: SecretKey(List<int>.filled(32, 11)),
+      vaultId: 'synthetic-vault-id',
+      vaultHandle: 'synthetic-zk-handle',
+    );
+    final requests = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+    expect(blocksZkRelatedFilesPinRoute(), true);
+    expect(blocksZkLegacyContentRoute(), false);
+    await expectLater(
+      client.fetchRelatedFiles(
+        fileId: 'synthetic-file',
+        pin: syntheticPin,
+        authToken: 'synthetic-session',
+      ),
+      throwsA(isA<PrivateContentSearchUnavailable>()),
+    );
+    expect(requests, isEmpty);
+    await client.startDeepAnswer(
+      pin: syntheticPin,
+      authToken: 'synthetic-session',
+    );
+    expect(requests.single.url.path, '/vault-analysis/deep-answer');
+  }, skip: !kEnableZkLocalRelatedFiles || kGuardZkPrivateContentPinRoutes);
 }

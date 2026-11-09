@@ -13,8 +13,20 @@ const bool kGuardZkPrivateContentPinRoutes = bool.fromEnvironment(
       defaultValue: false,
     );
 
+// Narrow opt-in: related-file suggestions can use the local V2 file index
+// without enabling the rest of private chat. Legacy files are not included.
+const bool kEnableZkLocalRelatedFiles = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_LOCAL_RELATED_FILES',
+  defaultValue: false,
+);
+
 bool blocksZkLegacyContentRoute({String? vaultHandle}) =>
     kGuardZkPrivateContentPinRoutes &&
+    ((vaultHandle?.isNotEmpty ?? false) ||
+        (ZkActiveMvk.currentVaultHandle()?.isNotEmpty ?? false));
+
+bool blocksZkRelatedFilesPinRoute({String? vaultHandle}) =>
+    (kGuardZkPrivateContentPinRoutes || kEnableZkLocalRelatedFiles) &&
     ((vaultHandle?.isNotEmpty ?? false) ||
         (ZkActiveMvk.currentVaultHandle()?.isNotEmpty ?? false));
 

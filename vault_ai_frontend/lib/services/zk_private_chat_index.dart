@@ -11,6 +11,7 @@ import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
 
 import 'file_v2_reader.dart';
+import 'private_content_pin_guard.dart';
 import 'vault_key_hierarchy.dart';
 import 'zk_private_chat.dart';
 
@@ -45,6 +46,7 @@ class ZkPrivateChatIndexLoader {
   final ZkPrivateChatGet get;
   final bool Function() accessIsCurrent;
   final bool includeSavedItems;
+  final bool indexTextContent;
   final int fileLimit;
   final int textFileLimit;
   final int textFileByteLimit;
@@ -61,6 +63,7 @@ class ZkPrivateChatIndexLoader {
     required this.get,
     required this.accessIsCurrent,
     this.includeSavedItems = true,
+    this.indexTextContent = true,
     this.fileLimit = maxFiles,
     this.textFileLimit = maxTextFiles,
     this.textFileByteLimit = maxTextFileBytes,
@@ -219,7 +222,7 @@ class ZkPrivateChatIndexLoader {
         var content = '';
         var fullTextRead = false;
         final isText = _isTextFile(manifest.contentType, manifest.displayName);
-        if (isText &&
+        if (indexTextContent && isText &&
             manifest.totalBytes <= textFileByteLimit &&
             textFiles < textFileLimit &&
             textBytes + manifest.totalBytes <= totalTextByteLimit) {
@@ -229,14 +232,15 @@ class ZkPrivateChatIndexLoader {
           fullTextRead = true;
           textFiles++;
           textBytes += manifest.totalBytes;
-        } else if (isText) {
+        } else if (indexTextContent && isText) {
           incomplete = true;
         }
         // A retired legacy file may carry its old OCR, document text, or
         // transcript inside the client-encrypted V2 manifest. Search that
         // text only on this device when full text was not already read.
         final extracted = manifest.extractedText;
-        if (!fullTextRead && extracted != null && extracted.isNotEmpty) {
+        if (indexTextContent && !fullTextRead &&
+            extracted != null && extracted.isNotEmpty) {
           final extractedBytes = utf8.encode(extracted).length;
           if (extractedBytes <= extractedTextByteLimit &&
               textFiles < textFileLimit &&
@@ -509,4 +513,35 @@ class ZkPrivateChatIndexLoader {
     }
     return ZkLocalMediaKind.other;
   }
+}
+
+/// Suggest V2 files by decrypting their names only on the current device.
+/// No PIN, query, MVK, filename, or decrypted content is sent to the server.
+Future<Map<String, dynamic>> loadZkLocalRelatedFilesEnvelope({
+  required String fileId,
+  required SecretKey mvk,
+  required ZkPrivateChatGet get,
+  required bool Function() accessIsCurrent,
+}) async {
+  if (fileId.trim().isEmpty) throw ArgumentError('Missing file ID');
+  final index = await ZkPrivateChatIndexLoader(
+    mvk: mvk,
+    get: get,
+    accessIsCurrent: accessIsCurrent,
+    includeSavedItems: false,
+    indexTextContent: false,
+  ).load();
+  if (!accessIsCurrent()) throw StateError('Vault access changed');
+  final anchors = index.files.where((file) => file.id == fileId).toList();
+  if (anchors.length != 1) {
+    throw const PrivateContentSearchUnavailable(
+      'This file is not available in the private search index.',
+    );
+  }
+  final anchor = anchors.single;
+  return ZkLocalFileRelations.envelope(
+    anchor: anchor,
+    matches: ZkLocalFileRelations.related(anchor, index.files),
+    incomplete: index.incomplete,
+  );
 }

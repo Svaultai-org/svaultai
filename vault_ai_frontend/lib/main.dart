@@ -18437,10 +18437,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (token == null || app.vaultId == null) {
       throw Exception('Session expired.');
     }
-    if (private_content_guard.blocksZkLegacyContentRoute(
+    if (private_content_guard.blocksZkRelatedFilesPinRoute(
             vaultHandle: app.vaultHandle) ||
         signedPrivateChatOfferedForToken(token)) {
-      if (!kEnableZkPrivateChat && !signedPrivateChatOfferedForToken(token)) {
+      if (!kEnableZkPrivateChat &&
+          !private_content_guard.kEnableZkLocalRelatedFiles &&
+          !signedPrivateChatOfferedForToken(token)) {
         throw const private_content_guard.PrivateContentSearchUnavailable(
           private_content_guard.relatedFilesPrivateMessage,
         );
@@ -18462,7 +18464,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           !st.SessionTermination.instance.isTerminated;
       if (!currentAccess()) throw StateError('Vault access changed');
       final client = VaultAIClient(baseUrl: backendBaseUrl);
-      final index = await zk_chat_index.ZkPrivateChatIndexLoader(
+      final envelope = await zk_chat_index.loadZkLocalRelatedFilesEnvelope(
+        fileId: fileId,
         mvk: mvk!,
         accessIsCurrent: currentAccess,
         get: (path) => client.zkPrivateChatCiphertextGet(
@@ -18472,22 +18475,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             if (!currentAccess()) throw StateError('Vault access changed');
           },
         ),
-      ).load();
-      if (!currentAccess()) throw StateError('Vault access changed');
-      final anchors = index.files.where((file) => file.id == fileId).toList();
-      if (anchors.length != 1) {
-        throw const private_content_guard.PrivateContentSearchUnavailable(
-          'This file is not available in the private search index.',
-        );
-      }
-      final anchor = anchors.single;
-      return zk_private_chat.ZkLocalFileRelations.envelope(
-        anchor: anchor,
-        matches: zk_private_chat.ZkLocalFileRelations.related(
-          anchor, index.files,
-        ),
-        incomplete: index.incomplete,
       );
+      if (!currentAccess()) throw StateError('Vault access changed');
+      return envelope;
     }
     final pin = await _VaultCrypto.currentPinOrThrow();
     final client = VaultAIClient(baseUrl: backendBaseUrl);

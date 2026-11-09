@@ -6771,7 +6771,7 @@ class VaultAIClient {
   }) async {
     if (kPrivateOnlyTransportRejectPin ||
         signedPrivateChatOfferedForToken(authToken) ||
-        private_content_guard.blocksZkLegacyContentRoute(
+        private_content_guard.blocksZkRelatedFilesPinRoute(
         vaultHandle: vaultHandle)) {
       throw const private_content_guard.PrivateContentSearchUnavailable(
         private_content_guard.relatedFilesPrivateMessage,
