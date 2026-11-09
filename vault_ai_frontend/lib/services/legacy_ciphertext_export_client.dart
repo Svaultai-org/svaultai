@@ -15,11 +15,13 @@ typedef LegacyProofProvider = Future<String> Function();
 class LegacyCiphertextSource {
   final String ciphertext;
   final String sourceSnapshot;
+  final String? deleteSnapshot;
   final Map<String, dynamic> sourceMetadata;
 
   const LegacyCiphertextSource({
     required this.ciphertext,
     required this.sourceSnapshot,
+    this.deleteSnapshot,
     required this.sourceMetadata,
   });
 }
@@ -308,8 +310,10 @@ class LegacyCiphertextExportClient {
       final text = StringBuffer();
       var offset = 0;
       String? snapshot;
+      String? deleteSnapshot;
       Map<String, dynamic>? metadata;
       bool? hasSourceShape;
+      bool? hasDeleteShape;
       while (offset < expectedChars) {
         final response = await _page(<String, dynamic>{
           'mode': mode,
@@ -335,7 +339,21 @@ class LegacyCiphertextExportClient {
           throw const FormatException('Invalid ciphertext export chunk');
         }
         final rawSnapshot = response['source_snapshot'];
+        final rawDeleteSnapshot = response['delete_snapshot'];
         final rawMetadata = response['source_metadata'];
+        final hasDelete = rawDeleteSnapshot != null;
+        if (hasDeleteShape != null && hasDeleteShape != hasDelete) {
+          throw const FormatException('Delete source changed during export');
+        }
+        hasDeleteShape = hasDelete;
+        if (hasDelete) {
+          if (mode != 'read_item' || rawDeleteSnapshot is! String ||
+              !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(rawDeleteSnapshot) ||
+              (deleteSnapshot != null && deleteSnapshot != rawDeleteSnapshot)) {
+            throw const FormatException('Invalid delete source snapshot');
+          }
+          deleteSnapshot = rawDeleteSnapshot;
+        }
         final hasSource = rawSnapshot != null || rawMetadata != null;
         if (hasSourceShape != null && hasSourceShape != hasSource) {
           throw const FormatException('Legacy source changed during export');
@@ -367,6 +385,7 @@ class LegacyCiphertextExportClient {
       return LegacyCiphertextSource(
         ciphertext: text.toString(),
         sourceSnapshot: snapshot ?? '',
+        deleteSnapshot: deleteSnapshot,
         sourceMetadata: metadata ?? const <String, dynamic>{},
       );
     } catch (_) {

@@ -6598,6 +6598,7 @@ Future<void> _deleteLegacyZkSavedItem(
         return legacy_item_delete.LegacySavedItemDeleteSource(
           itemId: id, itemType: actualType, service: actualService,
           sourceSnapshot: source.sourceSnapshot,
+          deleteSnapshot: source.deleteSnapshot ?? '',
         );
       },
       post: (path, body) async {

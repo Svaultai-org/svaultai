@@ -15,6 +15,12 @@ ITEM_SOURCE_FIELDS = (
     "encrypted_data", "item_type", "service",
     "item_type_ciphertext", "service_ciphertext",
 )
+# A delete must also be bound to the staged V2 copy. Keep the migration
+# source_snapshot contract unchanged for older export and staging clients.
+ITEM_DELETE_FIELDS = ITEM_SOURCE_FIELDS + (
+    "payload_ciphertext", "title_lookup_hash", "title_revision",
+    "legacy_item_rename_active",
+)
 FILE_SOURCE_FIELDS = (
     "encrypted_file_data", "file_size", "file_name", "saved_name",
     "content_type", "detected_type", "detected_service", "asset_type",
@@ -62,3 +68,15 @@ def source_snapshot(
     return base64.urlsafe_b64encode(
         source_digest(kind, row, vault_id=vault_id, record_id=record_id),
     ).decode("ascii").rstrip("=")
+
+
+def item_delete_snapshot(
+    row: dict, *, vault_id: str, record_id: int,
+) -> str:
+    """Bind a delete confirmation to both legacy and staged item state."""
+    hasher = hashlib.sha256(b"legacy-item-delete/v1\x00")
+    _feed(hasher, vault_id)
+    _feed(hasher, str(record_id))
+    for field in ITEM_DELETE_FIELDS:
+        _feed(hasher, row.get(field))
+    return base64.urlsafe_b64encode(hasher.digest()).decode("ascii").rstrip("=")

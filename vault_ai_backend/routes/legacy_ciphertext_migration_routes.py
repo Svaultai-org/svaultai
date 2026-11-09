@@ -25,9 +25,10 @@ from psycopg2.errors import UniqueViolation
 from psycopg2.extras import RealDictCursor
 
 from auth_local import SessionPrincipal, _get_secret
-from device_gate import verify_trusted_device
+from device_gate import _gate_enabled, verify_trusted_device
 from legacy_source_snapshot import (
     FILE_SOURCE_FIELDS, MAX_SOURCE_CIPHERTEXT_CHARS,
+    item_delete_snapshot,
     source_snapshot as legacy_source_snapshot,
 )
 from routes.auth_zk_routes import (
@@ -230,6 +231,7 @@ class LegacyItemEditPromoteRequest(BaseModel):
 class LegacyItemDeleteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_snapshot: str = Field(..., min_length=43, max_length=43)
+    delete_snapshot: str = Field(..., min_length=43, max_length=43)
     zk_proof_token: str = Field(..., min_length=1, max_length=128)
     confirm: bool
 
@@ -347,12 +349,34 @@ def _require_live_legacy_item_edit_session(cur, principal: SessionPrincipal) -> 
         raise HTTPException(status_code=409, detail="zk_registration_required")
     cur.execute(
         "SELECT 1 FROM auth_sessions WHERE token_id=%s AND vault_id=%s "
+        "AND device_id=%s "
         "AND auth_method='opaque' AND revoked_at IS NULL "
         "AND expires_at>NOW() FOR SHARE",
-        (token_id, principal["vault_id"]),
+        (token_id, principal["vault_id"], principal.get("device_id")),
     )
     if cur.fetchone() is None:
         raise HTTPException(status_code=401, detail="session_expired")
+
+
+def _require_live_delete_trusted_device(cur, principal: SessionPrincipal) -> None:
+    """Hold the trusted row through commit so revocation wins or waits."""
+    if not _gate_enabled():
+        return
+    device_id = principal.get("device_id")
+    if not device_id:
+        raise HTTPException(status_code=403, detail={"code": "device_session_mismatch"})
+    cur.execute(
+        "SELECT status FROM trusted_devices WHERE vault_id=%s AND device_id=%s "
+        "FOR SHARE",
+        (principal["vault_id"], device_id),
+    )
+    device = cur.fetchone()
+    if device is None or device["status"] != "trusted":
+        code = (
+            "device_revoked" if device and device["status"] == "revoked"
+            else "device_not_trusted"
+        )
+        raise HTTPException(status_code=403, detail={"code": code})
 
 
 def _require_legacy_item_editable(row: dict) -> None:
@@ -685,6 +709,7 @@ def delete_legacy_item_without_pin(
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         _require_live_legacy_item_edit_session(cur, principal)
+        _require_live_delete_trusted_device(cur, principal)
         row = _load_item_locked(cur, principal["vault_id"], item_id)
         _require_legacy_item_deletable(row)
         snapshot = legacy_source_snapshot(
@@ -692,6 +717,10 @@ def delete_legacy_item_without_pin(
         )
         if snapshot != payload.source_snapshot:
             raise HTTPException(status_code=409, detail="legacy_source_changed")
+        if item_delete_snapshot(
+            row, vault_id=principal["vault_id"], record_id=item_id,
+        ) != payload.delete_snapshot:
+            raise HTTPException(status_code=409, detail="item_delete_source_changed")
         consume_recent_zk_proof_on_cursor(payload.zk_proof_token, principal, cur)
         cur.execute(
             "DELETE FROM legacy_item_edit_history WHERE vault_id=%s AND item_id=%s",

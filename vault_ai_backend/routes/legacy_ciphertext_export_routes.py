@@ -33,7 +33,8 @@ from psycopg2.extras import RealDictCursor
 
 from auth_local import SessionPrincipal, _get_secret
 from legacy_source_snapshot import (
-    FILE_SOURCE_FIELDS, ITEM_SOURCE_FIELDS, MAX_SOURCE_CIPHERTEXT_CHARS,
+    FILE_SOURCE_FIELDS, ITEM_DELETE_FIELDS, MAX_SOURCE_CIPHERTEXT_CHARS,
+    item_delete_snapshot,
     source_snapshot as legacy_source_snapshot,
 )
 from device_gate import verify_trusted_device
@@ -326,7 +327,7 @@ def _read_chunk(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
         )
         id_key = "item_id"
         storage_clause = ""
-        source_fields = ITEM_SOURCE_FIELDS
+        source_fields = ITEM_DELETE_FIELDS
         kind = "item"
     else:
         if payload.file_id is None:
@@ -412,6 +413,9 @@ def _read_chunk(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
         "source_snapshot": legacy_source_snapshot(
             kind, row, vault_id=vault_id, record_id=record_id,
         ),
+        **({"delete_snapshot": item_delete_snapshot(
+            row, vault_id=vault_id, record_id=record_id,
+        )} if kind == "item" else {}),
         "source_metadata": metadata,
     }
 

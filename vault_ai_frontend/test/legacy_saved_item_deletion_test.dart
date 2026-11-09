@@ -78,6 +78,7 @@ void main() {
     itemType: 'login',
     service: 'Synthetic Login',
     sourceSnapshot: List.filled(43, 'A').join(),
+    deleteSnapshot: List.filled(43, 'B').join(),
   );
 
   test('confirmed deletion sends only snapshot and one-use proof', () async {
@@ -111,6 +112,7 @@ void main() {
     expect(proofs, 1);
     expect(sent, {
       'source_snapshot': List.filled(43, 'A').join(),
+      'delete_snapshot': List.filled(43, 'B').join(),
       'zk_proof_token': 'zk-proof-token',
       'confirm': true,
     });
@@ -158,6 +160,27 @@ void main() {
       throwsFormatException,
     );
     expect(reads, 1);
+    expect(proofs, 0);
+    expect(posts, 0);
+  });
+
+  test('older export without a delete snapshot fails closed before proof', () async {
+    var proofs = 0;
+    var posts = 0;
+    final deletion = LegacySavedItemDeletion(
+      sourceReader: (_) async => LegacySavedItemDeleteSource(
+        itemId: 17, itemType: 'login', service: 'Synthetic Login',
+        sourceSnapshot: List.filled(43, 'A').join(), deleteSnapshot: '',
+      ),
+      proofProvider: () async { proofs++; return 'zk-proof-token'; },
+      post: (_, __) async { posts++; return {}; },
+      requireCurrentSession: () {},
+    );
+    await expectLater(
+      deletion.delete(itemId: 17, itemType: 'login',
+          service: 'Synthetic Login', userConfirmed: true),
+      throwsFormatException,
+    );
     expect(proofs, 0);
     expect(posts, 0);
   });

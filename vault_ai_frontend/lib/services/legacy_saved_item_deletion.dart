@@ -43,12 +43,14 @@ class LegacySavedItemDeleteSource {
   final String itemType;
   final String service;
   final String sourceSnapshot;
+  final String deleteSnapshot;
 
   const LegacySavedItemDeleteSource({
     required this.itemId,
     required this.itemType,
     required this.service,
     required this.sourceSnapshot,
+    required this.deleteSnapshot,
   });
 }
 
@@ -84,7 +86,8 @@ class LegacySavedItemDeletion {
     if (source.itemId != itemId ||
         source.itemType != itemType ||
         source.service != service ||
-        !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(source.sourceSnapshot)) {
+        !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(source.sourceSnapshot) ||
+        !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(source.deleteSnapshot)) {
       throw const FormatException('Saved-item identity changed');
     }
     final proof = rejectPinShapedZkProof(await proofProvider());
@@ -93,6 +96,7 @@ class LegacySavedItemDeletion {
       '/vault/items/legacy-ciphertext/$itemId/delete',
       <String, dynamic>{
         'source_snapshot': source.sourceSnapshot,
+        'delete_snapshot': source.deleteSnapshot,
         'zk_proof_token': proof,
         'confirm': true,
       },

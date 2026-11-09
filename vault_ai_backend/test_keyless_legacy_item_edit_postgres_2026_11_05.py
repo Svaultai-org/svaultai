@@ -24,7 +24,9 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from auth_local import reset_secret_for_tests
 from device_gate import verify_trusted_device
-from legacy_source_snapshot import source_snapshot
+from legacy_source_snapshot import (
+    ITEM_DELETE_FIELDS, item_delete_snapshot, source_snapshot,
+)
 from routes import legacy_ciphertext_migration_routes as edit
 from routes import login_routes as old_client
 from vault_core import decrypt_message, encrypt_message
@@ -88,6 +90,7 @@ def test_keyless_item_rename_and_delete_flags_off_before_database_use(monkeypatc
             1,
             edit.LegacyItemDeleteRequest(
                 source_snapshot="A" * 43,
+                delete_snapshot="A" * 43,
                 zk_proof_token="synthetic-proof",
                 confirm=True,
             ),
@@ -183,6 +186,10 @@ def test_keyless_item_edit_preserves_old_source_and_proof_atomicity(monkeypatch)
             "INSERT INTO auth_sessions(token_id,vault_id,device_id,auth_method,expires_at) "
             "VALUES(%s,%s,'synthetic-device','opaque',NOW()+INTERVAL '1 hour')",
             (token_id, vault_id),
+        )
+        cur.execute(
+            "INSERT INTO trusted_devices(vault_id,device_id,status) "
+            "VALUES(%s,'synthetic-device','trusted')", (vault_id,),
         )
         cur.execute(
             "INSERT INTO vault_items(vault_id,item_type,service,encrypted_data) "
@@ -480,6 +487,10 @@ def test_private_delete_removes_both_staged_copies_only_after_owner_proof(monkey
             (token_id, vault_id),
         )
         cur.execute(
+            "INSERT INTO trusted_devices(vault_id,device_id,status) "
+            "VALUES(%s,'synthetic-device','trusted')", (vault_id,),
+        )
+        cur.execute(
             "INSERT INTO vault_items(vault_id,item_type,service,encrypted_data,"
             "item_type_ciphertext,service_ciphertext,payload_ciphertext) "
             "VALUES(%s,'login','Synthetic Staged',%s,%s,%s,%s) RETURNING id",
@@ -487,21 +498,24 @@ def test_private_delete_removes_both_staged_copies_only_after_owner_proof(monkey
         )
         item_id = cur.fetchone()[0]
         cur.execute(
-            "SELECT encrypted_data,item_type,service,item_type_ciphertext,"
-            "service_ciphertext FROM vault_items WHERE id=%s", (item_id,),
+            f"SELECT {','.join(ITEM_DELETE_FIELDS)} FROM vault_items WHERE id=%s",
+            (item_id,),
         )
-        fields = ("encrypted_data", "item_type", "service",
-                  "item_type_ciphertext", "service_ciphertext")
+        fields = ITEM_DELETE_FIELDS
+        item = dict(zip(fields, cur.fetchone(), strict=True))
         snapshot = source_snapshot(
-            "item", dict(zip(fields, cur.fetchone(), strict=True)),
+            "item", item,
             vault_id=vault_id, record_id=item_id,
+        )
+        delete_snapshot = item_delete_snapshot(
+            item, vault_id=vault_id, record_id=item_id,
         )
     app = FastAPI()
     app.include_router(edit.router)
     app.dependency_overrides[verify_trusted_device] = lambda: principal
     path = f"/vault/items/legacy-ciphertext/{item_id}/delete"
-    body = {"source_snapshot": snapshot, "zk_proof_token": "synthetic-stage-proof",
-            "confirm": True}
+    body = {"source_snapshot": snapshot, "delete_snapshot": delete_snapshot,
+            "zk_proof_token": "synthetic-stage-proof", "confirm": True}
     try:
         with TestClient(app) as client:
             _json(client.post(path, json={**body, "pin": "000000"}), 422)
@@ -528,6 +542,58 @@ def test_private_delete_removes_both_staged_copies_only_after_owner_proof(monkey
                     "INSERT INTO qa_edit_proofs(proof,vault_id) VALUES(%s,%s)",
                     ("synthetic-stage-proof", vault_id),
                 )
+            # The dependency may have accepted a device before it was revoked.
+            # A delayed delete must recheck the database inside its transaction.
+            with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE trusted_devices SET status='revoked' "
+                    "WHERE vault_id=%s AND device_id='synthetic-device'",
+                    (vault_id,),
+                )
+            revoked = _json(client.post(path, json=body), 403)
+            assert revoked["detail"]["code"] == "device_revoked"
+            with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+                cur.execute("SELECT count(*) FROM vault_items WHERE id=%s", (item_id,))
+                assert cur.fetchone() == (1,)
+                cur.execute(
+                    "SELECT count(*) FROM qa_edit_proofs WHERE proof=%s",
+                    ("synthetic-stage-proof",),
+                )
+                assert cur.fetchone() == (1,)
+                cur.execute(
+                    "UPDATE trusted_devices SET status='trusted' "
+                    "WHERE vault_id=%s AND device_id='synthetic-device'",
+                    (vault_id,),
+                )
+            # Restaging changes only the V2 payload; the old source token is
+            # still valid, but the delete confirmation must be rejected.
+            with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE vault_items SET payload_ciphertext=%s "
+                    "WHERE vault_id=%s AND id=%s",
+                    (stage_ciphertext("restaged synthetic payload"), vault_id, item_id),
+                )
+                cur.execute(
+                    f"SELECT {','.join(ITEM_DELETE_FIELDS)} FROM vault_items WHERE id=%s",
+                    (item_id,),
+                )
+                staged_now = dict(zip(ITEM_DELETE_FIELDS, cur.fetchone(), strict=True))
+            assert source_snapshot(
+                "item", staged_now, vault_id=vault_id, record_id=item_id,
+            ) == snapshot
+            changed = _json(client.post(path, json=body), 409)
+            assert changed["detail"] == "item_delete_source_changed"
+            with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+                cur.execute("SELECT count(*) FROM vault_items WHERE id=%s", (item_id,))
+                assert cur.fetchone() == (1,)
+                cur.execute(
+                    "SELECT count(*) FROM qa_edit_proofs WHERE proof=%s",
+                    ("synthetic-stage-proof",),
+                )
+                assert cur.fetchone() == (1,)
+            body["delete_snapshot"] = item_delete_snapshot(
+                staged_now, vault_id=vault_id, record_id=item_id,
+            )
             for frozen, locked, expected_code in (
                 (True, False, "vault_frozen"),
                 (False, True, "pin_locked"),
@@ -660,6 +726,10 @@ def test_encrypted_rename_reedit_and_proof_bound_delete(monkeypatch):
             (token_id, vault_id),
         )
         cur.execute(
+            "INSERT INTO trusted_devices(vault_id,device_id,status) "
+            "VALUES(%s,'synthetic-device','trusted')", (vault_id,),
+        )
+        cur.execute(
             "INSERT INTO vault_items(vault_id,item_type,service,encrypted_data) "
             "VALUES(%s,'login','Synthetic Old',%s) RETURNING id",
             (vault_id, encrypt_message(json.dumps(original), key)),
@@ -673,11 +743,20 @@ def test_encrypted_rename_reedit_and_proof_bound_delete(monkeypatch):
     def snapshot() -> str:
         with psycopg2.connect(dsn) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                "SELECT encrypted_data,item_type,service,item_type_ciphertext,"
-                "service_ciphertext FROM vault_items WHERE id=%s", (item_id,),
+                f"SELECT {','.join(ITEM_DELETE_FIELDS)} FROM vault_items WHERE id=%s",
+                (item_id,),
             )
             row = cur.fetchone()
         return source_snapshot("item", row, vault_id=vault_id, record_id=item_id)
+
+    def delete_snapshot() -> str:
+        with psycopg2.connect(dsn) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                f"SELECT {','.join(ITEM_DELETE_FIELDS)} FROM vault_items WHERE id=%s",
+                (item_id,),
+            )
+            row = cur.fetchone()
+        return item_delete_snapshot(row, vault_id=vault_id, record_id=item_id)
 
     def insert_proof(label: str) -> None:
         with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
@@ -791,6 +870,7 @@ def test_encrypted_rename_reedit_and_proof_bound_delete(monkeypatch):
 
             insert_proof("synthetic-delete-proof")
             delete_body = {"source_snapshot": second_snapshot,
+                           "delete_snapshot": delete_snapshot(),
                            "zk_proof_token": "synthetic-delete-proof",
                            "confirm": True}
             _json(client.post(base + "/delete", json={**delete_body, "pin": "000000"}), 422)

@@ -116,6 +116,46 @@ void main() {
     expect(grants, 2);
   });
 
+  test('item export carries a stable delete snapshot across chunks', () async {
+    var changeBetweenChunks = false;
+    final client = LegacyCiphertextExportClient(
+      proofProvider: () async => 'synthetic-proof',
+      post: (path, body) async {
+        if (path.endsWith('/start')) {
+          return <String, dynamic>{
+            'export_token': 'synthetic-grant', 'next_sequence': 0,
+            'pages_remaining': 16, 'bytes_remaining': _grantBytes,
+            'expires_at': _grantExpiry,
+          };
+        }
+        final sequence = body['sequence'] as int;
+        final offset = body['offset'] as int;
+        return <String, dynamic>{
+          'next_sequence': sequence + 1,
+          'pages_remaining': 15 - sequence,
+          'bytes_remaining': _grantBytes - (sequence + 1) * 1024,
+          'item_id': 11, 'offset': offset,
+          'ciphertext_chunk': offset == 0 ? 'abc' : 'def',
+          'total_chars': 6, 'next_offset': offset + 3,
+          'done': offset == 3,
+          'source_snapshot': List.filled(43, 'S').join(),
+          'delete_snapshot': List.filled(43,
+              changeBetweenChunks && offset == 3 ? 'B' : 'A').join(),
+          'source_metadata': <String, dynamic>{
+            'item_type': 'note', 'service': 'synthetic',
+          },
+        };
+      },
+    );
+    final source = await client.readItemSource(itemId: 11, ciphertextChars: 6);
+    expect(source.deleteSnapshot, List.filled(43, 'A').join());
+    changeBetweenChunks = true;
+    await expectLater(
+      client.readItemSource(itemId: 11, ciphertextChars: 6),
+      throwsFormatException,
+    );
+  });
+
   test(
       'exports paged IDs and exact ciphertext with fresh proof on grant rollover',
       () async {
