@@ -38,6 +38,7 @@ import 'chunked_aead.dart';
 import 'services/inheritance_credentials.dart' as inh_cred;
 import 'services/inheritance_mvk_v2.dart' as inh_mvk;
 import 'services/inheritance_v2_item_import.dart' as inh_import;
+import 'services/linked_inheritance_v2_beneficiary_flow.dart' as linked_old_flow;
 import 'services/beneficiary_pending_upgrade.dart';
 import 'services/legacy_adoption.dart' as legacy_adopt;
 import 'services/metadata_migration_client.dart' as mmc;
@@ -1023,6 +1024,21 @@ const bool kEnableZkBeneficiaryV2Pairing = bool.fromEnvironment(
   'VAULTAI_ENABLE_ZK_BENEFICIARY_V2_PAIRING',
   defaultValue: false,
 );
+
+// Separate, explicit beneficiary action for a released old link. All linked
+// proof and saved-item routes must be present in the same test build.
+const bool kEnableLinkedOldInheritanceBeneficiaryUi = bool.fromEnvironment(
+  'VAULTAI_ENABLE_LINKED_INHERITANCE_BENEFICIARY_UI',
+  defaultValue: false,
+) && kEnableZkBeneficiaryProof && kEnableZkBeneficiaryV2Pairing &&
+    bool.fromEnvironment('VAULTAI_ENABLE_LINKED_INHERITANCE_KEYCHECK',
+        defaultValue: false) &&
+    bool.fromEnvironment('VAULTAI_ENABLE_LINKED_INHERITANCE_RELEASE_READBACK',
+        defaultValue: false) &&
+    bool.fromEnvironment('VAULTAI_ENABLE_LINKED_INHERITANCE_READBACK_PROOF',
+        defaultValue: false) &&
+    bool.fromEnvironment('VAULTAI_ENABLE_LINKED_INHERITANCE_ITEM_IMPORT',
+        defaultValue: false);
 
 // Explicit owner-side bridge for unpaired, empty legacy invitations. This
 // uses only OPAQUE proof and remains off in normal releases.
@@ -12934,6 +12950,151 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
+  Future<void> _beneficiaryVerifyLinkedOldKey({
+    required int linkId,
+    required String passerLabel,
+  }) async {
+    if (!kEnableLinkedOldInheritanceBeneficiaryUi) return;
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultId = app.vaultId;
+    final sk = zk_sk_store.ZkActiveSkVault.current();
+    if (token == null || vaultId == null || sk == null ||
+        !_privateBeneficiarySession(app, token) ||
+        zk_sk_store.ZkActiveSkVault.currentVaultId() != vaultId) {
+      _showSnack('Unlock your private vault before checking this link.');
+      return;
+    }
+    final epoch = app._sessionEpoch;
+    bool current() => app.unlocked && app._sessionForeground &&
+        !app.sessionVerificationBlocked &&
+        app._isCurrentSession(token, epoch) && app.vaultId == vaultId &&
+        identical(zk_sk_store.ZkActiveSkVault.current(), sk) &&
+        zk_sk_store.ZkActiveSkVault.currentVaultId() == vaultId;
+    final entered = await _promptForActionPin(
+      context, 'Check private access from $passerLabel',
+    );
+    if (entered == null || !current()) return;
+    try {
+      final proof = await _zkActionProof(app, token, entered);
+      if (!current()) throw StateError('Beneficiary access changed');
+      await VaultAIClient(baseUrl: backendBaseUrl)
+          .verifyLinkedOldInheritanceBeneficiaryKey(
+        authToken: token,
+        linkId: linkId,
+        beneficiaryVaultId: vaultId,
+        beneficiaryPrivateKey: sk,
+        zkProofToken: proof,
+        responseIsCurrent: current,
+      );
+      if (!current() || !mounted) return;
+      _showSnack('Private inheritance key verified.');
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack('Private key check is unavailable for this link.');
+    }
+  }
+
+  Future<void> _beneficiaryImportLinkedOldItems({
+    required int linkId,
+    required String passerLabel,
+  }) async {
+    if (!kEnableLinkedOldInheritanceBeneficiaryUi) return;
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultId = app.vaultId;
+    final sk = zk_sk_store.ZkActiveSkVault.current();
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (token == null || vaultId == null || sk == null || mvk == null ||
+        !_privateBeneficiarySession(app, token) ||
+        zk_sk_store.ZkActiveSkVault.currentVaultId() != vaultId ||
+        zk_mvk_store.ZkActiveMvk.currentVaultId() != vaultId) {
+      _showSnack('Unlock your private vault before importing.');
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: VaultColors.surfaceElevated,
+        title: Text('Copy saved items from $passerLabel?'),
+        content: const Text(
+          'This copies the released saved items into your vault. '
+          'The owner’s originals and the older inheritance link remain saved. '
+          'Files and wallet accounts are not included in this step.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: const Text('Copy saved items'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final epoch = app._sessionEpoch;
+    bool current() => app.unlocked && app._sessionForeground &&
+        !app.sessionVerificationBlocked &&
+        app._isCurrentSession(token, epoch) && app.vaultId == vaultId &&
+        identical(zk_sk_store.ZkActiveSkVault.current(), sk) &&
+        zk_sk_store.ZkActiveSkVault.currentVaultId() == vaultId &&
+        identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId;
+    if (!current()) return;
+    final client = VaultAIClient(baseUrl: backendBaseUrl);
+    try {
+      final result = await linked_old_flow.importReleasedLinkedOldItemsExplicitly(
+        linkId: linkId,
+        accessIsCurrent: current,
+        freshProof: () async {
+          final entered = await _promptForActionPin(
+            context, 'Verify private inheritance import',
+          );
+          if (entered == null || !current()) {
+            throw StateError('Beneficiary access changed');
+          }
+          return _zkActionProof(app, token, entered);
+        },
+        proveReadback: (proof) =>
+            client.proveReleasedLinkedOldInheritanceReadback(
+          authToken: token,
+          linkId: linkId,
+          beneficiaryVaultId: vaultId,
+          beneficiaryPrivateKey: sk,
+          zkProofToken: proof,
+          responseIsCurrent: current,
+        ),
+        readReleased: () => client.readReleasedLinkedOldInheritanceV2(
+          authToken: token,
+          linkId: linkId,
+          beneficiaryVaultId: vaultId,
+          beneficiaryPrivateKey: sk,
+          responseIsCurrent: current,
+        ),
+        importItems: (released, receipt) =>
+            client.importLinkedOldInheritanceV2SavedItems(
+          authToken: token,
+          beneficiaryVaultId: vaultId,
+          beneficiaryMvk: mvk,
+          released: released,
+          readbackReceipt: receipt,
+          responseIsCurrent: current,
+        ),
+      );
+      if (!current() || !mounted) return;
+      _showSnack(result.newItems == 0
+          ? 'Inherited saved items are already in your vault.'
+          : '${result.newItems} saved item${result.newItems == 1 ? '' : 's'} copied.');
+      await _loadInheritances();
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack('Private saved-item copy paused. Try again later.');
+    }
+  }
+
   Future<bool?> _inheritanceCachedPinMatches(String pin) async {
     try {
       final cached = await _VaultCrypto.currentPinOrThrow();
@@ -14120,6 +14281,36 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                       label: Text(isZkV2
                                           ? 'Import saved items'
                                           : 'Reveal login credentials'),
+                                    ),
+                                  if (kEnableLinkedOldInheritanceBeneficiaryUi &&
+                                      !isZkV2 && credentialsSaved &&
+                                      _privateBeneficiarySession(
+                                          app, app.sessionToken ?? ''))
+                                    TextButton.icon(
+                                      key: Key('inheritance_linked_keycheck_$id'),
+                                      onPressed: () =>
+                                          _beneficiaryVerifyLinkedOldKey(
+                                        linkId: id,
+                                        passerLabel: label,
+                                      ),
+                                      icon: const Icon(Icons.verified_user_outlined,
+                                          size: 18),
+                                      label: const Text('Check private key'),
+                                    ),
+                                  if (kEnableLinkedOldInheritanceBeneficiaryUi &&
+                                      !isZkV2 && credentialsSaved && showReveal &&
+                                      _privateBeneficiarySession(
+                                          app, app.sessionToken ?? ''))
+                                    FilledButton.icon(
+                                      key: Key('inheritance_linked_items_$id'),
+                                      onPressed: () =>
+                                          _beneficiaryImportLinkedOldItems(
+                                        linkId: id,
+                                        passerLabel: label,
+                                      ),
+                                      icon: const Icon(Icons.copy_outlined,
+                                          size: 18),
+                                      label: const Text('Copy saved items'),
                                     ),
                                   if (showLegacyLinked && !legacyClaimBlocked)
                                     FilledButton.icon(
