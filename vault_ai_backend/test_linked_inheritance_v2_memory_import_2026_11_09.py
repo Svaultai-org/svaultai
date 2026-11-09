@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import os
 import secrets
 from pathlib import Path
+from threading import Event
 from uuid import uuid4
 
 from alembic import command
@@ -208,8 +210,7 @@ def test_source_bound_memory_copy_preserves_owner_and_requires_fence(monkeypatch
                 "WHERE vault_id=%s", (beneficiary_id,),
             )
             # An older writer can still create a Memory before the first V2
-            # record. The copy must re-check after its own insert trigger has
-            # acquired the vault lock, and roll back rather than mixing titles.
+            # record. The copy must reject that recipient inventory.
             cur.execute(
                 "INSERT INTO vault_ai_memory(vault_id,memory_type,memory_key,"
                 "memory_value,payload_ciphertext) "
@@ -219,11 +220,8 @@ def test_source_bound_memory_copy_preserves_owner_and_requires_fence(monkeypatch
             older_recipient_id = cur.fetchone()[0]
         with pytest.raises(HTTPException) as mixed:
             memories.copy_linked_v2_memory(payload, principal)
-        assert mixed.value.detail == "beneficiary_memory_not_private_ready"
-        # The real proof consumption is in the rolled-back transaction; this
-        # list mock has no rollback and records the attempted call separately.
-        assert consumed == ["synthetic-opaque-proof"]
-        consumed.clear()
+        assert mixed.value.detail == "beneficiary_memory_inventory_required"
+        assert consumed == []
         with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
             cur.execute(
                 "SELECT COUNT(*) FROM linked_inheritance_v2_memory_copies "
@@ -232,6 +230,76 @@ def test_source_bound_memory_copy_preserves_owner_and_requires_fence(monkeypatch
             assert cur.fetchone()[0] == 0
             cur.execute("DELETE FROM vault_ai_memory WHERE id=%s",
                         (older_recipient_id,))
+            # A preexisting native Memory could have the same user-visible
+            # title with a different whitespace-derived blind index. Until a
+            # complete recipient title scan exists, even this V2 row blocks.
+            cur.execute(
+                "INSERT INTO vault_ai_memory(vault_id,memory_type,memory_key,"
+                "memory_value,memory_record_id,memory_lookup_hash,"
+                "payload_ciphertext) VALUES (%s,'note',NULL,NULL,%s,%s,%s) "
+                "RETURNING id",
+                (beneficiary_id, "beach-trip-with-extra-space",
+                 secrets.token_bytes(32), b"\x01" + secrets.token_bytes(48)),
+            )
+            native_recipient_id = cur.fetchone()[0]
+        with pytest.raises(HTTPException) as native_duplicate:
+            memories.copy_linked_v2_memory(payload, principal)
+        assert native_duplicate.value.detail == "beneficiary_memory_inventory_required"
+        assert consumed == []
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM linked_inheritance_v2_memory_copies "
+                "WHERE old_link_id=%s", (link_id,),
+            )
+            assert cur.fetchone()[0] == 0
+            cur.execute("DELETE FROM vault_ai_memory WHERE id=%s",
+                        (native_recipient_id,))
+
+        # Pause after the source-row scan. A new owner row is a gap insert,
+        # so the scanner's FOR SHARE locks do not block it. Its trigger must
+        # advance the owner vault generation before copy can take that lock.
+        scanned = Event()
+        resume = Event()
+        original_inventory = memories._inventory
+
+        def paused_inventory(*args, **kwargs):
+            result = original_inventory(*args, **kwargs)
+            scanned.set()
+            if not resume.wait(5):
+                raise AssertionError("copy inventory pause timed out")
+            return result
+
+        monkeypatch.setattr(memories, "_inventory", paused_inventory)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(memories.copy_linked_v2_memory, payload, principal)
+            assert scanned.wait(5)
+            try:
+                with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+                    cur.execute("SET LOCAL lock_timeout='2s'")
+                    cur.execute(
+                        "INSERT INTO vault_ai_memory(vault_id,memory_type,"
+                        "memory_key,memory_value,memory_record_id,"
+                        "memory_lookup_hash,payload_ciphertext) "
+                        "VALUES (%s,'note',NULL,NULL,%s,%s,%s) RETURNING id",
+                        (owner_id, "late-owner-insert", secrets.token_bytes(32),
+                         b"\x01" + secrets.token_bytes(48)),
+                    )
+                    late_owner_id = cur.fetchone()[0]
+            finally:
+                resume.set()
+            with pytest.raises(HTTPException) as stale:
+                future.result(timeout=5)
+        assert stale.value.detail == "source_inventory_changed"
+        assert consumed == []
+        monkeypatch.setattr(memories, "_inventory", original_inventory)
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM linked_inheritance_v2_memory_copies "
+                "WHERE old_link_id=%s", (link_id,),
+            )
+            assert cur.fetchone()[0] == 0
+            cur.execute("DELETE FROM vault_ai_memory WHERE id=%s",
+                        (late_owner_id,))
         written = memories.copy_linked_v2_memory(payload, principal)
         assert written["created"] is True
         assert consumed == ["synthetic-opaque-proof"]

@@ -56,6 +56,9 @@ class _SourceMemory {
 
 String _b64(List<int> raw) => base64Url.encode(raw).replaceAll('=', '');
 
+String _normalizedTitle(String title) =>
+    title.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+
 Uint8List _ciphertext(Object? value) {
   if (value is! String || !RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(value)) {
     throw const FormatException('Invalid inherited Memory ciphertext');
@@ -190,7 +193,7 @@ Future<({List<_SourceMemory> memories, String digest})> _sourceMemories({
     final title = decoded['title'] ?? decoded['memory_key'];
     if (title is! String ||
         title.trim().isEmpty ||
-        !titles.add(title.trim().toLowerCase())) {
+        !titles.add(_normalizedTitle(title))) {
       throw const FormatException('Inherited Memory title is unavailable');
     }
     parsed.add(

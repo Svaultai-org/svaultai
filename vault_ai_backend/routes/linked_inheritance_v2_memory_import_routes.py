@@ -197,6 +197,40 @@ def _destination_hash(row: dict, *, link_id: int, source_memory_id: int,
     return h.digest()
 
 
+def _memory_vault_states(cur, *, owner_id: str, beneficiary_id: str,
+                         lock: bool) -> dict[str, dict]:
+    # Memory triggers update the vault row after writing the Memory row. Read
+    # source rows first, then take these locks in stable order; taking the
+    # vault lock before _inventory could deadlock against an owner edit.
+    cur.execute(
+        """SELECT vault_id,memory_inventory_generation,
+                  memory_mixed_title_fence_enabled
+             FROM vaults WHERE vault_id IN (%s,%s)
+            ORDER BY vault_id""" + (" FOR UPDATE" if lock else ""),
+        (owner_id, beneficiary_id),
+    )
+    states = {str(row["vault_id"]): row for row in (cur.fetchall() or [])}
+    if owner_id == beneficiary_id or set(states) != {owner_id, beneficiary_id}:
+        raise HTTPException(status_code=409, detail="memory_vault_changed")
+    return states
+
+
+def _recipient_has_unmapped_memory(cur, *, link_id: int,
+                                   beneficiary_id: str) -> bool:
+    cur.execute(
+        """SELECT 1 FROM vault_ai_memory m
+            WHERE m.vault_id=%s AND m.superseded_at IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM linked_inheritance_v2_memory_copies c
+                 WHERE c.old_link_id=%s AND
+                       c.beneficiary_vault_id=%s AND
+                       c.beneficiary_memory_id=m.id
+              ) LIMIT 1""",
+        (beneficiary_id, link_id, beneficiary_id),
+    )
+    return cur.fetchone() is not None
+
+
 @router.get("/inheritance/old-link-v2/{link_id}/vault-memories")
 def export_linked_v2_memories(
     link_id: int,
@@ -248,10 +282,30 @@ def copy_linked_v2_memory(
             cur, link_id=payload.beneficiary_link_id,
             beneficiary_vault_id=str(principal["vault_id"]),
         )
+        owner_id = str(link["passer_vault_id"])
+        beneficiary_id = str(principal["vault_id"])
+        before = _memory_vault_states(
+            cur, owner_id=owner_id, beneficiary_id=beneficiary_id,
+            lock=False,
+        )
         rows, digest, _ = _inventory(
             cur, link_id=payload.beneficiary_link_id,
             link=link, stage=stage,
         )
+        # The inventory locks existing source rows, but cannot lock a new-row
+        # gap. Every source/recipient Memory write advances its vault row in
+        # the same transaction. Lock both vault rows only after _inventory,
+        # then reject a generation change before any destination write.
+        locked = _memory_vault_states(
+            cur, owner_id=owner_id, beneficiary_id=beneficiary_id,
+            lock=True,
+        )
+        if (locked[owner_id]["memory_inventory_generation"] !=
+                before[owner_id]["memory_inventory_generation"]):
+            raise HTTPException(status_code=409, detail="source_inventory_changed")
+        if (locked[beneficiary_id]["memory_inventory_generation"] !=
+                before[beneficiary_id]["memory_inventory_generation"]):
+            raise HTTPException(status_code=409, detail="beneficiary_memory_changed")
         if (payload.stage_revision != stage["stage_revision"] or
                 payload.offer_commitment !=
                 _offer_commitment(payload.beneficiary_link_id, stage) or
@@ -282,6 +336,17 @@ def copy_linked_v2_memory(
                     row["stage_revision"] != payload.stage_revision or
                     row["source_inventory_sha256"] != digest):
                 raise HTTPException(status_code=409, detail="prior_copy_inventory_changed")
+        # The 0073 fence must already be enabled explicitly for the recipient.
+        # Ciphertext prevents the server from comparing titles with a native
+        # row whose client used different whitespace. Until a complete,
+        # recipient-keyed title preflight exists, copy only into an otherwise
+        # empty Memory set (apart from exact prior copies of this same link).
+        if not locked[beneficiary_id]["memory_mixed_title_fence_enabled"]:
+            raise HTTPException(status_code=409, detail="beneficiary_memory_fence_required")
+        if _recipient_has_unmapped_memory(
+                cur, link_id=payload.beneficiary_link_id,
+                beneficiary_id=beneficiary_id):
+            raise HTTPException(status_code=409, detail="beneficiary_memory_inventory_required")
         existing = next(
             (row for row in prior if row["source_memory_id"] ==
              payload.source_memory_id), None,
@@ -298,17 +363,6 @@ def copy_linked_v2_memory(
                 "created": False,
                 "legacy_package_preserved": True,
             }
-        # The 0073 fence prevents older clients from introducing an unknown
-        # PIN-keyed title while the beneficiary receives a native V2 memory.
-        # This flag must be explicitly enabled for the recipient vault.
-        cur.execute(
-            """SELECT memory_mixed_title_fence_enabled
-                 FROM vaults WHERE vault_id=%s""",
-            (principal["vault_id"],),
-        )
-        vault = cur.fetchone()
-        if not vault or not vault["memory_mixed_title_fence_enabled"]:
-            raise HTTPException(status_code=409, detail="beneficiary_memory_fence_required")
         consume_recent_zk_proof_on_cursor(payload.zk_proof_token, principal, cur)
         cur.execute(
             """INSERT INTO vault_ai_memory (
@@ -323,15 +377,9 @@ def copy_linked_v2_memory(
              payload.memory_type, ciphertext, lookup_hash),
         )
         inserted = cur.fetchone()
-        # The insertion trigger locks the vault generation row. Re-check old
-        # rows after that lock to close the race with an older client writer.
-        cur.execute(
-            """SELECT memory_mixed_title_fence_enabled FROM vaults
-                WHERE vault_id=%s FOR UPDATE""",
-            (principal["vault_id"],),
-        )
-        if not cur.fetchone()["memory_mixed_title_fence_enabled"]:
-            raise HTTPException(status_code=409, detail="beneficiary_memory_fence_required")
+        # Prior rows mapped to this link must still be private-ready. The
+        # vault locks were acquired before this insertion, so no other
+        # recipient Memory writer can commit until this copy finishes.
         cur.execute(
             """SELECT 1 FROM vault_ai_memory WHERE vault_id=%s
                   AND superseded_at IS NULL AND
@@ -360,6 +408,15 @@ def copy_linked_v2_memory(
              principal["vault_id"], inserted["id"], payload.stage_revision,
              digest, source["source_row_sha256"], destination_hash),
         )
+        after = _memory_vault_states(
+            cur, owner_id=owner_id, beneficiary_id=beneficiary_id,
+            lock=False,
+        )
+        if (after[owner_id]["memory_inventory_generation"] !=
+                before[owner_id]["memory_inventory_generation"] or
+                after[beneficiary_id]["memory_inventory_generation"] !=
+                before[beneficiary_id]["memory_inventory_generation"] + 1):
+            raise HTTPException(status_code=409, detail="memory_inventory_changed")
         conn.commit()
         return {
             "beneficiary_link_id": payload.beneficiary_link_id,
@@ -395,6 +452,12 @@ def readback_linked_v2_memory_copies(
         link, stage = _context(
             cur, link_id=link_id,
             beneficiary_vault_id=str(principal["vault_id"]),
+        )
+        owner_id = str(link["passer_vault_id"])
+        beneficiary_id = str(principal["vault_id"])
+        before = _memory_vault_states(
+            cur, owner_id=owner_id, beneficiary_id=beneficiary_id,
+            lock=False,
         )
         enforce_export_rate_limit(vault_id=str(principal["vault_id"]))
         sources, digest, _ = _inventory(
@@ -469,6 +532,22 @@ def readback_linked_v2_memory_copies(
                 "memory_lookup_hash": _b64(bytes(row["memory_lookup_hash"])),
                 "payload_ciphertext": _b64(ciphertext),
             })
+        # Lock both vault generation rows after all existing source and
+        # destination rows. A concurrent insert in either new-row gap is
+        # detected here; locking first would deadlock with Memory triggers.
+        locked = _memory_vault_states(
+            cur, owner_id=owner_id, beneficiary_id=beneficiary_id,
+            lock=True,
+        )
+        if (locked[owner_id]["memory_inventory_generation"] !=
+                before[owner_id]["memory_inventory_generation"] or
+                locked[beneficiary_id]["memory_inventory_generation"] !=
+                before[beneficiary_id]["memory_inventory_generation"]):
+            raise HTTPException(status_code=409, detail="memory_inventory_changed")
+        if (not locked[beneficiary_id]["memory_mixed_title_fence_enabled"] or
+                _recipient_has_unmapped_memory(
+                    cur, link_id=link_id, beneficiary_id=beneficiary_id)):
+            raise HTTPException(status_code=409, detail="beneficiary_memory_inventory_required")
         http_response.headers["Cache-Control"] = "no-store"
         return {
             "beneficiary_link_id": link_id,
