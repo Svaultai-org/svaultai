@@ -14,7 +14,11 @@ from fastapi.testclient import TestClient
 
 VAULT_ID = "11111111-1111-1111-1111-111111111111"
 SESSION_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-PRINCIPAL = {"vault_id": VAULT_ID, "token_id": SESSION_ID}
+PRINCIPAL = {
+    "vault_id": VAULT_ID,
+    "token_id": SESSION_ID,
+    "pin_free_read_offers": 128,
+}
 
 
 @pytest.fixture
@@ -138,6 +142,22 @@ def test_signed_offer_keeps_delete_proof_after_flag_is_disabled(delete_harness):
     consume.assert_called_once()
     verify_pin.assert_not_called()
     bill.assert_called_once_with(VAULT_ID)
+    destroy.assert_called_once()
+
+
+def test_unoffered_mobile_keeps_delete_pin_when_proof_route_is_enabled(delete_harness):
+    delete, client, is_zk, bill, consume, verify_pin, destroy = delete_harness
+    with mock.patch.dict(PRINCIPAL, {"pin_free_read_offers": 0}):
+        status = client.get("/vault/delete/status")
+        assert status.status_code == 200
+        assert status.json()["requires_pin"] is True
+        assert status.json()["requires_opaque_verification"] is False
+        response = client.post("/vault/delete/confirm", json=_body(
+            delete, pin="123456",
+        ))
+    assert response.status_code == 204, response.text
+    verify_pin.assert_called_once_with(VAULT_ID, "123456")
+    consume.assert_not_called()
     destroy.assert_called_once()
 
 

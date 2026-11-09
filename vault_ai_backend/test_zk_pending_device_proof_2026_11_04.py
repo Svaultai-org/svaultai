@@ -291,6 +291,7 @@ def test_pending_proof_does_not_open_general_trusted_device_gate(harness, monkey
 
 def test_self_approval_requires_pending_proof_not_raw_pin(harness):
     zk, device, client, db, selected, handle, finish, init_limit, final_limit, bad_limit, issue, legacy_pin, notify, app = harness
+    selected["principal"]["pin_free_read_offers"] = 128
     for body in ({"pin": "123456"}, {}, {"zk_proof_token": "p1.not-pending"}):
         result = client.post("/devices/request-self-approval",
                              headers={"X-Device-Id": DEVICE_A}, json=body)
@@ -309,6 +310,17 @@ def test_self_approval_requires_pending_proof_not_raw_pin(harness):
     assert started.json()["status"] == "cooldown"
     assert proof not in db.slots and db.cooldown_until is not None
     legacy_pin.assert_not_called()
+
+
+def test_unoffered_mobile_keeps_self_approval_pin_when_proof_route_is_enabled(harness):
+    zk, device, client, db, selected, handle, finish, init_limit, final_limit, bad_limit, issue, legacy_pin, notify, app = harness
+    assert selected["principal"].get("pin_free_read_offers", 0) == 0
+    result = client.post("/devices/request-self-approval",
+                         headers={"X-Device-Id": DEVICE_A},
+                         json={"pin": "123456"})
+    assert result.status_code == 200, result.text
+    assert result.json()["status"] == "cooldown"
+    legacy_pin.assert_called_once_with(VAULT_A, "123456")
 
 
 def test_self_approval_finalize_needs_new_proof_and_elapsed_cooldown(harness):
@@ -408,3 +420,18 @@ def test_flag_off_blocks_pending_routes_and_preserves_legacy_pin(harness):
                              json={"pin": "123456"})
     assert result.status_code == 200, result.text
     legacy_pin.assert_called_once_with(VAULT_A, "123456")
+
+
+def test_signed_pending_session_keeps_proof_route_after_flag_turns_off(harness):
+    zk, device, client, db, selected, handle, finish, init_limit, final_limit, bad_limit, issue, legacy_pin, notify, app = harness
+    selected["principal"]["pin_free_read_offers"] = 128
+    with mock.patch.dict("os.environ", {
+        "VAULTAI_ZK_PENDING_DEVICE_PROOF_ENABLED": "false",
+    }):
+        _, proof = _proof(harness)
+        started = client.post("/devices/request-self-approval-proof",
+                              headers={"X-Device-Id": DEVICE_A},
+                              json={"zk_proof_token": proof})
+    assert started.status_code == 200, started.text
+    assert started.json()["status"] == "cooldown"
+    legacy_pin.assert_not_called()

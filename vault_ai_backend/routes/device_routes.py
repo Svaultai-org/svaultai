@@ -439,22 +439,32 @@ class SelfApprovalProofRequest(BaseModel):
     zk_proof_token: str = Field(..., min_length=1, max_length=128)
 
 
-def _require_pending_proof_self_approval(vault_id: str) -> None:
-    from routes.auth_zk_routes import pending_device_proof_enabled
+def _require_pending_proof_self_approval(vault_id: str, principal) -> None:
+    from routes.auth_zk_routes import pending_device_proof_available_for
 
-    if not pending_device_proof_enabled() or not is_vault_zk_adopted(vault_id):
+    if (not pending_device_proof_available_for(principal) or
+            not is_vault_zk_adopted(vault_id)):
         raise HTTPException(status_code=404, detail="not_found")
 
 
 def _verify_self_approval_credential(
     vault_id: str, device_id: str, principal, payload: SelfApprovalRequest,
 ) -> None:
+    from auth_local import PIN_FREE_AUTH_DEVICE_OFFER
     from routes.auth_zk_routes import (
         consume_pending_self_approval_proof,
-        pending_device_proof_enabled,
+        pending_device_proof_available_for,
     )
 
-    if pending_device_proof_enabled() and is_vault_zk_adopted(vault_id):
+    proof_available = pending_device_proof_available_for(principal) and is_vault_zk_adopted(
+        vault_id,
+    )
+    proof_required = bool(
+        principal.get("pin_free_read_offers", 0) & PIN_FREE_AUTH_DEVICE_OFFER
+    )
+    if proof_required or (proof_available and payload.zk_proof_token is not None):
+        if not proof_available:
+            raise HTTPException(status_code=409, detail="zk_pending_proof_not_enabled")
         if payload.pin is not None:
             raise HTTPException(status_code=409, detail="zk_client_update_required")
         if not payload.zk_proof_token:
@@ -889,7 +899,7 @@ async def request_self_approval_proof_endpoint(
 ):
     """Proof-only form of pending-device self-approval for strict clients."""
 
-    _require_pending_proof_self_approval(principal["vault_id"])
+    _require_pending_proof_self_approval(principal["vault_id"], principal)
     return await request_self_approval_endpoint(
         SelfApprovalRequest(zk_proof_token=payload.zk_proof_token),
         request,
@@ -905,7 +915,7 @@ async def finalize_self_approval_proof_endpoint(
 ):
     """Proof-only final approval; the existing cooldown and session gates run."""
 
-    _require_pending_proof_self_approval(principal["vault_id"])
+    _require_pending_proof_self_approval(principal["vault_id"], principal)
     return await finalize_self_approval_endpoint(
         SelfApprovalRequest(zk_proof_token=payload.zk_proof_token),
         request,

@@ -57,6 +57,7 @@ def test_offer_is_explicit_and_requires_pending_proof(monkeypatch):
     assert denied.value.detail == "signed_auth_device_unavailable"
     monkeypatch.setenv("VAULTAI_ZK_DELETE_PROOF_ENABLED", "true")
     assert negotiate(_request(offer=True), signed_reads=True) is True
+    assert negotiate(_request(offer=False), signed_reads=True) is False
 
 
 def test_only_signed_offered_sessions_fence_six_old_routes():

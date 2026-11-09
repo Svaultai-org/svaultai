@@ -393,11 +393,18 @@ def _zk_delete_proof_enabled() -> bool:
 
 
 def _delete_proof_required(principal: SessionPrincipal) -> bool:
-    """An issued signed offer keeps its proof successor after flag changes."""
+    """Only an issued signed offer replaces the old client's PIN flow."""
     offered = bool(principal.get("pin_free_read_offers", 0) &
                    PIN_FREE_AUTH_DEVICE_OFFER)
-    return ((offered or _zk_delete_proof_enabled()) and
-            _vault_has_zk_registration(principal["vault_id"]))
+    return offered and _vault_has_zk_registration(principal["vault_id"])
+
+
+def _delete_proof_available(principal: SessionPrincipal) -> bool:
+    """Allow an explicit proof client while older unoffered clients keep PINs."""
+    offered = bool(principal.get("pin_free_read_offers", 0) &
+                   PIN_FREE_AUTH_DEVICE_OFFER)
+    return ((offered or _zk_delete_proof_enabled())
+            and _vault_has_zk_registration(principal["vault_id"]))
 
 
 def _vault_has_zk_registration(vault_id: str) -> bool:
@@ -544,7 +551,7 @@ def confirm_delete(
             },
         )
 
-    if _delete_proof_required(principal):
+    if _delete_proof_required(principal) or payload.zk_proof_token is not None:
         if payload.pin is not None or not payload.zk_proof_token:
             raise HTTPException(
                 status_code=401,
@@ -553,6 +560,8 @@ def confirm_delete(
                     "message": "Verify your PIN in the app to continue.",
                 },
             )
+        if not _delete_proof_available(principal):
+            raise HTTPException(status_code=404, detail="not_found")
         consume_recent_zk_proof(payload.zk_proof_token, principal)
     elif not _verify_pin(vault_id, payload.pin):
         raise HTTPException(
@@ -610,7 +619,7 @@ def confirm_delete_proof(
 ) -> Response:
     """Keep the proof form usable after the mixed PIN/PIN-free path is fenced."""
 
-    if not _delete_proof_required(principal):
+    if not _delete_proof_available(principal):
         raise HTTPException(status_code=404, detail="not_found")
     return confirm_delete(
         DeleteConfirmRequest(

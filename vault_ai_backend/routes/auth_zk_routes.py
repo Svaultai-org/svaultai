@@ -284,6 +284,13 @@ def pending_device_proof_enabled() -> bool:
     ).strip().lower() == "true"
 
 
+def pending_device_proof_available_for(principal: SessionPrincipal) -> bool:
+    """Keep a signed session's proof path after the offer flag changes."""
+    return pending_device_proof_enabled() or bool(
+        principal.get("pin_free_read_offers", 0) & PIN_FREE_AUTH_DEVICE_OFFER
+    )
+
+
 def _b64url_decode(value: str, *, name: str, max_bytes: int) -> bytes:
     if not isinstance(value, str) or not value:
         raise HTTPException(
@@ -1667,7 +1674,7 @@ def _pending_device_bytes(device_id: str) -> bytes:
 def _require_pending_session_device(
     request: Request, principal: SessionPrincipal,
 ) -> str:
-    if not pending_device_proof_enabled():
+    if not pending_device_proof_available_for(principal):
         raise HTTPException(status_code=404, detail="not_found")
     device_id = (request.headers.get("x-device-id") or "").strip()
     try:
