@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vault_ai_frontend/services/legacy_ciphertext_export_client.dart';
 import 'package:vault_ai_frontend/services/legacy_ciphertext_migration_codec.dart';
 import 'package:vault_ai_frontend/services/legacy_memory_v2_preparation.dart';
+import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart';
 
 void main() {
   final legacyKey = SecretKey(List<int>.filled(32, 7));
@@ -158,5 +159,125 @@ void main() {
     await expectLater(changed.preparation.prepare(), throwsStateError);
     expect(changed.calls.last, '/vault/memory/legacy-copy/42/stage');
     expect(verified, isEmpty);
+  });
+
+  test('owner edit keeps both ciphertext readers current, delete keeps source',
+      () async {
+    final old = <String, dynamic>{
+      'schema': 'vault_personal_memory_v1',
+      'status': 'active',
+      'memory_type': 'note',
+      'title': 'Synthetic title',
+      'value': 'Synthetic private memory',
+    };
+    var legacyCiphertext = await codec.encodeLegacyItem(old);
+    final memoryKey = await VaultKeyHierarchy(mvk).memoryKey();
+    var copyCiphertext = b64urlEncode(
+      await aesGcmWrap(memoryKey, utf8.encode(jsonEncode(old))),
+    );
+    var currentSnapshot = snapshot;
+    final nextSnapshot = List<String>.filled(43, 'E').join();
+    var deleted = false;
+    var sequence = 0;
+    final export = LegacyCiphertextExportClient(
+      proofProvider: () async => 'synthetic-export-proof',
+      post: (path, body) async {
+        expect(jsonEncode(body), isNot(contains('Synthetic private memory')));
+        expect(body.containsKey('pin'), false);
+        if (path.endsWith('/start')) {
+          return <String, dynamic>{
+            'export_token': 'synthetic-grant',
+            'expires_at': '2099-01-01T00:00:00Z',
+            'next_sequence': 0,
+            'pages_remaining': 16,
+            'bytes_remaining': 32 * 1024 * 1024,
+          };
+        }
+        final common = <String, dynamic>{
+          'next_sequence': ++sequence,
+          'pages_remaining': 16 - sequence,
+          'bytes_remaining': 32 * 1024 * 1024 - sequence * 1024,
+        };
+        if (body['mode'] == 'list_memories') {
+          return <String, dynamic>{...common, 'records': [
+            {'memory_id': 42, 'memory_type': 'note',
+             'ciphertext_chars': legacyCiphertext.length},
+          ], 'has_more': false};
+        }
+        expect(body['mode'], 'read_memory');
+        return <String, dynamic>{
+          ...common,
+          'memory_id': 42,
+          'offset': 0,
+          'ciphertext_chunk': legacyCiphertext,
+          'total_chars': legacyCiphertext.length,
+          'next_offset': legacyCiphertext.length,
+          'done': true,
+          'source_snapshot': currentSnapshot,
+          'source_metadata': {'memory_type': 'note'},
+        };
+      },
+    );
+    final action = LegacyMemoryV2Preparation(
+      export: export,
+      codec: codec,
+      mvk: mvk,
+      proofProvider: () async => 'synthetic-action-proof',
+      accessIsCurrent: () => true,
+      post: (path, body) async {
+        final wire = jsonEncode(body);
+        expect(wire, isNot(contains('Synthetic private memory')));
+        expect(wire, isNot(contains('Synthetic edited memory')));
+        expect(body.containsKey('pin'), false);
+        if (path.endsWith('/edit')) {
+          expect(body['source_snapshot'], snapshot);
+          expect(body['zk_proof_token'], 'synthetic-action-proof');
+          legacyCiphertext = body['legacy_payload_ciphertext'] as String;
+          copyCiphertext = body['payload_ciphertext'] as String;
+          final reopenedOld = await codec.decodeLegacyString(legacyCiphertext);
+          final reopenedNew = utf8.decode(await aesGcmUnwrap(
+            memoryKey, b64urlDecode(copyCiphertext),
+          ));
+          expect(reopenedOld, reopenedNew);
+          expect(jsonDecode(reopenedNew)['value'], 'Synthetic edited memory');
+          currentSnapshot = nextSnapshot;
+          return <String, dynamic>{
+            'memory_id': 42,
+            'source_snapshot': nextSnapshot,
+            'active_legacy_updated': true,
+            'prepared_copy_updated': true,
+          };
+        }
+        expect(path, '/vault/memory/legacy-copy/42/delete');
+        expect(body['source_snapshot'], nextSnapshot);
+        expect(body['client_confirmed_delete'], true);
+        deleted = true;
+        return <String, dynamic>{
+          'memory_id': 42,
+          'hidden_from_old_clients': true,
+          'original_ciphertext_preserved': true,
+        };
+      },
+      get: (path) async {
+        expect(path, '/vault/memory/legacy-copy/42/readback');
+        return <String, dynamic>{
+          'memory_id': 42,
+          'source_snapshot': currentSnapshot,
+          'memory_record_id': 'memory-migrated-42',
+          'memory_type': 'note',
+          'payload_ciphertext': copyCiphertext,
+        };
+      },
+    );
+    await action.edit(current: {
+      'legacy_memory_id': 42, 'source_snapshot': snapshot,
+    }, updated: {'value': 'Synthetic edited memory'});
+    expect(deleted, false);
+    await action.delete({
+      'legacy_memory_id': 42, 'source_snapshot': nextSnapshot,
+    });
+    expect(deleted, true);
+    expect((await codec.decodeLegacyString(legacyCiphertext)),
+        contains('Synthetic edited memory'));
   });
 }

@@ -47,7 +47,7 @@ import os
 import re
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from psycopg2.errors import UniqueViolation
 from psycopg2.extras import RealDictCursor
@@ -970,6 +970,7 @@ def ai_memory_ciphertext_upsert(
     response_model=list[AiMemoryCiphertextReadResponse],
 )
 def ai_memory_ciphertext_list(
+    request: Request,
     memory_lookup_hash: Optional[str] = None,
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> list[AiMemoryCiphertextReadResponse]:
@@ -986,16 +987,29 @@ def ai_memory_ciphertext_list(
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        # When active prepared-copy reads are enabled, the PIN-key source
+        # remains authoritative for older writers, but this V2 endpoint must
+        # return only native V2 envelopes. The separate source-bound copy
+        # endpoint supplies older Memories and reports any missing copies.
+        active_copies = (
+            os.getenv("VAULTAI_ZK_LEGACY_MEMORY_ACTIVE_ENABLED", "false")
+            .strip().lower() == "true"
+            and request.headers.get("x-svaultai-memory-active-copy") == "1"
+        )
         cur.execute(
             """
             SELECT memory_record_id, memory_type, payload_ciphertext, memory_lookup_hash
               FROM vault_ai_memory
              WHERE vault_id = %s AND superseded_at IS NULL
                AND payload_ciphertext IS NOT NULL
+               AND (%s = FALSE OR CASE
+                    WHEN OCTET_LENGTH(payload_ciphertext) >= 29
+                    THEN GET_BYTE(payload_ciphertext,0) = 1
+                    ELSE FALSE END)
                AND (%s IS NULL OR memory_lookup_hash = %s)
              ORDER BY id
             """,
-            (principal["vault_id"], lookup_hash, lookup_hash),
+            (principal["vault_id"], active_copies, lookup_hash, lookup_hash),
         )
         rows = cur.fetchall()
     finally:
