@@ -4,6 +4,7 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart';
 import 'package:vault_ai_frontend/services/zk_private_chat.dart';
+import 'package:vault_ai_frontend/services/zk_private_chat_flow.dart';
 import 'package:vault_ai_frontend/services/zk_private_chat_index.dart';
 
 final SecretKey _mvk = SecretKey(List<int>.filled(32, 37));
@@ -102,6 +103,83 @@ Future<Map<String, Object?>> _fixture() async {
 }
 
 void main() {
+  test('encrypted media index and chat follow-ups stay on device', () async {
+    final fixture = await _fixture();
+    final manifests = fixture['files'] as Map<String, Map<String, dynamic>>;
+    final requests = <String>[];
+    final generalPrompts = <String>[];
+    final flow = ZkPrivateChatFlow(
+      vaultName: 'Synthetic Vault',
+      accessIsCurrent: () => true,
+      loadIndex: () => ZkPrivateChatIndexLoader(
+        mvk: _mvk,
+        accessIsCurrent: () => true,
+        get: (path) async {
+          requests.add(path);
+          if (path == '/vault/ciphertext/vault-items') return fixture['items'];
+          if (path == '/vault/file-v2') {
+            return {
+              'files': [
+                for (final id in manifests.keys)
+                  {
+                    'file_id': id,
+                    'verification_state': 'client_verified',
+                    'lifecycle_state': 'client_v2_ready',
+                  },
+              ],
+            };
+          }
+          if (path.endsWith('/manifest')) return manifests[path.split('/')[3]];
+          if (path == '/vault/file-v2/text-1/chunk/0') {
+            return {
+              'file_id': 'text-1',
+              'chunk_index': 0,
+              'ciphertext': fixture['textChunk'],
+            };
+          }
+          fail('Unexpected ciphertext request: $path');
+        },
+      ).load(),
+      sendGeneral: (prompt, _) async {
+        generalPrompts.add(prompt);
+        return 'General answer';
+      },
+    );
+
+    for (final (prompt, expectedId, followUp, expectedAction) in [
+      (
+        'Find my photo in red cloth and black shoes',
+        'photo-1',
+        'open it',
+        ZkLocalChatAction.open,
+      ),
+      (
+        'Find my video standing at the beach',
+        'video-1',
+        'play it',
+        ZkLocalChatAction.open,
+      ),
+      (
+        'Find my audio recording saying hello',
+        'audio-1',
+        'download it',
+        ZkLocalChatAction.download,
+      ),
+    ]) {
+      final found = await flow.run(prompt);
+      expect(found.local.selection?.id, expectedId, reason: prompt);
+      final next = await flow.run(followUp);
+      expect(next.local.selection?.id, expectedId, reason: followUp);
+      expect(next.local.action, expectedAction);
+    }
+    expect(generalPrompts, isEmpty);
+    expect(requests.join(' '), isNot(contains('Synthetic Vault')));
+    expect(requests.join(' '), isNot(contains('black shoes')));
+    final generic = await flow.run('What is encryption?');
+    expect(generic.generalReply, 'General answer');
+    expect(generalPrompts, ['What is encryption?']);
+  });
+
   test(
     'root-level VTT captions search an older video without opening it',
     () async {

@@ -299,6 +299,48 @@ void main() {
     ]);
   });
 
+  test('ambiguous private terms and vault name never enter general AI',
+      () async {
+    var indexLoads = 0;
+    var generalCalls = 0;
+    final flow = ZkPrivateChatFlow(
+      vaultName: 'Brain',
+      accessIsCurrent: () => true,
+      loadIndex: () async {
+        indexLoads++;
+        return const ZkPrivateChatIndex(
+          savedItems: [],
+          files: [
+            ZkLocalChatRecord(
+              kind: ZkLocalChatKind.file,
+              id: 'red-shoes',
+              title: 'red shoes.jpg',
+              mediaKind: ZkLocalMediaKind.photo,
+            ),
+          ],
+          incomplete: false,
+        );
+      },
+      sendGeneral: (_, __) async {
+        generalCalls++;
+        return 'generic';
+      },
+    );
+
+    final where = await flow.run('Where are the red shoes?');
+    expect(where.local.selection?.id, 'red-shoes');
+    expect(generalCalls, 0);
+    final named = await flow.run('Explain Brain');
+    expect(named.local.maySendToGeneralAi, isFalse);
+    expect(generalCalls, 0);
+    expect(indexLoads, 2);
+
+    final generic = await flow.run('What is encryption?');
+    expect(generic.generalReply, 'generic');
+    expect(generalCalls, 1);
+    expect(indexLoads, 2);
+  });
+
   test('mutation stops before index and network requests', () async {
     var requests = 0;
     final flow = ZkPrivateChatFlow(

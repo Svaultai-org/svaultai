@@ -5,6 +5,7 @@ library;
 
 import 'zk_private_chat.dart';
 import 'zk_private_chat_index.dart';
+import 'zk_general_chat_bridge.dart' show isClearlyGeneralChatPrompt;
 
 enum ZkChatEntryRoute { privateChat, unavailable, legacy }
 
@@ -39,6 +40,7 @@ class ZkPrivateChatFlow {
   final Future<ZkPrivateChatIndex> Function() loadIndex;
   final Future<String> Function(String, List<ZkGeneralChatTurn>) sendGeneral;
   final bool Function() accessIsCurrent;
+  final String? vaultName;
   final List<ZkGeneralChatTurn> _generalHistory = [];
   ZkLocalChatRecord? _selection;
   List<ZkLocalChatRecord> _previousMatches = const [];
@@ -48,6 +50,7 @@ class ZkPrivateChatFlow {
     required this.loadIndex,
     required this.sendGeneral,
     required this.accessIsCurrent,
+    this.vaultName,
   });
 
   void clear() {
@@ -68,8 +71,7 @@ class ZkPrivateChatFlow {
     bool forcePrivate = false,
   }) async {
     _checkAccess();
-    final keepPrivateContext =
-        _lastTurnWasPrivate &&
+    final keepPrivateContext = _lastTurnWasPrivate &&
         ZkLocalChatRouter.referencesPreviousPrivateResult(prompt);
     final effectiveForcePrivate = forcePrivate || keepPrivateContext;
     final preliminary = ZkLocalChatRouter.resolve(
@@ -83,7 +85,10 @@ class ZkPrivateChatFlow {
     if (preliminary.disposition == ZkLocalChatDisposition.unsupportedAction) {
       return ZkPrivateChatTurn(local: preliminary);
     }
-    if (preliminary.maySendToGeneralAi) {
+    final clearlyGeneral = !effectiveForcePrivate &&
+        preliminary.maySendToGeneralAi &&
+        isClearlyGeneralChatPrompt(prompt, vaultName: vaultName);
+    if (clearlyGeneral) {
       final reply = await sendGeneral(
         prompt,
         List<ZkGeneralChatTurn>.unmodifiable(_generalHistory),
@@ -108,11 +113,13 @@ class ZkPrivateChatFlow {
       files: index.files,
       previousSelection: _selection,
       previousMatches: _previousMatches,
-      forcePrivate: effectiveForcePrivate,
+      // Ambiguous questions stay local even if the broader search router
+      // would otherwise classify them as general. Only the conservative
+      // gate above may send a prompt to the general AI endpoint.
+      forcePrivate: true,
     );
     _lastTurnWasPrivate = true;
-    _selection =
-        result.disposition == ZkLocalChatDisposition.found ||
+    _selection = result.disposition == ZkLocalChatDisposition.found ||
             result.disposition == ZkLocalChatDisposition.related
         ? result.selection
         : null;

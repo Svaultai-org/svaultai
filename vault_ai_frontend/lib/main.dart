@@ -20933,13 +20933,24 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     bool safeBridgeOnly = false,
   }) async {
     final vaultHandle = app.vaultHandle;
+    final vaultName = app.vaultName;
+    final sessionEpoch = app._sessionEpoch;
+    final foregroundEpoch = app._sessionProbeEpoch;
+    final terminationGeneration = st.SessionTermination.instance.generation;
     bool currentAccess() =>
         mounted &&
         app.authed &&
         app.unlocked &&
+        app._sessionForeground &&
+        !app.sessionVerificationBlocked &&
+        app._sessionEpoch == sessionEpoch &&
+        app._sessionProbeEpoch == foregroundEpoch &&
         app.sessionToken == token &&
         app.vaultId == vaultId &&
         app.vaultHandle == vaultHandle &&
+        app.vaultName == vaultName &&
+        st.SessionTermination.instance.generation == terminationGeneration &&
+        !st.SessionTermination.instance.isTerminated &&
         zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
         identical(zk_mvk_store.ZkActiveMvk.current(), mvk);
     if (!currentAccess()) return;
@@ -21061,6 +21072,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _zkPrivateChatMvk = mvk;
       _zkPrivateChatFlow = zk_chat_flow.ZkPrivateChatFlow(
         accessIsCurrent: currentAccess,
+        vaultName: app.vaultName,
         loadIndex: () => zk_chat_index.ZkPrivateChatIndexLoader(
           mvk: mvk,
           accessIsCurrent: currentAccess,
@@ -21084,6 +21096,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           authToken: token,
           message: prompt,
           history: history,
+          accessGuard: () {
+            if (!currentAccess()) throw StateError('Vault access changed');
+          },
         ),
       );
     }
