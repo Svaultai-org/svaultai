@@ -54,6 +54,7 @@ import hmac
 import logging
 import os
 from file_v2_client_capability import request_has_file_v2_reader
+from legacy_source_snapshot import source_snapshot
 from zk_migration_flags import ZkMigrationFlags
 from zk_raw_pin_content_gate import raw_pin_content_disabled
 import secrets
@@ -1153,12 +1154,53 @@ def _signed_memory_negotiation(request: Request, *, signed_reads: bool) -> bool:
     return True
 
 
-def _memory_v2_offer_ready(conn, vault_id: str) -> bool:
+def _memory_v2_offer_ready(
+    conn, vault_id: str, *, allow_prepared: bool = False,
+) -> bool:
     """Offer only if every active Memory row has a private readable copy.
 
     Older PIN-derived encrypted rows lack a client-owned record id. They
     cannot be opened with the V2 Memory key and must retain legacy access.
     """
+    if (allow_prepared and
+            os.getenv("VAULTAI_ZK_LEGACY_MEMORY_ACTIVE_ENABLED", "false")
+            .strip().lower() == "true"):
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """SELECT m.id,m.payload_ciphertext,m.memory_type,
+                      m.memory_record_id,m.memory_lookup_hash,
+                      c.source_snapshot,c.memory_record_id AS copy_record_id,
+                      c.memory_type AS copy_type,
+                      c.payload_ciphertext AS copy_ciphertext
+                 FROM vault_ai_memory m
+                 LEFT JOIN memory_v2_prepared_copies c
+                   ON c.legacy_memory_id=m.id AND c.vault_id=m.vault_id
+                WHERE m.vault_id=%s AND m.superseded_at IS NULL
+                ORDER BY m.id LIMIT 5001""",
+            (vault_id,),
+        )
+        rows = cur.fetchall()
+        if len(rows) > 5000:
+            return False
+        for row in rows:
+            original = row["payload_ciphertext"]
+            if original is None or len(original) < 29:
+                return False
+            if bytes(original)[0] == 1:
+                record_id = row["memory_record_id"]
+                if not record_id or len(record_id) > 128:
+                    return False
+                continue
+            copy_ct = row["copy_ciphertext"]
+            if (copy_ct is None or len(copy_ct) < 29 or
+                    bytes(copy_ct)[0] != 1 or
+                    row["copy_type"] != row["memory_type"] or
+                    row["copy_record_id"] != f"memory-migrated-{row['id']}" or
+                    row["source_snapshot"] != source_snapshot(
+                        "memory", row, vault_id=vault_id, record_id=row["id"]
+                    )):
+                return False
+        return True
     cur = conn.cursor()
     cur.execute(
         """SELECT NOT EXISTS (
@@ -1583,6 +1625,9 @@ def _zk_login_finalize_sync(
                 with _zk_login_phase("metadata"):
                     memory_capable = _memory_v2_offer_ready(
                         conn, str(vault_row["vault_id"]),
+                        allow_prepared=(
+                            request.headers.get("x-svaultai-memory-active-copy") == "1"
+                        ),
                     )
             except Exception:
                 conn.rollback()

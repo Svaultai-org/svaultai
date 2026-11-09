@@ -477,6 +477,11 @@ class MemoryPage extends StatefulWidget {
   final void Function(String prompt)? onAskVaultAI;
   final void Function(Map<String, dynamic> row, String prompt)? onOpenMemory;
   final Future<String> Function()? pinProvider;
+  final Future<void> Function(
+      Map<String, dynamic> current, Map<String, dynamic> updated)?
+      editPreparedLegacyMemory;
+  final Future<void> Function(Map<String, dynamic> current)?
+      deletePreparedLegacyMemory;
 
   const MemoryPage({
     super.key,
@@ -487,6 +492,8 @@ class MemoryPage extends StatefulWidget {
     this.onAskVaultAI,
     this.onOpenMemory,
     this.pinProvider,
+    this.editPreparedLegacyMemory,
+    this.deletePreparedLegacyMemory,
   });
 
   @override
@@ -717,11 +724,17 @@ class _MemoryPageState extends State<MemoryPage> {
     try {
       final id = row == null ? null : '${row['id'] ?? ''}'.trim();
       if (row != null && id!.isEmpty) throw Exception('Missing memory id');
-      await widget.client.upsertZkMemory(
-        authToken: widget.authToken,
-        data: data,
-        memoryId: id,
-      );
+      if (row?['legacy_memory_id'] is int) {
+        final edit = widget.editPreparedLegacyMemory;
+        if (edit == null) throw StateError('Older Memory edit unavailable');
+        await edit(row!, data);
+      } else {
+        await widget.client.upsertZkMemory(
+          authToken: widget.authToken,
+          data: data,
+          memoryId: id,
+        );
+      }
       if (!mounted) return;
       _showSnack(row == null ? 'Memory saved' : 'Memory updated');
       await _load();
@@ -764,10 +777,16 @@ class _MemoryPageState extends State<MemoryPage> {
     try {
       final id = '${row['id'] ?? ''}'.trim();
       if (id.isEmpty) throw Exception('Missing memory id');
-      await widget.client.deleteZkMemory(
-        authToken: widget.authToken,
-        memoryId: id,
-      );
+      if (row['legacy_memory_id'] is int) {
+        final delete = widget.deletePreparedLegacyMemory;
+        if (delete == null) throw StateError('Older Memory delete unavailable');
+        await delete(row);
+      } else {
+        await widget.client.deleteZkMemory(
+          authToken: widget.authToken,
+          memoryId: id,
+        );
+      }
       if (!mounted) return;
       _showSnack('Memory deleted');
       await _load();

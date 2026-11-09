@@ -37,6 +37,13 @@ const bool kFileV2ReaderCapability = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// Paired with the server's separate active-copy gate. Off until the owner
+// device can read and mutate prepared older Memory records end to end.
+const bool kEnableLegacyMemoryV2ActiveRead = bool.fromEnvironment(
+  'VAULTAI_ENABLE_LEGACY_MEMORY_V2_ACTIVE_READ',
+  defaultValue: false,
+);
+
 // After the coordinated ZK file cutover, legacy file endpoints must never
 // receive a PIN from an unlocked MVK vault. Legacy-only vaults still use
 // these endpoints; the V2 and ciphertext migration routes do not call them.
@@ -6082,7 +6089,11 @@ class VaultAIClient {
             () => _assertMemoryAccessCurrent(mvk, memoryGeneration))
         .get(
           uri,
-          headers: _defaultHeaders(authToken: authToken),
+          headers: <String, String>{
+            ..._defaultHeaders(authToken: authToken),
+            if (kEnableLegacyMemoryV2ActiveRead)
+              'X-SVaultAI-Memory-Active-Copy': '1',
+          },
         )
         .timeout(const Duration(seconds: 12));
     _assertMemoryAccessCurrent(mvk, memoryGeneration);
@@ -6099,13 +6110,49 @@ class VaultAIClient {
     if (decoded is! List) {
       throw Exception('Invalid memory list response format');
     }
+    final prepared = <Map<String, dynamic>>[];
+    var sourceUnavailable = 0;
+    if (kEnableLegacyMemoryV2ActiveRead) {
+      final preparedResponse = await _sessionHttpWithGuard(
+              () => _assertMemoryAccessCurrent(mvk, memoryGeneration))
+          .get(
+            Uri.parse('$baseUrl/vault/memory/legacy-copy/list'),
+            headers: _defaultHeaders(authToken: authToken),
+          )
+          .timeout(const Duration(seconds: 12));
+      _assertMemoryAccessCurrent(mvk, memoryGeneration);
+      if (preparedResponse.statusCode != 200) {
+        _throwIfAuthExpired(preparedResponse.statusCode, preparedResponse.body);
+        _throwIfDeviceNotTrusted(
+            preparedResponse.statusCode, preparedResponse.body);
+        throw Exception(_formatBackendError(
+          prefix: 'Older Memory list failed',
+          statusCode: preparedResponse.statusCode,
+          responseBody: preparedResponse.body,
+        ));
+      }
+      final body = jsonDecode(preparedResponse.body);
+      if (body is! Map || body['copies'] is! List ||
+          body['unavailable_count'] is! int) {
+        throw const FormatException('Invalid older Memory list');
+      }
+      sourceUnavailable = body['unavailable_count'] as int;
+      if (sourceUnavailable < 0 || sourceUnavailable > 5000) {
+        throw const FormatException('Invalid older Memory count');
+      }
+      for (final raw in body['copies'] as List) {
+        if (raw is! Map) throw const FormatException('Invalid older Memory copy');
+        prepared.add(Map<String, dynamic>.from(raw));
+      }
+    }
     final memoryKey =
         await vault_key_hierarchy.VaultKeyHierarchy(mvk).memoryKey();
     final items = <Map<String, dynamic>>[];
     final counts = <String, int>{};
-    var unavailableCount = 0;
+    var unavailableCount = sourceUnavailable;
     // A write preflight must see all records, not just the dashboard's cap.
-    final selected = limit <= 0 ? decoded : decoded.take(limit);
+    final combined = <dynamic>[...decoded, ...prepared];
+    final selected = limit <= 0 ? combined : combined.take(limit);
     for (final raw in selected) {
       if (raw is! Map) continue;
       final envelope = raw['payload_ciphertext'];
@@ -6128,10 +6175,14 @@ class VaultAIClient {
             '${raw['memory_type'] ?? payload['memory_type'] ?? 'note'}';
         items.add(<String, dynamic>{
           ...Map<String, dynamic>.from(payload),
-          'id': raw['memory_id'],
+          'id': raw['memory_record_id'] ?? raw['memory_id'],
           'memory_type': type,
           'created_at': raw['created_at'],
           'updated_at': raw['updated_at'],
+          if (raw['legacy_memory_id'] is int)
+            'legacy_memory_id': raw['legacy_memory_id'],
+          if (raw['source_snapshot'] is String)
+            'source_snapshot': raw['source_snapshot'],
         });
         counts[type] = (counts[type] ?? 0) + 1;
       } catch (_) {

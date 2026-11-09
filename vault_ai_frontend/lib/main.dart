@@ -884,6 +884,11 @@ const bool kEnablePrivateLegacyRetireOnDemand = bool.fromEnvironment(
   defaultValue: false,
 );
 
+const bool kEnableLegacyMemoryV2ActiveMutation = bool.fromEnvironment(
+  'VAULTAI_ENABLE_LEGACY_MEMORY_V2_ACTIVE_MUTATION',
+  defaultValue: false,
+) && kEnableLegacyMemoryV2ActiveRead;
+
 // Temporary, opt-in browser-only trace for the stage-only rollout. The
 // formatter accepts an enum, never a PIN, identifier, key, token or error.
 const bool kEnableLegacyStageDiagnostics = bool.fromEnvironment(
@@ -5575,6 +5580,9 @@ Future<Map<String, dynamic>> _zkHttpPost(
       throw OpaqueUnavailable('Signed Memory access needs private reads.');
     }
     headers['X-SVaultAI-Pin-Free-Memory'] = '1';
+    if (kEnableLegacyMemoryV2ActiveMutation) {
+      headers['X-SVaultAI-Memory-Active-Copy'] = '1';
+    }
   }
   if (path == '/auth/zk-login-finalize' &&
       kSignedSavedItemMutationClientEnabled) {
@@ -5830,6 +5838,69 @@ Future<({
   } catch (_) {
     action.close();
     rethrow;
+  }
+}
+
+Future<void> _mutatePreparedLegacyMemory({
+  required AppState app,
+  required BuildContext promptContext,
+  required Map<String, dynamic> current,
+  Map<String, dynamic>? updated,
+}) async {
+  if (!kEnableLegacyMemoryV2ActiveMutation ||
+      current['legacy_memory_id'] is! int) {
+    throw StateError('Older Memory editing is unavailable');
+  }
+  final token = app.sessionToken;
+  if (token == null) throw StateError('Unlock your vault');
+  final source = await createLocalLegacyPasswordSourceForActiveVault(
+    app,
+    promptPin: () {
+      if (!promptContext.mounted) {
+        throw StateError('Memory screen closed');
+      }
+      return _promptForActionPin(
+        promptContext,
+        updated == null ? 'Verify Memory deletion' : 'Verify Memory edit',
+      );
+    },
+  );
+  try {
+    final action = memory_prep.LegacyMemoryV2Preparation(
+      export: source.export,
+      codec: source.codec,
+      mvk: source.codec.mvk,
+      proofProvider: source.proof,
+      accessIsCurrent: source.stillCurrent,
+      post: (path, body) async {
+        if (!RegExp(r'^/vault/memory/legacy-copy/[1-9][0-9]*/(edit|delete)$')
+            .hasMatch(path)) {
+          throw StateError('Unsupported older Memory action');
+        }
+        if (!source.stillCurrent()) throw StateError('Vault session changed');
+        assertPrivateOnlyPinFreeBody(body);
+        final response = await _zkHttpPost(path, body, bearerToken: token);
+        if (!source.stillCurrent()) throw StateError('Vault session changed');
+        return response;
+      },
+      get: (path) async {
+        if (!RegExp(r'^/vault/memory/legacy-copy/[1-9][0-9]*/readback$')
+            .hasMatch(path)) {
+          throw StateError('Unsupported older Memory readback');
+        }
+        if (!source.stillCurrent()) throw StateError('Vault session changed');
+        final response = await _zkHttpGet(path, bearerToken: token);
+        if (!source.stillCurrent()) throw StateError('Vault session changed');
+        return response;
+      },
+    );
+    if (updated == null) {
+      await action.delete(current);
+    } else {
+      await action.edit(current: current, updated: updated);
+    }
+  } finally {
+    source.close();
   }
 }
 
@@ -23755,6 +23826,21 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       vaultName: vaultName,
       isMobile: isMobile,
       pinProvider: _VaultCrypto.currentPinOrThrow,
+      editPreparedLegacyMemory: kEnableLegacyMemoryV2ActiveMutation
+          ? (current, updated) => _mutatePreparedLegacyMemory(
+                app: app,
+                promptContext: context,
+                current: current,
+                updated: updated,
+              )
+          : null,
+      deletePreparedLegacyMemory: kEnableLegacyMemoryV2ActiveMutation
+          ? (current) => _mutatePreparedLegacyMemory(
+                app: app,
+                promptContext: context,
+                current: current,
+              )
+          : null,
       onOpenMemory: (row, prompt) {
         if (!mounted ||
             app.sessionToken != token ||

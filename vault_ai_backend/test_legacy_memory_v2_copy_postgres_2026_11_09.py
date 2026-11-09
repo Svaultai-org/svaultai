@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import ast
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ from alembic import command
 from alembic.config import Config
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import pytest
@@ -22,6 +24,8 @@ from auth_local import PIN_FREE_SAVED_ITEM_MUTATION_OFFER
 from legacy_source_snapshot import source_snapshot
 from routes import legacy_ciphertext_export_routes as export
 from routes import legacy_memory_v2_copy_routes as copy
+from routes import auth_zk_routes as auth_zk
+from routes import vault_ciphertext_write_routes as v2_memory
 from vault_core import decrypt_message, encrypt_message
 
 
@@ -53,6 +57,74 @@ def test_memory_copy_flag_off_before_database(monkeypatch):
     assert exc.value.status_code == 404
 
 
+def test_active_memory_routes_flag_off_before_database(monkeypatch):
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_MEMORY_COPY_ENABLED", "true")
+    monkeypatch.delenv("VAULTAI_ZK_LEGACY_MEMORY_ACTIVE_ENABLED", raising=False)
+    monkeypatch.setattr(copy, "get_db", lambda: pytest.fail("database opened"))
+    with pytest.raises(HTTPException) as exc:
+        copy.list_active_legacy_memory_copies(None, {"vault_id": str(uuid4())})
+    assert exc.value.status_code == 404
+
+
+def test_active_memory_header_allowed_for_browser_preflight():
+    source = ast.parse(Path(__file__).with_name("main.py").read_text())
+    allowed = next(node.value for node in source.body
+                   if isinstance(node, ast.Assign) and any(
+                       isinstance(target, ast.Name) and
+                       target.id == "CORS_ALLOWED_HEADERS"
+                       for target in node.targets))
+    assert "X-SVaultAI-Memory-Active-Copy" in ast.literal_eval(allowed)
+
+
+def test_signed_memory_offer_requires_exact_active_source_copy(monkeypatch):
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_MEMORY_ACTIVE_ENABLED", "true")
+    vault_id = str(uuid4())
+    row = {
+        "id": 42,
+        "payload_ciphertext": b"Q" * 50,
+        "memory_type": "note",
+        "memory_record_id": None,
+        "memory_lookup_hash": None,
+        "copy_record_id": "memory-migrated-42",
+        "copy_type": "note",
+        "copy_ciphertext": b"\x01" + b"x" * 28,
+    }
+    row["source_snapshot"] = source_snapshot(
+        "memory", row, vault_id=vault_id, record_id=42,
+    )
+
+    class Cursor:
+        def execute(self, _query, _params):
+            pass
+
+        def fetchall(self):
+            return [row]
+
+        def fetchone(self):
+            return (False,)
+
+    class Connection:
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    assert auth_zk._memory_v2_offer_ready(
+        Connection(), vault_id, allow_prepared=True,
+    ) is True
+    # Older clients do not advertise active-copy read/edit support.
+    assert auth_zk._memory_v2_offer_ready(Connection(), vault_id) is False
+    row["payload_ciphertext"] = b"R" * 50
+    assert auth_zk._memory_v2_offer_ready(
+        Connection(), vault_id, allow_prepared=True,
+    ) is False
+    row["source_snapshot"] = source_snapshot(
+        "memory", row, vault_id=vault_id, record_id=42,
+    )
+    row["copy_ciphertext"] = None
+    assert auth_zk._memory_v2_offer_ready(
+        Connection(), vault_id, allow_prepared=True,
+    ) is False
+
+
 def test_saved_item_offer_does_not_expose_memory_export(monkeypatch):
     monkeypatch.delenv("VAULTAI_ZK_LEGACY_MEMORY_COPY_ENABLED", raising=False)
     monkeypatch.delenv("VAULTAI_ZK_LEGACY_EXPORT_ENABLED", raising=False)
@@ -77,8 +149,11 @@ def test_owner_copy_is_source_bound_and_keeps_legacy_active(monkeypatch):
     monkeypatch.chdir(Path(__file__).parent)
     command.upgrade(Config(str(Path(__file__).with_name("alembic.ini"))), "head")
     monkeypatch.setenv("VAULTAI_ZK_LEGACY_MEMORY_COPY_ENABLED", "true")
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_MEMORY_ACTIVE_ENABLED", "true")
     monkeypatch.setenv("VAULTAI_ZK_LEGACY_EXPORT_ENABLED", "true")
     monkeypatch.setattr(copy, "get_db", lambda: psycopg2.connect(dsn))
+    monkeypatch.setattr(v2_memory, "get_db", lambda: psycopg2.connect(dsn))
+    monkeypatch.setattr(v2_memory, "_memory_v2_route_enabled", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(copy, "require_content_write", lambda _p: None)
     monkeypatch.setattr(export, "get_db", lambda: psycopg2.connect(dsn))
 
@@ -200,6 +275,26 @@ def test_owner_copy_is_source_bound_and_keeps_legacy_active(monkeypatch):
             "memory_type": "note", "payload_ciphertext": encoded_copy,
         }
         assert readback.headers["cache-control"] == "no-store"
+        listed_copies = client.get("/vault/memory/legacy-copy/list")
+        assert listed_copies.status_code == 200
+        assert listed_copies.headers["cache-control"] == "no-store"
+        assert listed_copies.json() == {
+            "copies": [{
+                "legacy_memory_id": memory_id,
+                "source_snapshot": snapshot,
+                "memory_record_id": f"memory-migrated-{memory_id}",
+                "memory_type": "note",
+                "payload_ciphertext": encoded_copy,
+            }],
+            "unavailable_count": 1,
+        }
+        native_v2 = v2_memory.ai_memory_ciphertext_list(
+            request=Request({"type": "http", "headers": [
+                (b"x-svaultai-memory-active-copy", b"1"),
+            ]}), memory_lookup_hash=None, principal=principal,
+        )
+        assert len(native_v2) == 1
+        assert native_v2[0].payload_ciphertext == encoded_copy
         with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
             cur.execute("SELECT payload_ciphertext,memory_record_id "
                         "FROM vault_ai_memory WHERE id=%s", (memory_id,))
@@ -232,12 +327,119 @@ def test_owner_copy_is_source_bound_and_keeps_legacy_active(monkeypatch):
         changed = client.get(path + "/readback")
         assert changed.status_code == 404
         assert changed.json()["detail"] == "memory_copy_not_found"
+        listed_copies = client.get("/vault/memory/legacy-copy/list")
+        assert listed_copies.json() == {"copies": [], "unavailable_count": 2}
         with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
             cur.execute("SELECT payload_ciphertext FROM vault_ai_memory "
                         "WHERE id=%s", (memory_id,))
             active = bytes(cur.fetchone()[0])
             assert active == changed_ciphertext
             assert decrypt_message(active.decode(), legacy_key) == new_json
+            cur.execute("SELECT COUNT(*) FROM memory_v2_prepared_copies "
+                        "WHERE legacy_memory_id=%s", (memory_id,))
+            assert cur.fetchone()[0] == 0
+        # Owner re-prepares after an older writer changed the source.
+        with psycopg2.connect(dsn) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT payload_ciphertext,memory_type,memory_record_id,"
+                        "memory_lookup_hash FROM vault_ai_memory WHERE id=%s",
+                        (memory_id,))
+            snapshot2 = source_snapshot("memory", cur.fetchone(),
+                                        vault_id=vault_id, record_id=memory_id)
+            cur.execute("INSERT INTO qa_memory_proofs(proof,vault_id) "
+                        "VALUES(%s,%s)", ("reprepare-proof", vault_id))
+        restaged = client.post(path + "/stage", json={
+            **body, "source_snapshot": snapshot2,
+            "zk_proof_token": "reprepare-proof",
+        })
+        assert restaged.status_code == 200, restaged.text[:200]
+        third_json = json.dumps({
+            **json.loads(new_json), "value": "Synthetic private edit",
+        })
+        third_legacy_ct = encrypt_message(third_json, legacy_key).encode()
+        assert third_legacy_ct != changed_ciphertext
+        third_v2_ct = b"\x01" + secrets.token_bytes(12 + 32 + 16)
+        third_v2_encoded = base64.urlsafe_b64encode(third_v2_ct).decode().rstrip("=")
+        edit_body = {
+            "source_snapshot": snapshot2, "memory_type": "note",
+            "legacy_payload_ciphertext": third_legacy_ct.decode(),
+            "payload_ciphertext": third_v2_encoded,
+            "zk_proof_token": "edit-proof", "client_verified_source": True,
+        }
+        assert client.post(path + "/edit", json={**edit_body,
+            "pin": "123456"}).status_code == 422
+        assert client.post(path + "/edit", json={**edit_body,
+            "source_snapshot": snapshot}).status_code == 409
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO qa_memory_proofs(proof,vault_id) "
+                        "VALUES(%s,%s)", ("edit-proof", vault_id))
+            cur.execute("""CREATE OR REPLACE FUNCTION qa_reject_memory_copy_insert()
+                          RETURNS trigger LANGUAGE plpgsql AS $$
+                          BEGIN RAISE EXCEPTION 'synthetic_copy_failure';
+                          END; $$""")
+            cur.execute("""CREATE TRIGGER qa_reject_memory_copy_insert
+                          BEFORE INSERT ON memory_v2_prepared_copies
+                          FOR EACH ROW EXECUTE FUNCTION
+                          qa_reject_memory_copy_insert()""")
+        # If the replacement V2 write fails after the 0064 trigger removes
+        # the previous copy, the old row, its copy, and the proof all roll back.
+        try:
+            with pytest.raises(Exception, match="synthetic_copy_failure"):
+                client.post(path + "/edit", json=edit_body)
+            assert client.get(path + "/readback").json() == {
+                "memory_id": memory_id, "source_snapshot": snapshot2,
+                "memory_record_id": f"memory-migrated-{memory_id}",
+                "memory_type": "note", "payload_ciphertext": encoded_copy,
+            }
+            with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+                cur.execute("SELECT payload_ciphertext FROM vault_ai_memory "
+                            "WHERE id=%s", (memory_id,))
+                assert bytes(cur.fetchone()[0]) == changed_ciphertext
+                cur.execute("SELECT COUNT(*) FROM qa_memory_proofs "
+                            "WHERE proof='edit-proof'")
+                assert cur.fetchone()[0] == 1
+        finally:
+            with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+                cur.execute("DROP TRIGGER IF EXISTS qa_reject_memory_copy_insert "
+                            "ON memory_v2_prepared_copies")
+                cur.execute("DROP FUNCTION IF EXISTS qa_reject_memory_copy_insert()")
+        edited = client.post(path + "/edit", json=edit_body)
+        assert edited.status_code == 200, edited.text[:200]
+        snapshot3 = edited.json()["source_snapshot"]
+        assert snapshot3 != snapshot2
+        assert edited.json()["active_legacy_updated"] is True
+        after_edit = client.get(path + "/readback")
+        assert after_edit.status_code == 200
+        assert after_edit.json()["payload_ciphertext"] == third_v2_encoded
+        assert after_edit.json()["source_snapshot"] == snapshot3
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute("SELECT payload_ciphertext,superseded_at "
+                        "FROM vault_ai_memory WHERE id=%s", (memory_id,))
+            old_client_row = cur.fetchone()
+            assert old_client_row[1] is None
+            assert decrypt_message(bytes(old_client_row[0]).decode(), legacy_key) == third_json
+        # Soft deletion hides the old-client row while retaining its bytes.
+        delete_body = {"source_snapshot": snapshot3,
+                       "zk_proof_token": "delete-proof",
+                       "client_confirmed_delete": True}
+        assert client.post(path + "/delete", json={**delete_body,
+            "pin": "123456"}).status_code == 422
+        assert client.post(path + "/delete", json={**delete_body,
+            "client_confirmed_delete": False}).status_code == 400
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO qa_memory_proofs(proof,vault_id) "
+                        "VALUES(%s,%s)", ("delete-proof", vault_id))
+        deleted = client.post(path + "/delete", json=delete_body)
+        assert deleted.status_code == 200, deleted.text[:200]
+        assert client.get(path + "/readback").status_code == 404
+        assert client.get("/vault/memory/legacy-copy/list").json() == {
+            "copies": [], "unavailable_count": 1,
+        }
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute("SELECT payload_ciphertext,superseded_at "
+                        "FROM vault_ai_memory WHERE id=%s", (memory_id,))
+            old_client_row = cur.fetchone()
+            assert bytes(old_client_row[0]) == third_legacy_ct
+            assert old_client_row[1] is not None
             cur.execute("SELECT COUNT(*) FROM memory_v2_prepared_copies "
                         "WHERE legacy_memory_id=%s", (memory_id,))
             assert cur.fetchone()[0] == 0
