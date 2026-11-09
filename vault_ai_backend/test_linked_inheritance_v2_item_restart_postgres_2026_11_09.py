@@ -63,7 +63,7 @@ def test_restart_sql_atomic_copy_and_owner_preservation(monkeypatch):
                     "kdf_iterations,vault_handle,opaque_registration_record,"
                     "wrapped_mvk) VALUES (%s,%s,'qa-salt','qa-verifier',600000,"
                     "%s,%s,%s)",
-                    (vault_id, f"qa-{vault_id.replace('-', '')}",
+                    (vault_id, f"vault-{vault_id.replace('-', '')}",
                      os.urandom(15), os.urandom(32), os.urandom(48)),
                 )
             cur.execute(
