@@ -217,6 +217,7 @@ void main() {
     await bridge.send('What is end-to-end encryption?');
     await bridge.send('Explain zero-knowledge encryption in more detail.');
     expect(captured.length, 2);
-    expect(captured[1]['history'], hasLength(2));
+    // Only user-authored general turns cross the transport boundary.
+    expect(captured[1]['history'], hasLength(1));
   });
 }

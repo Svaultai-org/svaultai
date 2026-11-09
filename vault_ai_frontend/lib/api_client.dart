@@ -2145,10 +2145,19 @@ class VaultAIClient {
     accessGuard?.call();
     // This endpoint sees plaintext. Reject private prompts again at transport
     // so another caller cannot bypass the UI router and disclose vault text.
+    // Assistant turns are not user-authored and may contain a private local
+    // reply supplied by a caller. Never serialize them to general AI.
+    if (history.any((turn) =>
+        turn.role != 'user' && turn.role != 'assistant')) {
+      throw StateError('Invalid general chat history');
+    }
+    final safeUserHistory = history
+        .where((turn) => turn.role == 'user')
+        .toList(growable: false);
     if (vaultName.trim().isEmpty ||
         !zk_general_bridge.isClearlyGeneralChatPrompt(
             message, vaultName: vaultName) ||
-        history.any((turn) => turn.role == 'user' &&
+        safeUserHistory.any((turn) =>
             !zk_general_bridge.isClearlyGeneralChatPrompt(
                 turn.content, vaultName: vaultName))) {
       throw StateError('Question needs the private vault chat route');
@@ -2156,7 +2165,7 @@ class VaultAIClient {
     final uri = Uri.parse('$baseUrl/chat/zk/general');
     final body = zk_private_chat.buildZkGeneralChatBody(
       message: message,
-      history: history,
+      history: safeUserHistory,
     );
     final response = await _sessionHttp.post(
       uri,

@@ -263,6 +263,37 @@ void main() {
     expect(requests, 0);
   });
 
+  test('general chat transport drops caller-supplied assistant history',
+      () async {
+    var requests = 0;
+    final client = VaultAIClient(
+      baseUrl: 'https://example.invalid',
+      httpClient: MockClient((request) async {
+        requests++;
+        expect(request.url.path, '/chat/zk/general');
+        expect(request.body, isNot(contains('synthetic-private-canary')));
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['history'], [
+          {'role': 'user', 'content': 'What is encryption?'},
+        ]);
+        return http.Response('{"reply":"safe answer","mode":"general"}', 200);
+      }),
+    );
+    final reply = await client.zkGeneralChat(
+      authToken: 'synthetic-token',
+      message: 'Explain symmetric encryption.',
+      vaultName: 'Synthetic Vault Name',
+      history: const [
+        ZkGeneralChatTurn(role: 'user', content: 'What is encryption?'),
+        ZkGeneralChatTurn(
+          role: 'assistant', content: 'synthetic-private-canary',
+        ),
+      ],
+    );
+    expect(reply, 'safe answer');
+    expect(requests, 1);
+  });
+
   test('private index transport sends only bearer-scoped ciphertext GETs',
       () async {
     var requests = 0;
