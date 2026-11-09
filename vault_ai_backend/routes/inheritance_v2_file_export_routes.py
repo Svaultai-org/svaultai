@@ -56,6 +56,9 @@ def _b64(value: bytes) -> str:
 def _released_owner(cur, *, link_id: int, beneficiary_vault_id: str) -> str:
     if link_id <= 0:
         raise HTTPException(status_code=404, detail="Not found")
+    # Hold release state through the later file reads in this transaction.
+    # Owner revoke/delete takes a conflicting lock; the next chunk request
+    # starts a new transaction and checks release state again.
     cur.execute(
         """SELECT bl.passer_vault_id, bl.wrapped_vault_key,
                   bl.pairing_state, ic.crypto_version
@@ -63,7 +66,8 @@ def _released_owner(cur, *, link_id: int, beneficiary_vault_id: str) -> str:
              JOIN inheritance_credentials ic
                ON ic.beneficiary_link_id = bl.id
               AND ic.deleted_at IS NULL
-            WHERE bl.id = %s AND bl.beneficiary_vault_id = %s""",
+            WHERE bl.id = %s AND bl.beneficiary_vault_id = %s
+            FOR SHARE OF bl, ic""",
         (link_id, beneficiary_vault_id),
     )
     link = cur.fetchone()
