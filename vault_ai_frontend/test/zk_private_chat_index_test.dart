@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart';
 import 'package:vault_ai_frontend/services/private_content_pin_guard.dart';
 import 'package:vault_ai_frontend/services/zk_private_chat.dart';
@@ -109,6 +110,160 @@ Future<Map<String, Object?>> _fixture() async {
 }
 
 void main() {
+  test('embedded JPEG description finds a photo only in local opt-in index',
+      () async {
+    final photo = img.Image(width: 8, height: 8);
+    photo.exif.imageIfd.imageDescription =
+        'Red shirt and black shoes beside the beach';
+    final bytes = img.encodeJpg(photo);
+    final manifest = await _fileManifest(
+      id: 'described-photo',
+      name: 'IMG_0001.jpg',
+      mime: 'image/jpeg',
+      size: bytes.length,
+    );
+    final contentKey = await VaultKeyHierarchy(_mvk).fileContentKey();
+    final requests = <String>[];
+    Future<Object?> get(String path) async {
+      requests.add(path);
+      if (path == '/vault/file-v2') {
+        return {
+          'files': [
+            {
+              'file_id': 'described-photo',
+              'verification_state': 'client_verified',
+              'lifecycle_state': 'client_v2_ready',
+            },
+          ],
+        };
+      }
+      if (path == '/vault/file-v2/described-photo/manifest') {
+        return manifest;
+      }
+      if (path == '/vault/file-v2/described-photo/chunk/0') {
+        return {
+          'file_id': 'described-photo',
+          'chunk_index': 0,
+          'ciphertext': b64urlEncode(await aesGcmWrap(contentKey, bytes)),
+        };
+      }
+      fail('Unexpected private GET: $path');
+    }
+
+    Future<ZkPrivateChatIndex> load({required bool descriptions}) =>
+        ZkPrivateChatIndexLoader(
+          mvk: _mvk,
+          get: get,
+          accessIsCurrent: () => true,
+          includeSavedItems: false,
+          indexPhotoDescriptions: descriptions,
+        ).load();
+
+    final off = await load(descriptions: false);
+    expect(off.files.single.photoDescription, isNull);
+    expect(requests, isNot(contains('/vault/file-v2/described-photo/chunk/0')));
+    expect(
+      ZkLocalChatRouter.resolve(
+        prompt: 'Find my photo with red shirt and black shoes',
+        savedItems: off.savedItems,
+        files: off.files,
+      ).disposition,
+      ZkLocalChatDisposition.needsPrivateIndex,
+    );
+    requests.clear();
+    final on = await load(descriptions: true);
+    expect(on.files.single.photoDescription,
+        'Red shirt and black shoes beside the beach');
+    expect(requests.where((path) => path.contains('/chunk/')),
+        <String>['/vault/file-v2/described-photo/chunk/0']);
+    final generalPrompts = <String>[];
+    final flow = ZkPrivateChatFlow(
+      accessIsCurrent: () => true,
+      loadIndex: () => load(descriptions: true),
+      sendGeneral: (prompt, history) async {
+        generalPrompts.add(prompt);
+        return 'general';
+      },
+    );
+    final turn = await flow.run('Find my photo with red shirt and black shoes');
+    expect(turn.local.selection?.id, 'described-photo');
+    expect(turn.local.photoDescriptionEvidence, isTrue);
+    expect(turn.local.maySendToGeneralAi, isFalse);
+    expect(
+      ZkLocalChatRouter.resolve(
+        prompt: 'Find my photo with red shirt and blue shoes',
+        savedItems: on.savedItems,
+        files: on.files,
+      ).selection,
+      isNull,
+    );
+    expect(generalPrompts, isEmpty);
+    expect(requests.join(' '), isNot(contains('Red shirt')));
+  });
+
+  test('failed optional photo scan does not hide a verified video caption',
+      () async {
+    final caption = utf8.encode(
+      'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nBeach at sunrise.\n',
+    );
+    final manifests = <String, Map<String, dynamic>>{
+      'photo': await _fileManifest(
+        id: 'photo', name: 'unavailable.jpg', mime: 'image/jpeg', size: 1,
+      ),
+      'video': await _fileManifest(
+        id: 'video', name: 'holiday.mp4', mime: 'video/mp4', size: 0,
+      ),
+      'caption': await _fileManifest(
+        id: 'caption', name: 'holiday.vtt', mime: 'text/vtt',
+        size: caption.length,
+      ),
+    };
+    final contentKey = await VaultKeyHierarchy(_mvk).fileContentKey();
+    final index = await ZkPrivateChatIndexLoader(
+      mvk: _mvk,
+      accessIsCurrent: () => true,
+      includeSavedItems: false,
+      indexPhotoDescriptions: true,
+      get: (path) async {
+        if (path == '/vault/file-v2') {
+          return {
+            'files': [
+              for (final id in manifests.keys)
+                {
+                  'file_id': id,
+                  'verification_state': 'client_verified',
+                  'lifecycle_state': 'client_v2_ready',
+                },
+            ],
+          };
+        }
+        if (path.endsWith('/manifest')) return manifests[path.split('/')[3]];
+        if (path == '/vault/file-v2/photo/chunk/0') {
+          throw StateError('synthetic photo read failed');
+        }
+        if (path == '/vault/file-v2/caption/chunk/0') {
+          return {
+            'file_id': 'caption',
+            'chunk_index': 0,
+            'ciphertext': b64urlEncode(await aesGcmWrap(contentKey, caption)),
+          };
+        }
+        fail('Unexpected private GET: $path');
+      },
+    ).load();
+    expect(index.incomplete, isTrue);
+    final video = index.files.singleWhere((file) => file.id == 'video');
+    expect(video.searchText, contains('Beach at sunrise'));
+    expect(
+      ZkLocalChatRouter.resolve(
+        prompt: 'Find my video at sunrise',
+        savedItems: index.savedItems,
+        files: index.files,
+      ).selection?.id,
+      'video',
+    );
+  });
+
   test('related-file lookup uses only client-decrypted V2 names', () async {
     final manifests = <String, Map<String, dynamic>>{
       'front': await _fileManifest(

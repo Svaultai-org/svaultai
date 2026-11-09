@@ -15,6 +15,7 @@ import 'private_content_pin_guard.dart';
 import 'vault_key_hierarchy.dart';
 import 'zk_private_chat.dart';
 import 'zk_local_photo_colors.dart';
+import 'zk_local_photo_description.dart';
 
 typedef ZkPrivateChatGet = Future<Object?> Function(String path);
 typedef ZkPrivateLegacyFileInventory = Future<Map<String, dynamic>> Function();
@@ -44,8 +45,8 @@ class ZkPrivateChatIndexLoader {
   static const int maxTextFiles = 16;
   static const int maxTextFileBytes = 128 * 1024;
   static const int maxTotalTextBytes = 512 * 1024;
-  static const int maxColorPhotos = 12;
-  static const int maxTotalColorPhotoBytes = 8 * 1024 * 1024;
+  static const int maxInspectedPhotos = 12;
+  static const int maxTotalInspectedPhotoBytes = 8 * 1024 * 1024;
 
   final SecretKey mvk;
   final ZkPrivateChatGet get;
@@ -53,6 +54,7 @@ class ZkPrivateChatIndexLoader {
   final bool includeSavedItems;
   final bool indexTextContent;
   final bool indexPhotoColors;
+  final bool indexPhotoDescriptions;
   final int fileLimit;
   final int textFileLimit;
   final int textFileByteLimit;
@@ -75,6 +77,7 @@ class ZkPrivateChatIndexLoader {
     this.includeSavedItems = true,
     this.indexTextContent = true,
     this.indexPhotoColors = false,
+    this.indexPhotoDescriptions = false,
     this.fileLimit = maxFiles,
     this.textFileLimit = maxTextFiles,
     this.textFileByteLimit = maxTextFileBytes,
@@ -272,8 +275,9 @@ class ZkPrivateChatIndexLoader {
     var textFiles = 0;
     var textBytes = 0;
     var contentIndexedFiles = 0;
-    var colorPhotos = 0;
-    var colorBytes = 0;
+    var inspectedPhotos = 0;
+    var inspectedPhotoBytes = 0;
+    var mediaScanIncomplete = false;
     for (final row in fileRows.take(fileLimit)) {
       _checkAccess();
       if (row is! Map || row['file_id'] is! String) {
@@ -335,15 +339,18 @@ class ZkPrivateChatIndexLoader {
           manifest.displayName,
         );
         var visualColors = const <String>{};
-        if (indexPhotoColors && mediaKind == ZkLocalMediaKind.photo) {
+        String? photoDescription;
+        if ((indexPhotoColors || indexPhotoDescriptions) &&
+            mediaKind == ZkLocalMediaKind.photo) {
           if (manifest.totalBytes <= 0 ||
               manifest.totalBytes > maxLocalPhotoColorBytes ||
-              colorPhotos >= maxColorPhotos ||
-              colorBytes + manifest.totalBytes > maxTotalColorPhotoBytes) {
-            incomplete = true;
+              inspectedPhotos >= maxInspectedPhotos ||
+              inspectedPhotoBytes + manifest.totalBytes >
+                  maxTotalInspectedPhotoBytes) {
+            mediaScanIncomplete = true;
           } else {
-            colorPhotos++;
-            colorBytes += manifest.totalBytes;
+            inspectedPhotos++;
+            inspectedPhotoBytes += manifest.totalBytes;
             try {
               final download = await reader.download(
                 manifest.fileId,
@@ -351,17 +358,35 @@ class ZkPrivateChatIndexLoader {
               );
               try {
                 _checkAccess();
-                visualColors = await observePhotoColors(
-                  download.bytes,
-                  accessIsCurrent: accessIsCurrent,
-                );
+                if (indexPhotoColors) {
+                  try {
+                    visualColors = await observePhotoColors(
+                      download.bytes,
+                      accessIsCurrent: accessIsCurrent,
+                    );
+                  } catch (_) {
+                    _checkAccess();
+                    mediaScanIncomplete = true;
+                  }
+                }
+                if (indexPhotoDescriptions) {
+                  try {
+                    photoDescription = readEmbeddedJpegDescription(
+                      download.bytes,
+                      accessIsCurrent: accessIsCurrent,
+                    );
+                  } catch (_) {
+                    _checkAccess();
+                    mediaScanIncomplete = true;
+                  }
+                }
                 _checkAccess();
               } finally {
                 download.bytes.fillRange(0, download.bytes.length, 0);
               }
             } catch (_) {
               _checkAccess();
-              incomplete = true;
+              mediaScanIncomplete = true;
             }
           }
         }
@@ -394,6 +419,7 @@ class ZkPrivateChatIndexLoader {
             mediaKind: mediaKind,
             sizeBytes: manifest.totalBytes,
             visualColors: visualColors,
+            photoDescription: photoDescription,
           ),
         );
       } catch (_) {
@@ -488,7 +514,8 @@ class ZkPrivateChatIndexLoader {
       if (key != null) mediaByKey.putIfAbsent(key, () => []).add(i);
     }
     // An omitted file could have the same stem, so a partial inventory
-    // cannot establish the uniqueness required for pairing.
+    // cannot establish the uniqueness required for pairing. A skipped
+    // optional photo scan does not make the file inventory incomplete.
     final pairingInventoryComplete = !incomplete;
     for (final entry in captionsByKey.entries) {
       if (!pairingInventoryComplete) break;
@@ -512,13 +539,14 @@ class ZkPrivateChatIndexLoader {
         legacyProofRequired: media.legacyProofRequired,
         sizeBytes: media.sizeBytes,
         visualColors: media.visualColors,
+        photoDescription: media.photoDescription,
       );
     }
     _checkAccess();
     return ZkPrivateChatIndex(
       savedItems: savedItems,
       files: files,
-      incomplete: incomplete,
+      incomplete: incomplete || mediaScanIncomplete,
       totalListedFiles: fileRows.length,
       contentIndexedFiles: contentIndexedFiles,
     );

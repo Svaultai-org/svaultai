@@ -984,6 +984,11 @@ const bool kEnableZkLocalPhotoColorIndex = bool.fromEnvironment(
   'VAULTAI_ENABLE_ZK_LOCAL_PHOTO_COLOR_INDEX',
   defaultValue: false,
 );
+// Local search of creator-authored JPEG descriptions. No visual inference.
+const bool kEnableZkEmbeddedPhotoDescriptionIndex = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_EMBEDDED_PHOTO_DESCRIPTION_INDEX',
+  defaultValue: false,
+);
 // Transitional opt-in for PIN-free OPAQUE chat. General questions use the
 // retrieval-free AI route; every other question stays on the local vault path.
 const bool kEnableZkGeneralChatBridge = bool.fromEnvironment(
@@ -21333,6 +21338,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           mvk: mvk,
           accessIsCurrent: currentAccess,
           indexPhotoColors: kEnableZkLocalPhotoColorIndex,
+          indexPhotoDescriptions: kEnableZkEmbeddedPhotoDescriptionIndex,
           legacyItemInventory:
               ZkPinFreeItemReadSession.instance.activeForToken(token) &&
                       (signedSavedItemMutationOfferedForToken(token) ||
@@ -21431,6 +21437,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       ? 'Downloading “${selected.title}” from your vault.'
                       : pendingAction == 'open'
                           ? 'Opening “${selected.title}” from your vault.'
+                          : local.photoDescriptionEvidence
+                              ? 'Photo description match: “${selected.title}”.'
                           : local.visualColorEvidence
                               ? 'Possible color match: “${selected.title}”. '
                                   'This match uses photo colors. I did not '

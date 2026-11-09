@@ -29,12 +29,17 @@ class ZkLocalChatRecord {
   final ZkLocalChatKind kind;
   final String id;
   final String title;
+
   /// Exact locally decrypted saved-item type, never sent to general AI.
   final String? itemType;
   final String searchText;
+
+  /// Creator-authored JPEG description, read locally from EXIF metadata.
+  final String? photoDescription;
   final String? mimeType;
   final ZkLocalMediaKind mediaKind;
   final int? sizeBytes;
+
   /// Coarse colors observed from locally decrypted photo pixels. This is
   /// never evidence of a person, garment, object, or scene.
   final Set<String> visualColors;
@@ -48,6 +53,7 @@ class ZkLocalChatRecord {
     required this.title,
     this.itemType,
     this.searchText = '',
+    this.photoDescription,
     this.mimeType,
     this.mediaKind = ZkLocalMediaKind.other,
     this.sizeBytes,
@@ -62,6 +68,7 @@ class ZkLocalChatResult {
   final ZkLocalChatRecord? selection;
   final ZkLocalChatAction action;
   final bool visualColorEvidence;
+  final bool photoDescriptionEvidence;
 
   const ZkLocalChatResult(
     this.disposition, {
@@ -69,6 +76,7 @@ class ZkLocalChatResult {
     this.selection,
     this.action = ZkLocalChatAction.none,
     this.visualColorEvidence = false,
+    this.photoDescriptionEvidence = false,
   });
 
   bool get maySendToGeneralAi => disposition == ZkLocalChatDisposition.general;
@@ -335,8 +343,7 @@ class ZkLocalChatRouter {
     if (_mutationCue.hasMatch(query) && !isHowTo) {
       return const ZkLocalChatResult(ZkLocalChatDisposition.unsupportedAction);
     }
-    final isPrivate =
-        forcePrivate ||
+    final isPrivate = forcePrivate ||
         _privateCue.hasMatch(query) ||
         (hasLookup && (hasMy || hasAsset)) ||
         (hasMy && !isHowTo);
@@ -351,20 +358,30 @@ class ZkLocalChatRouter {
       if (mediaKind != null && record.mediaKind != mediaKind) continue;
       final titleTerms = _terms(record.title);
       final contentTerms = _terms(record.searchText);
+      final descriptionTerms = record.mediaKind == ZkLocalMediaKind.photo
+          ? _terms(record.photoDescription ?? '')
+          : const <String>{};
       final visualTerms = record.visualColors;
       // A photo/video/audio request can describe several attributes. One
       // matching color or place is not evidence that this is the requested
       // media. Require every indexed attribute before showing an exact card.
       if (mediaKind != null &&
           queryTerms.isNotEmpty &&
-          !(titleTerms.union(contentTerms).union(visualTerms)
+          !(titleTerms
+              .union(contentTerms)
+              .union(descriptionTerms)
+              .union(visualTerms)
               .containsAll(queryTerms))) {
         continue;
       }
       final titleScore = titleTerms.intersection(queryTerms).length;
       final contentScore = contentTerms.intersection(queryTerms).length;
+      final descriptionScore = descriptionTerms.intersection(queryTerms).length;
       final visualScore = visualTerms.intersection(queryTerms).length;
-      final score = titleScore * 4 + contentScore * 2 + visualScore;
+      final score = titleScore * 4 +
+          contentScore * 2 +
+          descriptionScore * 2 +
+          visualScore;
       if (score > 0 || (queryTerms.isEmpty && mediaKind != null)) {
         scored.add((record, score));
       }
@@ -385,14 +402,21 @@ class ZkLocalChatRouter {
     if (top.length > 1) {
       return ZkLocalChatResult(ZkLocalChatDisposition.ambiguous, matches: top);
     }
+    final selectedTextTerms =
+        _terms(top.single.title).union(_terms(top.single.searchText));
+    final selectedDescriptionTerms = _terms(top.single.photoDescription ?? '');
     return ZkLocalChatResult(
       ZkLocalChatDisposition.found,
       matches: top,
       selection: top.single,
+      photoDescriptionEvidence:
+          top.single.mediaKind == ZkLocalMediaKind.photo &&
+              selectedDescriptionTerms
+                  .difference(selectedTextTerms)
+                  .intersection(queryTerms)
+                  .isNotEmpty,
       visualColorEvidence: top.single.visualColors
-          .difference(_terms(top.single.title).union(
-            _terms(top.single.searchText),
-          ))
+          .difference(selectedTextTerms.union(selectedDescriptionTerms))
           .intersection(queryTerms)
           .isNotEmpty,
     );
