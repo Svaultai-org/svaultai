@@ -22,7 +22,7 @@ from auth_local import PIN_FREE_SAVED_ITEM_MUTATION_OFFER
 from legacy_source_snapshot import source_snapshot
 from routes import legacy_ciphertext_export_routes as export
 from routes import legacy_memory_v2_copy_routes as copy
-from vault_core import encrypt_message
+from vault_core import decrypt_message, encrypt_message
 
 
 def _dsn():
@@ -102,7 +102,8 @@ def test_owner_copy_is_source_bound_and_keeps_legacy_active(monkeypatch):
         "value": "Synthetic private memory",
         "memory_type": "note",
     })
-    old_ciphertext = encrypt_message(old_json, secrets.token_bytes(32)).encode()
+    legacy_key = secrets.token_bytes(32)
+    old_ciphertext = encrypt_message(old_json, legacy_key).encode()
     new_ciphertext = b"\x01" + secrets.token_bytes(12 + 32 + 16)
     encoded_copy = base64.urlsafe_b64encode(new_ciphertext).decode().rstrip("=")
     with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
@@ -205,11 +206,41 @@ def test_owner_copy_is_source_bound_and_keeps_legacy_active(monkeypatch):
             active = cur.fetchone()
             assert bytes(active[0]) == old_ciphertext
             assert active[1] is None
+            # A metadata-only write does not invalidate the exact source.
+            cur.execute("UPDATE vault_ai_memory SET updated_at=NOW() "
+                        "WHERE id=%s", (memory_id,))
+        assert client.get(path + "/readback").status_code == 200
+        new_json = json.dumps({
+            **json.loads(old_json), "value": "Synthetic edited memory",
+        })
+        changed_ciphertext = encrypt_message(new_json, legacy_key).encode()
+        # A rolled-back old-client write must preserve both source and copy.
+        rollback_conn = psycopg2.connect(dsn)
+        try:
+            with rollback_conn.cursor() as cur:
+                cur.execute("UPDATE vault_ai_memory SET payload_ciphertext=%s "
+                            "WHERE id=%s", (changed_ciphertext, memory_id))
+            rollback_conn.rollback()
+        finally:
+            rollback_conn.close()
+        assert client.get(path + "/readback").status_code == 200
+        # A committed old-client write still succeeds; only its now-stale
+        # prepared copy is invalidated in the same transaction.
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
             cur.execute("UPDATE vault_ai_memory SET payload_ciphertext=%s "
-                        "WHERE id=%s", (old_ciphertext + b"x", memory_id))
+                        "WHERE id=%s", (changed_ciphertext, memory_id))
         changed = client.get(path + "/readback")
-        assert changed.status_code == 409
-        assert changed.json()["detail"] == "legacy_memory_changed"
+        assert changed.status_code == 404
+        assert changed.json()["detail"] == "memory_copy_not_found"
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute("SELECT payload_ciphertext FROM vault_ai_memory "
+                        "WHERE id=%s", (memory_id,))
+            active = bytes(cur.fetchone()[0])
+            assert active == changed_ciphertext
+            assert decrypt_message(active.decode(), legacy_key) == new_json
+            cur.execute("SELECT COUNT(*) FROM memory_v2_prepared_copies "
+                        "WHERE legacy_memory_id=%s", (memory_id,))
+            assert cur.fetchone()[0] == 0
     with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM vaults WHERE vault_id IN (%s,%s)",
                     (vault_id, other_id))
