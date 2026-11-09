@@ -160,6 +160,63 @@ def test_exact_readback_then_retire_preserves_old_until_confirmed(setup):
     assert published["payload_ciphertext"] == staged.payload_ciphertext
 
 
+def test_owner_can_prepare_without_disabling_older_wallet_access(setup, monkeypatch):
+    db = setup
+    monkeypatch.setenv("WALLET_V2_WRITE_ENABLED", "false")
+    monkeypatch.setenv("WALLET_V2_MIGRATION_ENABLED", "false")
+    monkeypatch.setenv("WALLET_V2_PREPARE_ENABLED", "true")
+    staged = stage_body(db)
+    assert route.stage_legacy_wallet(staged, PRINCIPAL)["migration_state"] == "migration_pending"
+    assert db.legacy is not None
+    assert route.read_wallet_v2(WALLET_ID, PRINCIPAL)["migration_state"] == "migration_pending"
+    # The old creation gate remains open for unmigrated accounts. A prepared
+    # copy is not an active wallet and cannot authorize retirement by itself.
+    legacy_wallet_route._reject_legacy_wallet_write_when_v2_enabled()
+    with pytest.raises(HTTPException) as error:
+        route.retire_legacy_wallet(
+            retire_body(staged, "synthetic-receipt"), PRINCIPAL,
+        )
+    assert error.value.status_code == 404
+    assert db.legacy is not None
+    assert db.wallet["migration_state"] == "migration_pending"
+    assert db.proofs == []
+
+
+def test_preparation_requires_private_read_and_explicit_flag(setup, monkeypatch):
+    db = setup
+    monkeypatch.setenv("WALLET_V2_WRITE_ENABLED", "false")
+    monkeypatch.setenv("WALLET_V2_MIGRATION_ENABLED", "false")
+    monkeypatch.delenv("WALLET_V2_PREPARE_ENABLED", raising=False)
+    with pytest.raises(HTTPException) as error:
+        route.stage_legacy_wallet(stage_body(db), PRINCIPAL)
+    assert error.value.status_code == 404
+    monkeypatch.setenv("WALLET_V2_PREPARE_ENABLED", "true")
+    monkeypatch.setenv("WALLET_V2_READ_ENABLED", "false")
+    with pytest.raises(HTTPException) as error:
+        route.stage_legacy_wallet(stage_body(db), PRINCIPAL)
+    assert error.value.status_code == 404
+    assert db.wallet is None
+
+
+def test_unsupported_legacy_slot_cannot_be_prepared_or_retired(setup):
+    db = setup
+    staged = stage_body(db)
+    staged.network = "unknown_network"
+    with pytest.raises(HTTPException) as error:
+        route.stage_legacy_wallet(staged, PRINCIPAL)
+    assert error.value.status_code == 400
+    assert db.wallet is None
+    valid = stage_body(db)
+    route.stage_legacy_wallet(valid, PRINCIPAL)
+    receipt = route.read_wallet_v2(WALLET_ID, PRINCIPAL)["readback_receipt"]
+    db.wallet["network"] = "unknown_network"
+    with pytest.raises(HTTPException) as error:
+        route.retire_legacy_wallet(retire_body(valid, receipt), PRINCIPAL)
+    assert error.value.status_code == 409
+    assert db.legacy is not None
+    assert db.proofs == []
+
+
 def test_changed_source_blocks_retire_without_consuming_proof(setup):
     db = setup
     staged = stage_body(db)
