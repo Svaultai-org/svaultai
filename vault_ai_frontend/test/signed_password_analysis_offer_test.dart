@@ -83,6 +83,26 @@ void main() {
     expect(sent, isEmpty);
   });
 
+  test('legacy bearer cannot revive the retired server analyzer', () async {
+    final sent = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.invalid',
+      httpClient: MockClient((request) async {
+        sent.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+    await expectLater(
+      client.analyzePasswords(
+        authToken: 'unsigned-legacy-token',
+        vaultName: 'Synthetic vault',
+        pin: '7319462085',
+      ),
+      throwsStateError,
+    );
+    expect(sent, isEmpty);
+  });
+
   test('unoffered active OPAQUE key also rejects server PIN analysis', () async {
     final sent = <http.Request>[];
     ZkActiveMvk.set(

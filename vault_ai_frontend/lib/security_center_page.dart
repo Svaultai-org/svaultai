@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'ui/tokens.dart';
 import 'package:provider/provider.dart';
@@ -24,13 +23,11 @@ bool useLocalZkPasswordAnalysis({
 }) =>
     hasZkHandle || hasMvk || signedPasswordAnalysisOffered;
 
-/// A strict PIN-free build cannot offer the older server analyzer to a
-/// legacy-only session. Keep this separate from ordinary legacy compatibility
-/// until those accounts have a supported private upgrade path.
+/// The server analyzer is retired in every build. A legacy-only session
+/// needs a private upgrade before password analysis is available.
 bool legacyPasswordAnalysisNeedsPrivateUpgrade({
   required bool localAnalysisAvailable,
-  required bool pinTransportRejected,
-}) => pinTransportRejected && !localAnalysisAvailable;
+}) => !localAnalysisAvailable;
 
 class SecurityCenterPage extends StatefulWidget {
   final VaultAIClient? client;
@@ -69,7 +66,6 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
   bool get _legacyAnalysisNeedsPrivateUpgrade =>
       legacyPasswordAnalysisNeedsPrivateUpgrade(
         localAnalysisAvailable: _useLocalZkAnalysis,
-        pinTransportRejected: kPrivateOnlyTransportRejectPin,
       );
 
   @override
@@ -308,7 +304,6 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
 
   
   Future<bool> _confirmAnalyzeWarning() async {
-    final localOnly = _useLocalZkAnalysis;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -316,16 +311,10 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
         title: Text(
           AppLocalizations.of(context).securityAnalyzePasswordsTitle,
         ),
-        content: Text(
-          localOnly
-              ? 'SVaultAI will check your saved login passwords on this '
-                  'device. Passwords and the check results stay on this device.'
-              : 'This older check sends your vault PIN to SVaultAI and '
-                  'analyzes saved login passwords on the server. It saves '
-                  'strength scores and one-way hashes to detect reused '
-                  'passwords in your vault. Continue only if you accept '
-                  'this legacy check.',
-          style: const TextStyle(height: 1.4),
+        content: const Text(
+          'SVaultAI will check your saved login passwords on this '
+          'device. Passwords and the check results stay on this device.',
+          style: TextStyle(height: 1.4),
         ),
         actions: [
           TextButton(
@@ -343,162 +332,14 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
   }
 
   
-  Future<({String vaultName, String pin})?> _promptVaultAndPin() async {
-    final vaultCtl = TextEditingController();
-    final pinCtl = TextEditingController();
-    final result = await showDialog<({String vaultName, String pin})>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: VaultColors.surface,
-        title: Text(AppLocalizations.of(context).securityEnterVaultPin),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: vaultCtl,
-              autofillHints: kIsWeb ? null : const <String>[],
-              decoration: const InputDecoration(labelText: 'Vault name'),
-              autofocus: true,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: pinCtl,
-              autofillHints: kIsWeb ? null : const <String>[],
-              decoration: const InputDecoration(labelText: 'PIN'),
-              obscureText: true,
-              keyboardType: TextInputType.number,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, null),
-            child: Text(AppLocalizations.of(context).commonCancel),
-          ),
-          FilledButton(
-            onPressed: () {
-              final v = vaultCtl.text.trim();
-              final p = pinCtl.text.trim();
-              if (v.isEmpty || p.isEmpty) return;
-              pinCtl.clear();
-              Navigator.pop(ctx, (vaultName: v, pin: p));
-            },
-            child: Text(AppLocalizations.of(context).securityAnalyzeButton),
-          ),
-        ],
-      ),
-    );
-    pinCtl.clear();
-    return result;
-  }
-
-  
-  Future<bool> _showAnalyzeResult(Map<String, dynamic> r) async {
-    final analyzed = (r['analyzed_count'] ?? 0) as int;
-    final weak = (r['weak'] ?? 0) as int;
-    final reused = (r['reused'] ?? 0) as int;
-    final failed = (r['failed_count'] ?? 0) as int;
-    final hasMore = (r['has_more'] ?? false) as bool;
-
-    final lines = <String>[
-      'Analyzed $analyzed password${analyzed == 1 ? '' : 's'}.',
-      'Found $weak weak and $reused reused.',
-    ];
-    if (failed > 0) {
-      lines.add('$failed item${failed == 1 ? '' : 's'} could not be read.');
-    }
-
-    final cont = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: VaultColors.surface,
-        title: const Text('Done'),
-        content: Text(lines.join('\n'), style: const TextStyle(height: 1.4)),
-        actions: [
-          if (hasMore)
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(AppLocalizations.of(context).securityAnalyzeMore),
-            ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-    return cont == true;
-  }
-
   Future<void> _runAnalyzePasswords() async {
     if (_analyzing) return;
     final app = context.read<AppState>();
-    final initialToken = app.sessionToken;
-    final initialVaultId = app.vaultId;
-    if (initialToken == null || initialVaultId == null) return;
-    bool sameVault() => mounted && app.sessionToken == initialToken &&
-        app.vaultId == initialVaultId;
-    // Reject before the legacy name/PIN dialog, not after collecting a PIN.
-    if (_legacyAnalysisNeedsPrivateUpgrade) return;
-    if (_useLocalZkAnalysis) {
-      await _runLocalZkAnalyzePasswords();
+    if (app.sessionToken == null || app.vaultId == null ||
+        _legacyAnalysisNeedsPrivateUpgrade) {
       return;
     }
-    final messenger = ScaffoldMessenger.of(context);
-
-    
-    if (!await _confirmAnalyzeWarning() || !sameVault()) return;
-    if (_useLocalZkAnalysis) {
-      await _runLocalZkAnalyzePasswords(warningConfirmed: true);
-      return;
-    }
-    if (_legacyAnalysisNeedsPrivateUpgrade) return;
-
-    
-    int? cursor;
-    setState(() => _analyzing = true);
-    try {
-      while (true) {
-        if (!sameVault()) return;
-        if (_useLocalZkAnalysis) {
-          await _runLocalZkAnalyzePasswords(warningConfirmed: true);
-          return;
-        }
-        final creds = await _promptVaultAndPin();
-        if (creds == null) break;
-        if (!sameVault()) return;
-        if (_useLocalZkAnalysis) {
-          await _runLocalZkAnalyzePasswords(warningConfirmed: true);
-          return;
-        }
-        if (_legacyAnalysisNeedsPrivateUpgrade) return;
-        Map<String, dynamic> result;
-        try {
-          result = await _client.analyzePasswords(
-            authToken: initialToken,
-            vaultName: creds.vaultName,
-            pin: creds.pin,
-            cursor: cursor,
-          );
-        } catch (e) {
-          if (!mounted) return;
-          messenger.showSnackBar(
-            SnackBar(content: Text('Analyze failed: $e')),
-          );
-          return;
-        }
-        if (!sameVault()) return;
-        final wantsMore = await _showAnalyzeResult(result);
-        if (!wantsMore) break;
-        if (!sameVault()) return;
-        cursor = result['next_cursor'] as int?;
-        if (cursor == null) break;
-      }
-    } finally {
-      if (mounted) setState(() => _analyzing = false);
-      
-      await _refresh();
-    }
+    await _runLocalZkAnalyzePasswords();
   }
 
   Future<void> _runLocalZkAnalyzePasswords({bool warningConfirmed = false}) async {

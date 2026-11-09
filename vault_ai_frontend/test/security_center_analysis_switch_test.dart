@@ -26,7 +26,7 @@ void main() {
     ZkActiveMvk.clear();
   });
 
-  testWidgets('private adoption while warning is open never asks for PIN send',
+  testWidgets('losing the private key while warning is open never asks for PIN',
       (tester) async {
     final app = AppState();
     await app.setSession(
@@ -35,6 +35,12 @@ void main() {
       vaultNameValue: 'Synthetic vault',
     );
     app.markUnlocked();
+    app.vaultHandle = 'synthetic-opaque-handle';
+    ZkActiveMvk.set(
+      mvk: SecretKey(List<int>.filled(32, 17)),
+      vaultId: 'synthetic-vault',
+      vaultHandle: 'synthetic-opaque-handle',
+    );
     final sent = <http.Request>[];
     final client = VaultAIClient(
       baseUrl: 'https://synthetic.example',
@@ -66,15 +72,10 @@ void main() {
     await tester.ensureVisible(button);
     await tester.tap(button);
     await tester.pumpAndSettle();
-    expect(find.textContaining('This older check sends your vault PIN'),
+    expect(find.textContaining('Passwords and the check results stay on this device'),
         findsOneWidget);
 
-    app.vaultHandle = 'synthetic-opaque-handle';
-    ZkActiveMvk.set(
-      mvk: SecretKey(List<int>.filled(32, 17)),
-      vaultId: 'synthetic-vault',
-      vaultHandle: 'synthetic-opaque-handle',
-    );
+    ZkActiveMvk.clear();
     final continueButton = find.descendant(
       of: find.byType(AlertDialog),
       matching: find.byType(FilledButton),

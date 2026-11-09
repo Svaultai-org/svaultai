@@ -401,19 +401,6 @@ int _signedOfferBits(String token) {
   }
 }
 
-// The server signs OPAQUE sessions with a versioned envelope when read offers
-// are negotiated. This is a conservative client-side routing check only: a
-// forged shape can deny a legacy request, but it cannot authorize one.
-bool _hasSignedOpaqueSessionShape(String token) {
-  try {
-    final wire = base64Url.decode(base64Url.normalize(token));
-    return (wire.length == 50 && wire[0] == 3) ||
-        (wire.length == 51 && wire[0] == 4);
-  } on FormatException {
-    return false;
-  }
-}
-
 bool signedPrivateChatOfferedForToken(String token) =>
     (_signedOfferBits(token) & 512) != 0;
 
@@ -1967,39 +1954,10 @@ class VaultAIClient {
     int? cursor,
     int? limit,
   }) async {
-    if (kPrivateOnlyTransportRejectPin ||
-        _hasSignedOpaqueSessionShape(authToken) ||
-        zk_mvk_store.ZkActiveMvk.current() != null) {
-      throw StateError('Use local password analysis for this vault.');
-    }
-    final uri = Uri.parse('$baseUrl/security-center/analyze-passwords');
-    final body = jsonEncode({
-      'vault_name': '',
-      'pin': pin,
-      if (cursor != null) 'cursor': cursor,
-      if (limit != null) 'limit': limit,
-    });
-    final response = await _sessionHttp.post(
-      uri,
-      headers: _defaultHeaders(authToken: authToken, json: true),
-      body: body,
-    );
-
-    if (response.statusCode != 200) {
-      _throwIfAuthExpired(response.statusCode, response.body);
-      _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'Analyze passwords failed',
-        statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
-    }
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw Exception('Invalid analyze-passwords response format');
-    }
-    return decoded;
+    // The local analyzer handles OPAQUE vaults. Keep this old public method
+    // as a fail-closed compatibility stub so no caller can revive the
+    // server-side analyzer by holding a legacy bearer or losing the MVK.
+    throw StateError('Use local password analysis for this vault.');
   }
 
   Future<Map<String, dynamic>> approveDevice({
