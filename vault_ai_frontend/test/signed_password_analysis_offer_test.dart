@@ -1,10 +1,12 @@
 import 'dart:convert';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/services/zk_auth_service.dart';
+import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
 
 String _signedToken(int bits) => base64Url
     .encode(<int>[3, bits, ...List<int>.filled(48, 7)])
@@ -16,6 +18,8 @@ String _signedChatToken(int bits) => base64Url
     .replaceAll('=', '');
 
 void main() {
+  tearDown(ZkActiveMvk.clear);
+
   test('password-analysis offer is opt in until the server is ready', () {
     expect(kSignedPasswordAnalysisClientEnabled, isFalse);
   });
@@ -71,6 +75,31 @@ void main() {
     await expectLater(
       client.analyzePasswords(
         authToken: token,
+        vaultName: 'Synthetic vault',
+        pin: '7319462085',
+      ),
+      throwsStateError,
+    );
+    expect(sent, isEmpty);
+  });
+
+  test('unoffered active OPAQUE key also rejects server PIN analysis', () async {
+    final sent = <http.Request>[];
+    ZkActiveMvk.set(
+      mvk: SecretKey(List<int>.filled(32, 17)),
+      vaultId: 'synthetic-vault',
+      vaultHandle: 'synthetic-handle',
+    );
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.invalid',
+      httpClient: MockClient((request) async {
+        sent.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+    await expectLater(
+      client.analyzePasswords(
+        authToken: 'unsigned-synthetic-token',
         vaultName: 'Synthetic vault',
         pin: '7319462085',
       ),

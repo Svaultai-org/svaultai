@@ -1884,7 +1884,8 @@ class VaultAIClient {
     int? limit,
   }) async {
     if (kPrivateOnlyTransportRejectPin ||
-        _hasSignedOpaqueSessionShape(authToken)) {
+        _hasSignedOpaqueSessionShape(authToken) ||
+        zk_mvk_store.ZkActiveMvk.current() != null) {
       throw StateError('Use local password analysis for this vault.');
     }
     final uri = Uri.parse('$baseUrl/security-center/analyze-passwords');
