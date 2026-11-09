@@ -4474,16 +4474,19 @@ Future<bool> tryZkFinalizeBeneficiaryLabelCiphertext({
     final metaKey = await hierarchy.metadataKey();
     final ct = await vk_hier.aesGcmWrap(metaKey, utf8.encode(label));
     final uri = Uri.parse('$baseUrl/vault/ciphertext/beneficiary-links');
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $authToken',
+    };
+    final body = jsonEncode(<String, dynamic>{
+      'link_id': linkId,
+      'passer_label_ciphertext': vk_hier.b64urlEncode(ct),
+    });
+    assertOutboundPinFreeRequest(uri, headers, body: body);
     final resp = await http.post(
       uri,
-      headers: <String, String>{
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $authToken',
-      },
-      body: jsonEncode(<String, dynamic>{
-        'link_id': linkId,
-        'passer_label_ciphertext': vk_hier.b64urlEncode(ct),
-      }),
+      headers: headers,
+      body: body,
     );
     return resp.statusCode == 200;
   } catch (_) {
@@ -5857,6 +5860,7 @@ Future<void> _stageLegacyContentBestEffort({
       sessionToken: token,
       deviceId: apiClientDeviceId(),
     );
+    assertOutboundPinFreeRequest(uri, headers, body: body);
     late http.Response response;
     switch (method) {
       case 'GET':
