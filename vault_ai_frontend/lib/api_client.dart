@@ -124,6 +124,12 @@ void _rejectOfferedLegacyFileDownload(String authToken) {
   }
 }
 
+void _rejectOfferedLegacyFileCreate(String authToken) {
+  if (signedFileCreateOfferedForToken(authToken)) {
+    throw StateError('This file uses the private upload route.');
+  }
+}
+
 // Coordinated rollout with VAULTAI_ZK_METADATA_INVENTORY_ENABLED on the API.
 // A missing keyless route must fail closed instead of sending a ZK PIN.
 const bool kEnableKeylessSavedItemRead = bool.fromEnvironment(
@@ -389,6 +395,9 @@ bool signedFileListOfferedForToken(String token) =>
 
 bool signedFileDownloadOfferedForToken(String token) =>
     (_signedOfferBits(token) & 4) != 0;
+
+bool signedFileCreateOfferedForToken(String token) =>
+    (_signedOfferBits(token) & 8) != 0;
 
 bool signedFileMutationOfferedForToken(String token) =>
     (_signedOfferBits(token) & 32) != 0;
@@ -4737,6 +4746,7 @@ class VaultAIClient {
     String? contentSha256,
     String? duplicateAction,
   }) async {
+    _rejectOfferedLegacyFileCreate(authToken);
     _rejectLegacyFilePinForActiveZk();
     final uri = Uri.parse('$baseUrl/upload-file');
 
@@ -6164,6 +6174,7 @@ class VaultAIClient {
     String? relativePath,
     String? importId,
   }) async {
+    _rejectOfferedLegacyFileCreate(authToken);
     _rejectLegacyFilePinForActiveZk();
     final uri = Uri.parse('$baseUrl/upload-file/init');
     final body = <String, dynamic>{

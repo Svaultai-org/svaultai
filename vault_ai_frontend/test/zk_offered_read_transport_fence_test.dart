@@ -282,6 +282,7 @@ void main() {
       () async {
     final offeredToken = signedToken(8);
     SessionTermination.instance.bindSession(offeredToken);
+    expect(signedFileCreateOfferedForToken(offeredToken), isTrue);
     final sent = <http.Request>[];
     final client = VaultAIClient(
       baseUrl: 'https://synthetic.example',
@@ -298,7 +299,11 @@ void main() {
         filename: 'synthetic.txt',
         fileBytes: Uint8List.fromList(<int>[1, 2, 3]),
       ),
-      throwsStateError,
+      throwsA(isA<StateError>().having(
+        (error) => error.message,
+        'message',
+        'This file uses the private upload route.',
+      )),
     );
     await expectLater(
       client.initChunkedUpload(
@@ -310,9 +315,51 @@ void main() {
         totalBytes: 3,
         chunkSize: 3,
       ),
-      throwsStateError,
+      throwsA(isA<StateError>().having(
+        (error) => error.message,
+        'message',
+        'This file uses the private upload route.',
+      )),
     );
     expect(sent, isEmpty);
+  });
+
+  test('legacy-only upload contracts remain usable without a create offer',
+      () async {
+    expect(signedFileCreateOfferedForToken(token), isFalse);
+    final sent = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        sent.add(request);
+        expect(request.body, contains(pinMarker));
+        if (request.url.path == '/upload-file') {
+          return http.Response('{"file_id":"synthetic-inline"}', 200);
+        }
+        expect(request.url.path, '/upload-file/init');
+        return http.Response('{"file_id":"synthetic-chunked"}', 200);
+      }),
+    );
+    final inline = await client.uploadVaultFile(
+      vaultName: 'synthetic-vault',
+      pin: pinMarker,
+      authToken: token,
+      filename: 'synthetic.txt',
+      fileBytes: Uint8List.fromList(<int>[1, 2, 3]),
+    );
+    final chunked = await client.initChunkedUpload(
+      vaultName: 'synthetic-vault',
+      pin: pinMarker,
+      authToken: token,
+      filename: 'synthetic.txt',
+      contentType: 'text/plain',
+      totalBytes: 3,
+      chunkSize: 3,
+    );
+    expect(inline['file_id'], 'synthetic-inline');
+    expect(chunked['file_id'], 'synthetic-chunked');
+    expect(sent.map((request) => request.url.path),
+        <String>['/upload-file', '/upload-file/init']);
   });
 
   test('actual API download cannot transmit a PIN after its offer', () async {
