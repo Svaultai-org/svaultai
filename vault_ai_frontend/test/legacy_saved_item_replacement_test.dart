@@ -117,6 +117,157 @@ void main() {
     },
   );
 
+  test(
+    'verified staged V2 copy can be edited without exposing PIN or fields',
+    () async {
+      final oldCiphertext = await codec.encodeLegacyItem(<String, dynamic>{
+        'category': 'login',
+        'title': 'Old title',
+        'fields': <String, dynamic>{
+          'username': 'synthetic-user',
+          'password': 'synthetic-secret',
+        },
+        'item_id': 42,
+      });
+      final v2 = await codec.stageItem(
+        itemId: 42,
+        itemType: 'login',
+        service: 'Old title',
+        legacyCiphertext: oldCiphertext,
+      );
+      final stagedSnapshot = List<String>.filled(43, 'b').join();
+      String? candidate;
+      var proofCalls = 0;
+      final replacement = LegacySavedItemReplacement(
+        legacyKey: legacyKey,
+        mvk: mvk,
+        requireCurrentSession: () {},
+        proofProvider: () async {
+          proofCalls++;
+          return 'p1.1.${List<String>.filled(32, 'x').join()}.'
+              '${List<String>.filled(43, 'y').join()}';
+        },
+        sourceReader: (_) async => LegacySavedItemSource(
+          itemId: 42,
+          itemType: 'login',
+          service: 'Old title',
+          sourceSnapshot: snapshot,
+          ciphertext: oldCiphertext,
+          stagedSourceSnapshot: stagedSnapshot,
+          stagedItemTypeCiphertext: v2.itemTypeCiphertext,
+          stagedServiceCiphertext: v2.serviceCiphertext,
+          stagedPayloadCiphertext: v2.payloadCiphertext,
+        ),
+        post: (path, body) async {
+          final wire = jsonEncode(body);
+          expect(wire, isNot(contains('synthetic-secret')));
+          expect(wire, isNot(contains('synthetic-user')));
+          expect(wire, isNot(contains('Old title')));
+          if (path.endsWith('/stage')) {
+            expect(body['staged_source_snapshot'], stagedSnapshot);
+            expect(body['client_verified_staged_copy'], true);
+            expect(body.containsKey('pin'), false);
+            candidate = body['candidate_encrypted_data'] as String;
+            return <String, dynamic>{'item_id': 42, 'staged': true};
+          }
+          expect(path, endsWith('/promote'));
+          expect(body['client_verified_exact_content'], true);
+          expect(body['zk_proof_token'], startsWith('p1.'));
+          return <String, dynamic>{
+            'id': 42,
+            'item_id': 42,
+            'item_type': 'login',
+            'service': 'Old title',
+            'updated': true,
+            'created': false,
+            'renamed': false,
+            'service_ciphertext': null,
+          };
+        },
+        get: (path) async {
+          expect(path, endsWith('/staged'));
+          return <String, dynamic>{
+            'item_id': 42,
+            'source_snapshot': snapshot,
+            'candidate_encrypted_data': candidate,
+            'readback_receipt': 'receipt',
+          };
+        },
+      );
+      final result = await replacement.replace(
+        itemId: 42,
+        itemType: 'login',
+        oldService: 'Old title',
+        fields: <String, dynamic>{'username': 'updated-user'},
+      );
+      expect(result['updated'], true);
+      expect(proofCalls, 1);
+    },
+  );
+
+  test(
+    'divergent staged V2 copy stops before network write or proof',
+    () async {
+      final oldCiphertext = await codec.encodeLegacyItem(<String, dynamic>{
+        'category': 'login',
+        'title': 'Old title',
+        'fields': <String, dynamic>{'username': 'old-user'},
+        'item_id': 42,
+      });
+      final divergent = await codec.encodeLegacyItem(<String, dynamic>{
+        'category': 'login',
+        'title': 'Old title',
+        'fields': <String, dynamic>{'username': 'different-user'},
+        'item_id': 42,
+      });
+      final v2 = await codec.stageItem(
+        itemId: 42,
+        itemType: 'login',
+        service: 'Old title',
+        legacyCiphertext: divergent,
+      );
+      var networkCalls = 0;
+      final replacement = LegacySavedItemReplacement(
+        legacyKey: legacyKey,
+        mvk: mvk,
+        requireCurrentSession: () {},
+        proofProvider: () async {
+          networkCalls++;
+          return 'unused';
+        },
+        sourceReader: (_) async => LegacySavedItemSource(
+          itemId: 42,
+          itemType: 'login',
+          service: 'Old title',
+          sourceSnapshot: snapshot,
+          ciphertext: oldCiphertext,
+          stagedSourceSnapshot: List<String>.filled(43, 'b').join(),
+          stagedItemTypeCiphertext: v2.itemTypeCiphertext,
+          stagedServiceCiphertext: v2.serviceCiphertext,
+          stagedPayloadCiphertext: v2.payloadCiphertext,
+        ),
+        post: (_, __) async {
+          networkCalls++;
+          return <String, dynamic>{};
+        },
+        get: (_) async {
+          networkCalls++;
+          return <String, dynamic>{};
+        },
+      );
+      await expectLater(
+        replacement.replace(
+          itemId: 42,
+          itemType: 'login',
+          oldService: 'Old title',
+          fields: <String, dynamic>{'username': 'updated-user'},
+        ),
+        throwsFormatException,
+      );
+      expect(networkCalls, 0);
+    },
+  );
+
   test('mismatched staged bytes never request a promotion proof', () async {
     final oldCiphertext = await codec.encodeLegacyItem(<String, dynamic>{
       'category': 'login',
@@ -383,62 +534,65 @@ void main() {
     expect(posts, 0);
   });
 
-  test('field edit after rename accepts the old-client service response',
-      () async {
-    final oldCiphertext = await codec.encodeLegacyItem(<String, dynamic>{
-      'category': 'login',
-      'title': 'Private title',
-      'fields': <String, dynamic>{'username': 'old'},
-      'item_id': 42,
-    });
-    String? candidate;
-    final replacement = LegacySavedItemReplacement(
-      legacyKey: legacyKey,
-      mvk: mvk,
-      allowEncryptedRename: true,
-      requireCurrentSession: () {},
-      proofProvider: () async => 'p1.1.${List<String>.filled(32, 'x').join()}.'
-          '${List<String>.filled(43, 'y').join()}',
-      sourceReader: (_) async => LegacySavedItemSource(
+  test(
+    'field edit after rename accepts the old-client service response',
+    () async {
+      final oldCiphertext = await codec.encodeLegacyItem(<String, dynamic>{
+        'category': 'login',
+        'title': 'Private title',
+        'fields': <String, dynamic>{'username': 'old'},
+        'item_id': 42,
+      });
+      String? candidate;
+      final replacement = LegacySavedItemReplacement(
+        legacyKey: legacyKey,
+        mvk: mvk,
+        allowEncryptedRename: true,
+        requireCurrentSession: () {},
+        proofProvider: () async =>
+            'p1.1.${List<String>.filled(32, 'x').join()}.'
+            '${List<String>.filled(43, 'y').join()}',
+        sourceReader: (_) async => LegacySavedItemSource(
+          itemId: 42,
+          itemType: 'login',
+          service: 'Private title',
+          sourceSnapshot: snapshot,
+          ciphertext: oldCiphertext,
+        ),
+        post: (path, body) async {
+          expect(body, isNot(contains('new_service_ciphertext')));
+          expect(body, isNot(contains('new_title_lookup_hash')));
+          if (path.endsWith('/stage')) {
+            candidate = body['candidate_encrypted_data'] as String;
+            return <String, dynamic>{'staged': true};
+          }
+          return <String, dynamic>{
+            'id': 42,
+            'item_id': 42,
+            'item_type': 'login',
+            'service': 'Old client title',
+            'updated': true,
+            'renamed': false,
+            'service_ciphertext': 'preserved-on-server',
+          };
+        },
+        get: (_) async => <String, dynamic>{
+          'item_id': 42,
+          'source_snapshot': snapshot,
+          'candidate_encrypted_data': candidate,
+          'new_service_ciphertext': null,
+          'new_title_lookup_hash': null,
+          'readback_receipt': 'receipt',
+        },
+      );
+      final result = await replacement.replace(
         itemId: 42,
         itemType: 'login',
-        service: 'Private title',
-        sourceSnapshot: snapshot,
-        ciphertext: oldCiphertext,
-      ),
-      post: (path, body) async {
-        expect(body, isNot(contains('new_service_ciphertext')));
-        expect(body, isNot(contains('new_title_lookup_hash')));
-        if (path.endsWith('/stage')) {
-          candidate = body['candidate_encrypted_data'] as String;
-          return <String, dynamic>{'staged': true};
-        }
-        return <String, dynamic>{
-          'id': 42,
-          'item_id': 42,
-          'item_type': 'login',
-          'service': 'Old client title',
-          'updated': true,
-          'renamed': false,
-          'service_ciphertext': 'preserved-on-server',
-        };
-      },
-      get: (_) async => <String, dynamic>{
-        'item_id': 42,
-        'source_snapshot': snapshot,
-        'candidate_encrypted_data': candidate,
-        'new_service_ciphertext': null,
-        'new_title_lookup_hash': null,
-        'readback_receipt': 'receipt',
-      },
-    );
-    final result = await replacement.replace(
-      itemId: 42,
-      itemType: 'login',
-      oldService: 'Private title',
-      fields: <String, dynamic>{'username': 'new'},
-    );
-    expect(result['updated'], true);
-    expect(result['service'], 'Old client title');
-  });
+        oldService: 'Private title',
+        fields: <String, dynamic>{'username': 'new'},
+      );
+      expect(result['updated'], true);
+      expect(result['service'], 'Old client title');
+    },
+  );
 }

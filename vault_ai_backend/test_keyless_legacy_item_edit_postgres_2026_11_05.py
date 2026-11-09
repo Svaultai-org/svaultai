@@ -129,6 +129,33 @@ def test_private_delete_accepts_only_complete_clean_stages():
     })
 
 
+def test_staged_item_edit_requires_a_complete_clean_v2_copy():
+    base = {
+        "encrypted_data": "synthetic-legacy-ciphertext",
+        "item_type": "login", "service": "Synthetic",
+        "item_type_ciphertext": b"type", "service_ciphertext": b"service",
+        "payload_ciphertext": b"payload", "title_lookup_hash": None,
+        "legacy_item_rename_active": False,
+    }
+    with pytest.raises(HTTPException) as unverified:
+        edit._require_legacy_item_editable(base)
+    assert unverified.value.status_code == 409
+    edit._require_legacy_item_editable(base, allow_verified_stage=True)
+    for change in (
+        {"item_type_ciphertext": None},
+        {"service_ciphertext": None},
+        {"payload_ciphertext": None},
+        {"title_lookup_hash": b"index"},
+        {"legacy_item_rename_active": True},
+        {"item_type": "crypto_wallet_account"},
+    ):
+        with pytest.raises(HTTPException) as failure:
+            edit._require_legacy_item_editable(
+                {**base, **change}, allow_verified_stage=True,
+            )
+        assert failure.value.status_code == 409
+
+
 @pytest.mark.skipif(
     not os.getenv("VAULTAI_TEST_DATABASE_URL"),
     reason="requires explicit disposable loopback PostgreSQL",
@@ -422,6 +449,81 @@ def test_keyless_item_edit_preserves_old_source_and_proof_atomicity(monkeypatch)
             assert cur.fetchone() == (
                 len(candidate_ciphertext) - len(old_client_edit),
             )
+
+        # A complete V2 sidecar can be replaced only when the owner client
+        # declares an exact decrypt-and-compare and supplies its full state
+        # snapshot. The previous sidecar is retained in edit history.
+        previous_v2 = (b"synthetic-v2-type", b"synthetic-v2-title",
+                       b"synthetic-v2-payload")
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE vault_items SET item_type_ciphertext=%s,"
+                "service_ciphertext=%s,payload_ciphertext=%s WHERE id=%s",
+                (*previous_v2, item_id),
+            )
+        with psycopg2.connect(dsn) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT " + ",".join(ITEM_DELETE_FIELDS) +
+                " FROM vault_items WHERE id=%s", (item_id,),
+            )
+            staged_row = cur.fetchone()
+        staged_source = source_snapshot(
+            "item", staged_row, vault_id=vault_id, record_id=item_id,
+        )
+        staged_full = item_delete_snapshot(
+            staged_row, vault_id=vault_id, record_id=item_id,
+        )
+        next_ciphertext = encrypt_message(json.dumps({
+            **candidate_record,
+            "fields": {**candidate_record["fields"], "username": "revised"},
+        }), key)
+        next_stage = {
+            "source_snapshot": staged_source,
+            "candidate_encrypted_data": next_ciphertext,
+            "staged_source_snapshot": staged_full,
+            "client_verified_staged_copy": True,
+        }
+        assert _json(client.post(path + "/stage", json={
+            **next_stage, "client_verified_staged_copy": False,
+        }), 409)["detail"] == "item_requires_dedicated_edit"
+        assert _json(client.post(path + "/stage", json={
+            **next_stage, "staged_source_snapshot": "X" * 43,
+        }), 409)["detail"] == "item_stage_changed"
+        _json(client.post(path + "/stage", json=next_stage))
+        staged_readback = _json(client.get(path + "/staged"))
+        assert staged_readback["candidate_encrypted_data"] == next_ciphertext
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT encrypted_data,item_type_ciphertext,"
+                "service_ciphertext,payload_ciphertext FROM vault_items "
+                "WHERE id=%s", (item_id,),
+            )
+            active = cur.fetchone()
+            assert active[0] == candidate_ciphertext
+            assert tuple(map(bytes, active[1:])) == previous_v2
+            cur.execute(
+                "INSERT INTO qa_edit_proofs(proof,vault_id) VALUES(%s,%s)",
+                ("synthetic-proof-staged-copy", vault_id),
+            )
+        _json(client.post(path + "/promote", json={
+            "source_snapshot": staged_source,
+            "readback_receipt": staged_readback["readback_receipt"],
+            "zk_proof_token": "synthetic-proof-staged-copy",
+            "client_verified_exact_content": True,
+        }))
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT encrypted_data,item_type_ciphertext,"
+                "service_ciphertext,payload_ciphertext FROM vault_items "
+                "WHERE id=%s", (item_id,),
+            )
+            assert cur.fetchone() == (next_ciphertext, None, None, None)
+            cur.execute(
+                "SELECT prior_item_type_ciphertext,prior_service_ciphertext,"
+                "prior_payload_ciphertext FROM legacy_item_edit_history "
+                "WHERE item_id=%s ORDER BY history_id DESC LIMIT 1", (item_id,),
+            )
+            assert tuple(map(bytes, cur.fetchone())) == previous_v2
     with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM vaults WHERE vault_id IN (%s,%s)", (vault_id, other_id))
 

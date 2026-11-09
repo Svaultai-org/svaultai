@@ -378,6 +378,9 @@ def _read_chunk(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
             "service": row["service"],
             "item_type_ciphertext": _metadata_b64(row["item_type_ciphertext"]),
             "service_ciphertext": _metadata_b64(row["service_ciphertext"]),
+            # The owner device compares a complete staged V2 copy with the
+            # still-active legacy source before an edit may invalidate it.
+            "payload_ciphertext": _metadata_b64(row["payload_ciphertext"]),
         }
     else:
         # Older clients can rename using plaintext columns. The owner needs

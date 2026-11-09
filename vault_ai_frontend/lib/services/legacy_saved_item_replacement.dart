@@ -10,10 +10,11 @@ import 'legacy_ciphertext_migration_codec.dart';
 import 'vault_key_hierarchy.dart';
 import 'zk_proof_token_guard.dart';
 
-typedef LegacyItemRequest = Future<Map<String, dynamic>> Function(
-  String path,
-  Map<String, dynamic> body,
-);
+typedef LegacyItemRequest =
+    Future<Map<String, dynamic>> Function(
+      String path,
+      Map<String, dynamic> body,
+    );
 typedef LegacyItemRead = Future<Map<String, dynamic>> Function(String path);
 
 class LegacySavedItemSource {
@@ -22,6 +23,10 @@ class LegacySavedItemSource {
   final String service;
   final String sourceSnapshot;
   final String ciphertext;
+  final String? stagedSourceSnapshot;
+  final String? stagedItemTypeCiphertext;
+  final String? stagedServiceCiphertext;
+  final String? stagedPayloadCiphertext;
 
   const LegacySavedItemSource({
     required this.itemId,
@@ -29,6 +34,10 @@ class LegacySavedItemSource {
     required this.service,
     required this.sourceSnapshot,
     required this.ciphertext,
+    this.stagedSourceSnapshot,
+    this.stagedItemTypeCiphertext,
+    this.stagedServiceCiphertext,
+    this.stagedPayloadCiphertext,
   });
 }
 
@@ -175,7 +184,8 @@ class LegacySavedItemReplacement {
     if (itemId <= 0 || itemType.trim().isEmpty || oldService.trim().isEmpty) {
       throw const FormatException('Invalid saved-item identity');
     }
-    final rename = newService != null &&
+    final rename =
+        newService != null &&
         newService.trim().isNotEmpty &&
         newService.trim() != oldService;
     if (rename && !allowEncryptedRename) {
@@ -222,6 +232,33 @@ class LegacySavedItemReplacement {
     );
     final oldRecord = await codec.decodeLegacyItem(source.ciphertext);
     requireCurrentSession();
+    final hasStagedCopy =
+        source.stagedItemTypeCiphertext != null ||
+        source.stagedPayloadCiphertext != null;
+    if (hasStagedCopy) {
+      final stagedSnapshot = source.stagedSourceSnapshot;
+      final stagedType = source.stagedItemTypeCiphertext;
+      final stagedService = source.stagedServiceCiphertext;
+      final stagedPayload = source.stagedPayloadCiphertext;
+      if (stagedSnapshot == null ||
+          !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(stagedSnapshot) ||
+          stagedType == null ||
+          stagedService == null ||
+          stagedPayload == null ||
+          !await codec.verifyStagedItem(
+            itemType: itemType,
+            service: oldService,
+            legacyCiphertext: source.ciphertext,
+            itemTypeCiphertext: stagedType,
+            serviceCiphertext: stagedService,
+            payloadCiphertext: stagedPayload,
+          )) {
+        throw const FormatException(
+          'Staged saved item differs from its source',
+        );
+      }
+      requireCurrentSession();
+    }
     const envelopeKeys = <String>{'category', 'title', 'fields', 'item_id'};
     final hasEnvelope = envelopeKeys.any(oldRecord.containsKey);
     final oldFields = hasEnvelope ? oldRecord['fields'] : oldRecord;
@@ -253,6 +290,8 @@ class LegacySavedItemReplacement {
     await post('$base/stage', <String, dynamic>{
       'source_snapshot': source.sourceSnapshot,
       'candidate_encrypted_data': candidate,
+      if (hasStagedCopy) 'staged_source_snapshot': source.stagedSourceSnapshot,
+      if (hasStagedCopy) 'client_verified_staged_copy': true,
       if (rename) 'new_service_ciphertext': titleCiphertext,
       if (rename) 'new_title_lookup_hash': titleLookupHash,
     });

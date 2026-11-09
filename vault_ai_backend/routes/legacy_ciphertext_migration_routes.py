@@ -229,6 +229,8 @@ class LegacyItemEditStageRequest(BaseModel):
     candidate_encrypted_data: str = Field(..., min_length=40, max_length=174764)
     new_service_ciphertext: Optional[str] = Field(default=None, min_length=40, max_length=5500)
     new_title_lookup_hash: Optional[str] = Field(default=None, min_length=43, max_length=43)
+    staged_source_snapshot: Optional[str] = Field(default=None, min_length=43, max_length=43)
+    client_verified_staged_copy: bool = False
 
 
 class LegacyItemEditPromoteRequest(BaseModel):
@@ -392,9 +394,24 @@ def _require_live_delete_trusted_device(cur, principal: SessionPrincipal) -> Non
         raise HTTPException(status_code=403, detail={"code": code})
 
 
-def _require_legacy_item_editable(row: dict) -> None:
+def _require_legacy_item_editable(row: dict, *, allow_verified_stage: bool = False) -> None:
     if row.get("encrypted_data") is None:
         raise HTTPException(status_code=409, detail="item_not_legacy")
+    staged = (row.get("item_type_ciphertext") is not None or
+              row.get("payload_ciphertext") is not None)
+    if staged:
+        # The active source remains the old blob. A complete V2 copy may be
+        # invalidated only after the owner device decrypted both and checked
+        # exact equivalence, bound to the full locked-row snapshot at stage.
+        if not (allow_verified_stage and
+                row.get("item_type_ciphertext") is not None and
+                row.get("service_ciphertext") is not None and
+                row.get("payload_ciphertext") is not None and
+                row.get("legacy_item_rename_active") is False and
+                row.get("title_lookup_hash") is None and
+                row.get("item_type") not in (None, "crypto_wallet_account")):
+            raise HTTPException(status_code=409, detail="item_requires_dedicated_edit")
+        return
     active_rename = row.get("legacy_item_rename_active") is True
     rename_shape = (
         row.get("service_ciphertext") is not None and
@@ -403,8 +420,6 @@ def _require_legacy_item_editable(row: dict) -> None:
         row.get("payload_ciphertext") is None
     )
     if (row.get("item_type") in (None, "crypto_wallet_account") or
-            row.get("item_type_ciphertext") is not None or
-            row.get("payload_ciphertext") is not None or
             (active_rename and not rename_shape) or
             (row.get("service_ciphertext") is not None and not active_rename) or
             (row.get("title_lookup_hash") is not None and not active_rename)):
@@ -481,7 +496,19 @@ def stage_legacy_item_edit(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         _require_live_legacy_item_edit_session(cur, principal)
         row = _load_item_locked(cur, principal["vault_id"], item_id)
-        _require_legacy_item_editable(row)
+        staged = (row.get("item_type_ciphertext") is not None or
+                  row.get("payload_ciphertext") is not None)
+        _require_legacy_item_editable(
+            row, allow_verified_stage=payload.client_verified_staged_copy,
+        )
+        if staged:
+            if payload.staged_source_snapshot != item_delete_snapshot(
+                row, vault_id=principal["vault_id"], record_id=item_id,
+            ):
+                raise HTTPException(status_code=409, detail="item_stage_changed")
+        elif (payload.client_verified_staged_copy or
+              payload.staged_source_snapshot is not None):
+            raise HTTPException(status_code=400, detail="unexpected_staged_source")
         snapshot = legacy_source_snapshot(
             "item", row, vault_id=principal["vault_id"], record_id=item_id,
         )
@@ -539,7 +566,7 @@ def readback_legacy_item_edit(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         _require_live_legacy_item_edit_session(cur, principal)
         row = _load_item_locked(cur, principal["vault_id"], item_id)
-        _require_legacy_item_editable(row)
+        _require_legacy_item_editable(row, allow_verified_stage=True)
         candidate = _legacy_item_edit_candidate(
             cur, principal["vault_id"], item_id,
         )
@@ -594,7 +621,7 @@ def promote_legacy_item_edit(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         _require_live_legacy_item_edit_session(cur, principal)
         row = _load_item_locked(cur, principal["vault_id"], item_id)
-        _require_legacy_item_editable(row)
+        _require_legacy_item_editable(row, allow_verified_stage=True)
         candidate = _legacy_item_edit_candidate(
             cur, principal["vault_id"], item_id,
         )
@@ -620,7 +647,8 @@ def promote_legacy_item_edit(
                 raise HTTPException(status_code=409, detail="encrypted_title_incomplete")
         service_ct = (
             candidate["new_service_ciphertext"] if rename
-            else row["service_ciphertext"]
+            else (row["service_ciphertext"]
+                  if row["legacy_item_rename_active"] else None)
         )
         title_hash = (
             candidate["new_title_lookup_hash"] if rename

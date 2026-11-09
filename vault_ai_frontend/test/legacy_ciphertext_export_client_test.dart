@@ -130,6 +130,8 @@ void main() {
         }
         final sequence = body['sequence'] as int;
         final offset = body['offset'] as int;
+        expect(body['max_chars'],
+            LegacyCiphertextExportClient.maxItemSourceReadChars);
         return <String, dynamic>{
           'next_sequence': sequence + 1,
           'pages_remaining': 15 - sequence,

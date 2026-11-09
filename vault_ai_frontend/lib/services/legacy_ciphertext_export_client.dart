@@ -28,6 +28,9 @@ class LegacyCiphertextSource {
 
 class LegacyCiphertextExportClient {
   static const int maxReadChars = 4 * 1024 * 1024;
+  // Item source pages may also carry three staged V2 ciphertexts (up to
+  // 128 KiB each before base64). Leave space under the server's page cap.
+  static const int maxItemSourceReadChars = 3 * 1024 * 1024;
   static const int maxTotalChars = 64 * 1024 * 1024;
   // The server will refuse a page whose charge exceeds its remaining grant.
   // Renew before a page when the old grant cannot cover its maximum charge.
@@ -319,7 +322,9 @@ class LegacyCiphertextExportClient {
           'mode': mode,
           idKey: id,
           'offset': offset,
-          'max_chars': maxReadChars,
+          'max_chars': mode == 'read_item' && requireSource
+              ? maxItemSourceReadChars
+              : maxReadChars,
         });
         final chunk = response['ciphertext_chunk'];
         final total = response['total_chars'];

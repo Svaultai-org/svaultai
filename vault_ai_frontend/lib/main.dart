@@ -6482,6 +6482,13 @@ Future<Map<String, dynamic>> _replaceLegacyZkSavedItem(
           itemId: id, itemType: type, service: service,
           sourceSnapshot: source.sourceSnapshot,
           ciphertext: source.ciphertext,
+          stagedSourceSnapshot: source.deleteSnapshot,
+          stagedItemTypeCiphertext:
+              source.sourceMetadata['item_type_ciphertext'] as String?,
+          stagedServiceCiphertext:
+              source.sourceMetadata['service_ciphertext'] as String?,
+          stagedPayloadCiphertext:
+              source.sourceMetadata['payload_ciphertext'] as String?,
         );
       },
       post: (path, body) async {
