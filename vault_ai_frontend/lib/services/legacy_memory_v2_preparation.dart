@@ -4,6 +4,7 @@
 
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography/cryptography.dart';
 
 import 'legacy_ciphertext_export_client.dart';
@@ -26,6 +27,7 @@ class LegacyMemoryV2Preparation {
   final LegacyMemoryCopyGet get;
   final bool Function() accessIsCurrent;
   final void Function(int verified)? onProgress;
+  final bool confirmAfterReadback;
 
   const LegacyMemoryV2Preparation({
     required this.export,
@@ -36,6 +38,7 @@ class LegacyMemoryV2Preparation {
     required this.get,
     required this.accessIsCurrent,
     this.onProgress,
+    this.confirmAfterReadback = false,
   });
 
   void _requireAccess() {
@@ -104,16 +107,42 @@ class LegacyMemoryV2Preparation {
           readback['source_snapshot'] != source.sourceSnapshot ||
           readback['memory_record_id'] != 'memory-migrated-$id' ||
           readback['memory_type'] != type ||
-          readback['payload_ciphertext'] != ciphertext) {
+          readback['payload_ciphertext'] is! String ||
+          (staged['reused_verified_copy'] != true &&
+              readback['payload_ciphertext'] != ciphertext)) {
         throw const FormatException('Older Memory copy changed');
       }
+      final readbackCiphertext = readback['payload_ciphertext'] as String;
       final opened = utf8.decode(await aesGcmUnwrap(
         memoryKey,
-        b64urlDecode(readback['payload_ciphertext'] as String),
+        b64urlDecode(readbackCiphertext),
       ));
       _requireAccess();
       if (opened != plaintext) {
         throw const FormatException('Older Memory copy does not match source');
+      }
+      if (confirmAfterReadback) {
+        // This separate opt-in blocks later older-client writes to this row.
+        // Bind the confirmation to the exact bytes just decrypted locally.
+        final digest = b64urlEncode(
+          crypto.sha256.convert(b64urlDecode(readbackCiphertext)).bytes,
+        );
+        final confirmProof = await proofProvider();
+        _requireAccess();
+        final confirmed = await post('$base/confirm', <String, dynamic>{
+          'source_snapshot': source.sourceSnapshot,
+          'payload_sha256': digest,
+          'zk_proof_token': confirmProof,
+          'client_verified_readback': true,
+        });
+        _requireAccess();
+        if (confirmed['memory_id'] != id ||
+            confirmed['source_snapshot'] != source.sourceSnapshot ||
+            confirmed['payload_sha256'] != digest ||
+            confirmed['confirmed'] != true ||
+            confirmed['older_client_writes_blocked'] != true) {
+          throw const FormatException('Older Memory confirmation failed');
+        }
       }
       prepared++;
       onProgress?.call(prepared);
@@ -126,7 +155,9 @@ class LegacyMemoryV2Preparation {
     _requireAccess();
     final id = current['legacy_memory_id'];
     final snapshot = current['source_snapshot'];
-    if (id is! int || id <= 0 || snapshot is! String ||
+    if (id is! int ||
+        id <= 0 ||
+        snapshot is! String ||
         !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(snapshot)) {
       throw const FormatException('Invalid older Memory identity');
     }
@@ -178,8 +209,7 @@ class LegacyMemoryV2Preparation {
     required Map<String, dynamic> updated,
     required String expectedMemoryGeneration,
   }) async {
-    if (!RegExp(r'^(0|[1-9][0-9]{0,18})$')
-        .hasMatch(expectedMemoryGeneration)) {
+    if (!RegExp(r'^(0|[1-9][0-9]{0,18})$').hasMatch(expectedMemoryGeneration)) {
       throw const FormatException('Invalid Memory inventory generation');
     }
     final verified = await _verifyCurrent(current);
@@ -207,8 +237,10 @@ class LegacyMemoryV2Preparation {
       await aesGcmWrap(memoryKey, utf8.encode(nextPlaintext)),
     );
     if (utf8.decode(await aesGcmUnwrap(
-          memoryKey, b64urlDecode(v2Ciphertext),
-        )) != nextPlaintext) {
+          memoryKey,
+          b64urlDecode(v2Ciphertext),
+        )) !=
+        nextPlaintext) {
       throw const FormatException('Private Memory local encryption failed');
     }
     _requireAccess();
@@ -240,7 +272,8 @@ class LegacyMemoryV2Preparation {
       throw const FormatException('Older Memory edit readback changed');
     }
     final decrypted = utf8.decode(await aesGcmUnwrap(
-      memoryKey, b64urlDecode(v2Ciphertext),
+      memoryKey,
+      b64urlDecode(v2Ciphertext),
     ));
     _requireAccess();
     if (decrypted != nextPlaintext) {
@@ -264,7 +297,8 @@ class LegacyMemoryV2Preparation {
     );
     _requireAccess();
     if (afterSource.sourceSnapshot != nextSnapshot ||
-        await codec.decodeLegacyString(afterSource.ciphertext) != nextPlaintext) {
+        await codec.decodeLegacyString(afterSource.ciphertext) !=
+            nextPlaintext) {
       throw const FormatException('Older Memory source readback differs');
     }
   }

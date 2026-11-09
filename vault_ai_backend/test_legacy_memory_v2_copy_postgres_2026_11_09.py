@@ -91,6 +91,8 @@ def test_signed_memory_offer_requires_exact_active_source_copy(monkeypatch):
         "copy_record_id": "memory-migrated-42",
         "copy_type": "note",
         "copy_ciphertext": b"\x01" + b"x" * 28,
+        "owner_verified_edit": False,
+        "owner_verified_stage": False,
     }
     row["source_snapshot"] = source_snapshot(
         "memory", row, vault_id=vault_id, record_id=42,
@@ -110,6 +112,10 @@ def test_signed_memory_offer_requires_exact_active_source_copy(monkeypatch):
         def cursor(self, **_kwargs):
             return Cursor()
 
+    assert auth_zk._memory_v2_offer_ready(
+        Connection(), vault_id, allow_prepared=True,
+    ) is False
+    row["owner_verified_stage"] = True
     assert auth_zk._memory_v2_offer_ready(
         Connection(), vault_id, allow_prepared=True,
     ) is True

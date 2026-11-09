@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vault_ai_frontend/services/legacy_ciphertext_export_client.dart';
@@ -16,6 +17,8 @@ void main() {
   Future<({LegacyMemoryV2Preparation preparation, List<String> calls})> setup(
       {bool corruptReadback = false,
       bool invalidateAfterStage = false,
+      bool confirmAfterReadback = false,
+      bool reuseProtectedCopy = false,
       void Function(int)? onProgress}) async {
     final legacyJson = jsonEncode(<String, dynamic>{
       'schema': 'vault_personal_memory_v1',
@@ -26,6 +29,10 @@ void main() {
     });
     final legacyCiphertext = await codec
         .encodeLegacyItem(jsonDecode(legacyJson) as Map<String, dynamic>);
+    final existingCopy = b64urlEncode(await aesGcmWrap(
+      await VaultKeyHierarchy(mvk).memoryKey(),
+      utf8.encode(legacyJson),
+    ));
     final calls = <String>[];
     var page = 0;
     var proof = 0;
@@ -88,14 +95,36 @@ void main() {
       proofProvider: () async => 'synthetic-stage-proof-${++proof}',
       accessIsCurrent: () => current,
       onProgress: onProgress,
+      confirmAfterReadback: confirmAfterReadback,
       post: (path, body) async {
         calls.add(path);
-        expect(path, '/vault/memory/legacy-copy/42/stage');
         final wire = jsonEncode(body);
         expect(wire, isNot(contains('Synthetic private memory')));
         expect(wire, isNot(contains('Synthetic title')));
         expect(body.containsKey('pin'), false);
         expect(body['source_snapshot'], snapshot);
+        if (path.endsWith('/confirm')) {
+          expect(confirmAfterReadback, true);
+          expect(body['client_verified_readback'], true);
+          expect(body['zk_proof_token'], 'synthetic-stage-proof-3');
+          final readbackCiphertext =
+              reuseProtectedCopy ? existingCopy : stagedCiphertext!;
+          expect(
+              body['payload_sha256'],
+              b64urlEncode(crypto.sha256
+                  .convert(
+                    b64urlDecode(readbackCiphertext),
+                  )
+                  .bytes));
+          return <String, dynamic>{
+            'memory_id': 42,
+            'source_snapshot': snapshot,
+            'payload_sha256': body['payload_sha256'],
+            'confirmed': true,
+            'older_client_writes_blocked': true,
+          };
+        }
+        expect(path, '/vault/memory/legacy-copy/42/stage');
         expect(body['client_verified_source'], true);
         expect(body['zk_proof_token'], 'synthetic-stage-proof-2');
         stagedCiphertext = body['payload_ciphertext'] as String;
@@ -104,6 +133,7 @@ void main() {
           'memory_id': 42,
           'prepared': true,
           'active_legacy_unchanged': true,
+          if (reuseProtectedCopy) 'reused_verified_copy': true,
         };
       },
       get: (path) async {
@@ -114,7 +144,11 @@ void main() {
           'source_snapshot': snapshot,
           'memory_record_id': 'memory-migrated-42',
           'memory_type': 'note',
-          'payload_ciphertext': corruptReadback ? 'A' * 80 : stagedCiphertext,
+          'payload_ciphertext': corruptReadback
+              ? 'A' * 80
+              : reuseProtectedCopy
+                  ? existingCopy
+                  : stagedCiphertext,
         };
       },
     );
@@ -142,6 +176,26 @@ void main() {
     );
     await expectLater(action.preparation.prepare(), throwsFormatException);
     expect(verified, isEmpty);
+  });
+
+  test('explicit confirmation binds decrypted readback without plaintext',
+      () async {
+    final action = await setup(
+      confirmAfterReadback: true,
+      reuseProtectedCopy: true,
+    );
+    expect(await action.preparation.prepare(), 1);
+    expect(action.calls.where((path) => path.endsWith('/confirm')).length, 1);
+    expect(action.calls.last, '/vault/memory/legacy-copy/42/confirm');
+  });
+
+  test('confirmation never follows a changed readback', () async {
+    final action = await setup(
+      confirmAfterReadback: true,
+      corruptReadback: true,
+    );
+    await expectLater(action.preparation.prepare(), throwsFormatException);
+    expect(action.calls.where((path) => path.endsWith('/confirm')), isEmpty);
   });
 
   test('progress follows verified readback and stops after session change',
@@ -199,10 +253,17 @@ void main() {
           'bytes_remaining': 32 * 1024 * 1024 - sequence * 1024,
         };
         if (body['mode'] == 'list_memories') {
-          return <String, dynamic>{...common, 'records': [
-            {'memory_id': 42, 'memory_type': 'note',
-             'ciphertext_chars': legacyCiphertext.length},
-          ], 'has_more': false};
+          return <String, dynamic>{
+            ...common,
+            'records': [
+              {
+                'memory_id': 42,
+                'memory_type': 'note',
+                'ciphertext_chars': legacyCiphertext.length
+              },
+            ],
+            'has_more': false
+          };
         }
         expect(body['mode'], 'read_memory');
         return <String, dynamic>{
@@ -237,7 +298,8 @@ void main() {
           copyCiphertext = body['payload_ciphertext'] as String;
           final reopenedOld = await codec.decodeLegacyString(legacyCiphertext);
           final reopenedNew = utf8.decode(await aesGcmUnwrap(
-            memoryKey, b64urlDecode(copyCiphertext),
+            memoryKey,
+            b64urlDecode(copyCiphertext),
           ));
           expect(reopenedOld, reopenedNew);
           expect(jsonDecode(reopenedNew)['value'], 'Synthetic edited memory');
@@ -271,12 +333,15 @@ void main() {
       },
     );
     await action.edit(current: {
-      'legacy_memory_id': 42, 'source_snapshot': snapshot,
-    }, updated: {'value': 'Synthetic edited memory'},
-        expectedMemoryGeneration: '42');
+      'legacy_memory_id': 42,
+      'source_snapshot': snapshot,
+    }, updated: {
+      'value': 'Synthetic edited memory'
+    }, expectedMemoryGeneration: '42');
     expect(deleted, false);
     await action.delete({
-      'legacy_memory_id': 42, 'source_snapshot': nextSnapshot,
+      'legacy_memory_id': 42,
+      'source_snapshot': nextSnapshot,
     });
     expect(deleted, true);
     expect((await codec.decodeLegacyString(legacyCiphertext)),

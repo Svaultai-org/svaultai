@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import hmac
 import os
 import re
 
@@ -40,6 +42,12 @@ def _require_active_enabled() -> None:
         raise HTTPException(status_code=404, detail="not_found")
 
 
+def _require_stage_confirmation_enabled() -> None:
+    _require_active_enabled()
+    if os.getenv("VAULTAI_ZK_LEGACY_MEMORY_STAGE_CONFIRM_ENABLED", "false").strip().lower() != "true":
+        raise HTTPException(status_code=404, detail="not_found")
+
+
 def _decode_copy(value: str) -> bytes:
     try:
         raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
@@ -69,6 +77,14 @@ class LegacyMemoryCopyEditRequest(BaseModel):
     )
     zk_proof_token: str = Field(..., min_length=1, max_length=128)
     client_verified_source: bool = False
+
+
+class LegacyMemoryCopyConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_snapshot: str = Field(..., pattern=r"^[A-Za-z0-9_-]{43}$")
+    payload_sha256: str = Field(..., pattern=r"^[A-Za-z0-9_-]{43}$")
+    zk_proof_token: str = Field(..., min_length=1, max_length=128)
+    client_verified_readback: bool = False
 
 
 class LegacyMemoryCopyDeleteRequest(BaseModel):
@@ -112,7 +128,8 @@ def _locked_prepared_copy(cur, vault_id: str, memory_id: int, row: dict) -> dict
         "memory", row, vault_id=vault_id, record_id=memory_id,
     )
     cur.execute(
-        """SELECT source_snapshot,memory_record_id,memory_type,payload_ciphertext
+        """SELECT source_snapshot,memory_record_id,memory_type,payload_ciphertext,
+                  owner_verified_edit,owner_verified_stage
              FROM memory_v2_prepared_copies
             WHERE vault_id=%s AND legacy_memory_id=%s FOR UPDATE""",
         (vault_id, memory_id),
@@ -149,6 +166,24 @@ def stage_legacy_memory_copy(
             raise HTTPException(status_code=409, detail="legacy_memory_changed")
         consume_recent_zk_proof_on_cursor(payload.zk_proof_token, principal, cur)
         cur.execute(
+            """SELECT source_snapshot,memory_type,memory_record_id,
+                      owner_verified_edit,owner_verified_stage
+                 FROM memory_v2_prepared_copies
+                WHERE vault_id=%s AND legacy_memory_id=%s FOR UPDATE""",
+            (principal["vault_id"], memory_id),
+        )
+        prior = cur.fetchone()
+        if prior is not None and (prior["owner_verified_edit"] or
+                                  prior["owner_verified_stage"]):
+            if (prior["source_snapshot"] != snapshot or
+                    prior["memory_type"] != row["memory_type"] or
+                    prior["memory_record_id"] != f"memory-migrated-{memory_id}"):
+                raise HTTPException(status_code=409, detail="legacy_memory_changed")
+            conn.commit()
+            return {"memory_id": memory_id, "prepared": True,
+                    "active_legacy_unchanged": True,
+                    "reused_verified_copy": True}
+        cur.execute(
             """INSERT INTO memory_v2_prepared_copies
                  (legacy_memory_id,vault_id,source_snapshot,memory_record_id,
                   memory_type,payload_ciphertext)
@@ -160,6 +195,7 @@ def stage_legacy_memory_copy(
                  prepared_at=NOW()
                WHERE memory_v2_prepared_copies.vault_id=EXCLUDED.vault_id
                  AND NOT memory_v2_prepared_copies.owner_verified_edit
+                 AND NOT memory_v2_prepared_copies.owner_verified_stage
                RETURNING legacy_memory_id""",
             (memory_id, principal["vault_id"], snapshot,
              f"memory-migrated-{memory_id}", row["memory_type"], copy),
@@ -169,6 +205,58 @@ def stage_legacy_memory_copy(
         conn.commit()
         return {"memory_id": memory_id, "prepared": True,
                 "active_legacy_unchanged": True}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@router.post("/vault/memory/legacy-copy/{memory_id}/confirm")
+def confirm_legacy_memory_copy(
+    memory_id: int,
+    payload: LegacyMemoryCopyConfirmRequest,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    """Bind owner-verified readback bytes to a source under one row lock.
+
+    This opts one row into the 0072 older-write fence. Older clients retain
+    read access to its legacy ciphertext but can no longer edit/delete it.
+    """
+    _require_stage_confirmation_enabled()
+    require_content_write(principal)
+    if memory_id <= 0:
+        raise HTTPException(status_code=400, detail="invalid_memory_id")
+    if not payload.client_verified_readback:
+        raise HTTPException(status_code=400, detail="client_readback_required")
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        row = _load_active_legacy_memory(cur, principal["vault_id"], memory_id)
+        copy = _locked_prepared_copy(cur, principal["vault_id"], memory_id, row)
+        if copy["source_snapshot"] != payload.source_snapshot:
+            raise HTTPException(status_code=409, detail="legacy_memory_changed")
+        digest = base64.urlsafe_b64encode(
+            hashlib.sha256(bytes(copy["payload_ciphertext"])).digest(),
+        ).decode("ascii").rstrip("=")
+        if not hmac.compare_digest(digest, payload.payload_sha256):
+            raise HTTPException(status_code=409, detail="memory_copy_changed")
+        consume_recent_zk_proof_on_cursor(payload.zk_proof_token, principal, cur)
+        if not copy["owner_verified_stage"]:
+            cur.execute(
+                """UPDATE memory_v2_prepared_copies
+                      SET owner_verified_stage=TRUE
+                    WHERE vault_id=%s AND legacy_memory_id=%s
+                      AND source_snapshot=%s RETURNING legacy_memory_id""",
+                (principal["vault_id"], memory_id, payload.source_snapshot),
+            )
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=409, detail="memory_copy_changed")
+        conn.commit()
+        return {"memory_id": memory_id, "confirmed": True,
+                "source_snapshot": payload.source_snapshot,
+                "payload_sha256": digest,
+                "older_client_writes_blocked": True}
     except Exception:
         conn.rollback()
         raise

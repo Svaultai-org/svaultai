@@ -1192,7 +1192,8 @@ def _memory_v2_offer_ready(
                       m.memory_record_id,m.memory_lookup_hash,
                       c.source_snapshot,c.memory_record_id AS copy_record_id,
                       c.memory_type AS copy_type,
-                      c.payload_ciphertext AS copy_ciphertext
+                      c.payload_ciphertext AS copy_ciphertext,
+                      c.owner_verified_edit,c.owner_verified_stage
                  FROM vault_ai_memory m
                  LEFT JOIN memory_v2_prepared_copies c
                    ON c.legacy_memory_id=m.id AND c.vault_id=m.vault_id
@@ -1215,6 +1216,7 @@ def _memory_v2_offer_ready(
             copy_ct = row["copy_ciphertext"]
             if (copy_ct is None or len(copy_ct) < 29 or
                     bytes(copy_ct)[0] != 1 or
+                    not (row["owner_verified_edit"] or row["owner_verified_stage"]) or
                     row["copy_type"] != row["memory_type"] or
                     row["copy_record_id"] != f"memory-migrated-{row['id']}" or
                     row["source_snapshot"] != source_snapshot(
