@@ -162,7 +162,8 @@ def list_released_v2_files(
         )
         _require_all_owner_files_ready(cur, owner)
         cur.execute(
-            """SELECT r.file_id, r.total_bytes, r.chunk_size, r.chunk_count
+            """SELECT r.file_id, r.total_bytes, r.chunk_size, r.chunk_count,
+                      r.name_version
                  FROM uploaded_files u
                  JOIN file_v2_records r
                    ON r.file_id = u.id AND r.vault_id = u.vault_id::text
@@ -188,6 +189,7 @@ def list_released_v2_files(
                     "total_bytes": int(row["total_bytes"]),
                     "chunk_size": int(row["chunk_size"]),
                     "chunk_count": int(row["chunk_count"]),
+                    "name_version": int(row["name_version"]),
                 }
                 for row in page
             ],

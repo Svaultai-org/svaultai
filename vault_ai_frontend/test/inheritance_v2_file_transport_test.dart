@@ -181,4 +181,53 @@ void main() {
     expect(writes.any((request) => request.url.path.contains('download-file')),
         isFalse);
   });
+
+  test('batch adapter verifies the released owner and rechecks empty inventory',
+      () async {
+    final beneficiaryMvk = SecretKey(List<int>.filled(32, 99));
+    ZkActiveMvk.set(
+      mvk: beneficiaryMvk,
+      vaultId: 'synthetic-beneficiary',
+      vaultHandle: 'synthetic-handle',
+    );
+    addTearDown(ZkActiveMvk.clear);
+    final pair = await X25519().newKeyPair();
+    final publicKey = await pair.extractPublicKey();
+    final package = (await encryptInheritanceMvk(
+      beneficiaryLinkId: 41,
+      ownerVaultId: 'synthetic-owner',
+      ownerMvk: SecretKey(List<int>.filled(32, 88)),
+      beneficiaryPublicKey: Uint8List.fromList(publicKey.bytes),
+    )).toRequestBody(41);
+    final sent = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        sent.add(request);
+        expect(request.method, 'GET');
+        expect(request.url.path, '/inheritance/v2/41/files');
+        expect(request.url.queryParameters['after_file_id'], '');
+        expect(request.url.queryParameters['limit'], '100');
+        expect(request.body, isEmpty);
+        return http.Response(jsonEncode({
+          'owner_vault_id': 'synthetic-owner',
+          'beneficiary_link_id': 41,
+          'files': <Map<String, dynamic>>[],
+          'next_after_file_id': null,
+        }), 200);
+      }),
+    );
+    final result = await client.transferInheritedV2Files(
+      authToken: 'synthetic-session',
+      linkId: 41,
+      freshBeneficiaryProof: () async => fail('No file to publish'),
+      beneficiaryPrivateKey: SecretKey(await pair.extractPrivateKeyBytes()),
+      beneficiaryMvk: beneficiaryMvk,
+      releasedPackage: package,
+      responseIsCurrent: () => true,
+    );
+    expect(result.copiedFiles, 0);
+    expect(result.copiedBytes, 0);
+    expect(sent, hasLength(2));
+  });
 }

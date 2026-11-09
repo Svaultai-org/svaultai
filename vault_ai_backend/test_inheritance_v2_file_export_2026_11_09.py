@@ -154,6 +154,7 @@ def test_released_file_inventory_manifest_and_chunk_are_ciphertext_only(ready):
             "total_bytes": 4,
             "chunk_size": 4,
             "chunk_count": 1,
+            "name_version": 0,
         }],
         "next_after_file_id": None,
     }

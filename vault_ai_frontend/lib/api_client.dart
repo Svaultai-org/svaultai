@@ -30,6 +30,8 @@ import 'services/file_v2_reader.dart';
 import 'services/file_v2_renamer.dart';
 import 'services/file_v2_writer.dart';
 import 'services/inheritance_v2_file_stream_transfer.dart';
+import 'services/inheritance_v2_file_batch_transfer.dart';
+import 'services/inheritance_mvk_v2.dart' show decryptInheritanceMvk;
 import 'services/linked_inheritance_v2_stage.dart' as linked_inh_stage;
 import 'services/linked_inheritance_v2_keycheck.dart' as linked_inh_keycheck;
 import 'services/linked_inheritance_v2_release_readback.dart'
@@ -5666,6 +5668,82 @@ class VaultAIClient {
         }
       },
       onProgress: onProgress,
+    );
+  }
+
+  /// Copy a bounded, released V2 file inventory into this vault. Each file
+  /// uses the existing streamed copy and its own fresh OPAQUE publication
+  /// proof. A second inventory read detects added, removed or renamed files;
+  /// this is a copy result, not a whole-vault inheritance claim.
+  Future<ReleasedV2FileBatchResult> transferInheritedV2Files({
+    required String authToken,
+    required int linkId,
+    required Future<String> Function() freshBeneficiaryProof,
+    required SecretKey beneficiaryPrivateKey,
+    required SecretKey beneficiaryMvk,
+    required Map<String, dynamic> releasedPackage,
+    required bool Function() responseIsCurrent,
+    void Function(int completed, int total)? onFileProgress,
+  }) async {
+    void checkAccess() {
+      _requireSavedItemKey(beneficiaryMvk);
+      if (!responseIsCurrent()) {
+        throw StateError('Private inheritance access changed');
+      }
+    }
+
+    checkAccess();
+    final package = await decryptInheritanceMvk(
+      expectedLinkId: linkId,
+      beneficiaryPrivateKey: beneficiaryPrivateKey,
+      rawPackage: releasedPackage,
+    );
+    checkAccess();
+    return copyReleasedV2FileInventory(
+      linkId: linkId,
+      ownerVaultId: package.ownerVaultId,
+      accessIsCurrent: () {
+        try {
+          checkAccess();
+          return true;
+        } catch (_) {
+          return false;
+        }
+      },
+      fetchPage: (after) async {
+        checkAccess();
+        final uri = Uri.parse('$baseUrl/inheritance/v2/$linkId/files')
+            .replace(queryParameters: {
+          'after_file_id': after,
+          'limit': '100',
+        });
+        final response = await _sessionHttpWithGuard(checkAccess).get(
+          uri,
+          headers: _defaultHeaders(authToken: authToken),
+        );
+        checkAccess();
+        if (response.statusCode != 200) {
+          _throwIfAuthExpired(response.statusCode, response.body);
+          _throwIfDeviceNotTrusted(response.statusCode, response.body);
+          throw FileV2ReadException(response.statusCode);
+        }
+        final decoded = jsonDecode(response.body);
+        if (decoded is! Map<String, dynamic>) {
+          throw const FormatException('Invalid inherited file inventory');
+        }
+        return decoded;
+      },
+      copyFile: (sourceId) => transferInheritedV2File(
+        authToken: authToken,
+        linkId: linkId,
+        sourceFileId: sourceId,
+        freshBeneficiaryProof: freshBeneficiaryProof,
+        beneficiaryPrivateKey: beneficiaryPrivateKey,
+        beneficiaryMvk: beneficiaryMvk,
+        releasedPackage: releasedPackage,
+        responseIsCurrent: responseIsCurrent,
+      ),
+      onFileProgress: onFileProgress,
     );
   }
 
