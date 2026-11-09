@@ -5512,6 +5512,12 @@ Future<Map<String, dynamic>> _zkHttpPost(
     }
     headers['X-SVaultAI-Pin-Free-Read-Offers'] = '1';
   }
+  if (path == '/auth/zk-login-finalize' && kEnablePrivateLocalFolderTree) {
+    if (!kSignedReadOffersClientEnabled || !kEnableFileV2UiRead) {
+      throw OpaqueUnavailable('Private folders need signed file reads.');
+    }
+    headers['X-SVaultAI-Private-Local-Folders'] = '1';
+  }
   if (path == '/auth/zk-login-finalize' && kSignedFileCreateClientEnabled) {
     if (!kSignedReadOffersClientEnabled ||
         !kEnableFileV2UiRead || !kEnableNewFileV2Upload) {

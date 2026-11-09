@@ -979,6 +979,25 @@ def _signed_file_create_negotiation(request: Request, *, signed_reads: bool) -> 
     return True
 
 
+def _private_local_folder_negotiation(
+    request: Request, *, signed_reads: bool,
+) -> bool:
+    """Only an explicit local-folder client may receive old folder paths."""
+    header = request.headers.get("x-svaultai-private-local-folders", "")
+    if header not in ("", "1"):
+        raise HTTPException(status_code=400,
+                            detail="invalid_private_folder_capability")
+    if header != "1":
+        return False
+    if not signed_reads or not request_has_file_v2_reader(request):
+        raise HTTPException(status_code=409, detail="signed_read_offers_required")
+    if (os.getenv("VAULTAI_ZK_SIGNED_FOLDER_METADATA_ENABLED", "false")
+            .strip().lower() != "true"):
+        raise HTTPException(status_code=409,
+                            detail="private_folder_inventory_unavailable")
+    return True
+
+
 def _signed_file_mutation_negotiation(
     request: Request, *, signed_reads: bool,
 ) -> bool:
@@ -1257,12 +1276,10 @@ def _signed_offer_token(
     return sign_opaque_read_offer_token(token, bits)
 
 
-def _pin_free_legacy_file_list_ready(conn, vault_id: str) -> bool:
+def _pin_free_legacy_file_list_ready(
+    conn, vault_id: str, *, allow_old_folders: bool = False,
+) -> bool:
     """Offer the metadata list only when its labels cover the old list."""
-    signed_folder_metadata = (
-        os.getenv("VAULTAI_ZK_SIGNED_FOLDER_METADATA_ENABLED", "false")
-        .strip().lower() == "true"
-    )
     cur = conn.cursor()
     cur.execute(
         """
@@ -1300,7 +1317,7 @@ def _pin_free_legacy_file_list_ready(conn, vault_id: str) -> bool:
                     OR r.migrating_legacy IS NOT TRUE)
         )
         """,
-        (vault_id, signed_folder_metadata, vault_id),
+        (vault_id, allow_old_folders, vault_id),
     )
     row = cur.fetchone()
     return bool(row and row[0] is True)
@@ -1426,6 +1443,9 @@ def _zk_login_finalize_sync(
         enforce_login_finalize_rate_limit(request)
     with _zk_login_phase("validation"):
         signed_read_offers_requested = _signed_read_offer_negotiation(request)
+        private_local_folders_requested = _private_local_folder_negotiation(
+            request, signed_reads=signed_read_offers_requested,
+        )
         signed_file_create_requested = _signed_file_create_negotiation(
             request, signed_reads=signed_read_offers_requested,
         )
@@ -1580,6 +1600,7 @@ def _zk_login_finalize_sync(
                 with _zk_login_phase("metadata"):
                     file_list_offer = _pin_free_legacy_file_list_ready(
                         conn, str(vault_row["vault_id"]),
+                        allow_old_folders=private_local_folders_requested,
                     )
             except Exception:
                 conn.rollback()

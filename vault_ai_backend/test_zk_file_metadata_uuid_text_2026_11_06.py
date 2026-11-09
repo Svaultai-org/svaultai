@@ -11,8 +11,37 @@ import uuid
 
 import psycopg2
 import pytest
+from fastapi import HTTPException, Request
 
 from routes import auth_zk_routes, zk_metadata_inventory_routes
+
+
+def test_private_folder_offer_requires_new_client_and_server_gate(monkeypatch):
+    def request(*, capability=None, reader=True):
+        headers = [(b"x-svaultai-file-v2-reader", b"1")] if reader else []
+        if capability is not None:
+            headers.append((b"x-svaultai-private-local-folders",
+                            capability.encode("ascii")))
+        return Request({"type": "http", "method": "POST",
+                        "path": "/auth/zk-login-finalize", "headers": headers})
+
+    negotiate = auth_zk_routes._private_local_folder_negotiation
+    monkeypatch.setenv("VAULTAI_ZK_SIGNED_FOLDER_METADATA_ENABLED", "true")
+    assert not negotiate(request(), signed_reads=True)
+    assert negotiate(request(capability="1"), signed_reads=True)
+    for kwargs, signed_reads, expected in (
+        ({"capability": "bad"}, True, "invalid_private_folder_capability"),
+        ({"capability": "1"}, False, "signed_read_offers_required"),
+        ({"capability": "1", "reader": False}, True,
+         "signed_read_offers_required"),
+    ):
+        with pytest.raises(HTTPException) as denied:
+            negotiate(request(**kwargs), signed_reads=signed_reads)
+        assert denied.value.detail == expected
+    monkeypatch.setenv("VAULTAI_ZK_SIGNED_FOLDER_METADATA_ENABLED", "false")
+    with pytest.raises(HTTPException) as denied:
+        negotiate(request(capability="1"), signed_reads=True)
+    assert denied.value.detail == "private_folder_inventory_unavailable"
 
 
 def test_folder_path_metadata_is_returned_only_with_explicit_gate(monkeypatch):
@@ -120,9 +149,8 @@ def test_file_list_offer_and_inventory_match_schema_0056_types(monkeypatch):
         assert auth_zk_routes._pin_free_legacy_file_list_ready(
             conn, vault_id,
         ) is False
-        monkeypatch.setenv("VAULTAI_ZK_SIGNED_FOLDER_METADATA_ENABLED", "true")
         assert auth_zk_routes._pin_free_legacy_file_list_ready(
-            conn, vault_id,
+            conn, vault_id, allow_old_folders=True,
         ) is True
         assert auth_zk_routes._pin_free_legacy_file_download_ready(
             conn, vault_id,
@@ -131,6 +159,7 @@ def test_file_list_offer_and_inventory_match_schema_0056_types(monkeypatch):
             conn, vault_id, chunked_route_enabled=False,
         ) is True
         monkeypatch.setenv("VAULTAI_ZK_METADATA_INVENTORY_ENABLED", "true")
+        monkeypatch.setenv("VAULTAI_ZK_SIGNED_FOLDER_METADATA_ENABLED", "true")
         monkeypatch.setattr(
             zk_metadata_inventory_routes, "is_vault_zk_adopted",
             lambda candidate: candidate == vault_id,
@@ -228,16 +257,14 @@ def test_file_list_offer_rejects_missing_labels_and_new_v2(monkeypatch):
         assert auth_zk_routes._pin_free_legacy_file_list_ready(
             conn, vault_id,
         ) is False
-        monkeypatch.setenv("VAULTAI_ZK_SIGNED_FOLDER_METADATA_ENABLED", "true")
         assert auth_zk_routes._pin_free_legacy_file_list_ready(
-            conn, vault_id,
+            conn, vault_id, allow_old_folders=True,
         ) is True
         with conn.cursor() as cur:
             cur.execute("UPDATE uploaded_files SET relative_path='Folder/../file.txt'")
         assert auth_zk_routes._pin_free_legacy_file_list_ready(
-            conn, vault_id,
+            conn, vault_id, allow_old_folders=True,
         ) is False
-        monkeypatch.delenv("VAULTAI_ZK_SIGNED_FOLDER_METADATA_ENABLED")
         with conn.cursor() as cur:
             cur.execute("UPDATE uploaded_files SET relative_path=NULL")
         assert auth_zk_routes._pin_free_legacy_file_list_ready(
