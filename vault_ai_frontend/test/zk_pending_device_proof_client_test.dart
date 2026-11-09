@@ -121,12 +121,8 @@ void main() {
       expect(body.containsKey('pin'), isFalse);
       expect(request.body, isNot(contains('synthetic-pin-only')));
     }
-    expect(sent.first.url.path, kEnableZkPrivateOnlyUnlock
-        ? '/devices/request-self-approval-proof'
-        : '/devices/request-self-approval');
-    expect(sent.last.url.path, kEnableZkPrivateOnlyUnlock
-        ? '/devices/finalize-self-approval-proof'
-        : '/devices/finalize-self-approval');
+    expect(sent.first.url.path, '/devices/request-self-approval-proof');
+    expect(sent.last.url.path, '/devices/finalize-self-approval-proof');
     setApiClientDeviceId('');
   });
 
@@ -190,6 +186,36 @@ void main() {
     ), throwsStateError);
   });
 
+  test('an OPAQUE proof never uses the older mixed PIN endpoints', () async {
+    const token = 'synthetic-unsigned-opaque-session';
+    final sent = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://example.invalid',
+      httpClient: MockClient((request) async {
+        sent.add(request);
+        return request.url.path == '/vault/delete/confirm-proof'
+            ? http.Response('', 204)
+            : http.Response('{"status":"cooldown"}', 200);
+      }),
+    );
+    await client.requestSelfApproval(
+      authToken: token, zkProofToken: 'synthetic-request-proof');
+    await client.finalizeSelfApproval(
+      authToken: token, zkProofToken: 'synthetic-finalize-proof');
+    await client.confirmDeleteVault(
+      authToken: token,
+      requestToken: 'synthetic-delete-challenge',
+      zkProofToken: 'synthetic-delete-proof',
+      confirmationPhrase: 'DELETE MY VAULT',
+    );
+    expect(sent.map((r) => r.url.path), [
+      '/devices/request-self-approval-proof',
+      '/devices/finalize-self-approval-proof',
+      '/vault/delete/confirm-proof',
+    ]);
+    expect(sent.every((r) => !r.body.contains('"pin"')), isTrue);
+  });
+
   test('pending OPAQUE HTTP adapter keeps device and bearer scope', () async {
     setApiClientDeviceId('synthetic_pending_device_1234');
     final sent = <http.Request>[];
@@ -239,10 +265,10 @@ void main() {
     final body = jsonDecode(sent.single.body) as Map<String, dynamic>;
     expect(body, {'pin': 'synthetic-legacy-pin'});
     expect(body.containsKey('vault_name'), isFalse);
-    expect(() => client.requestSelfApproval(
+    await expectLater(client.requestSelfApproval(
       authToken: 'synthetic-bearer',
       pin: 'synthetic-legacy-pin',
       zkProofToken: 'synthetic-proof',
-    ), throwsArgumentError);
+    ), throwsStateError);
   }, skip: kEnableZkPrivateOnlyUnlock);
 }

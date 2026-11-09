@@ -198,9 +198,7 @@ void main() {
       final client = VaultAIClient(
         baseUrl: 'https://example.invalid',
         httpClient: MockClient((request) async {
-          expect(request.url.path, kEnableZkPrivateOnlyUnlock
-              ? '/vault/delete/confirm-proof'
-              : '/vault/delete/confirm');
+          expect(request.url.path, '/vault/delete/confirm-proof');
           sent = jsonDecode(request.body) as Map<String, dynamic>;
           return http.Response('', 204);
         }),

@@ -1556,7 +1556,7 @@ class VaultAIClient {
       throw ArgumentError(
           'Exactly one delete verification method is required.');
     }
-    final proofOnly = kEnableZkPrivateOnlyUnlock ||
+    final proofOnly = zkProofToken != null || kEnableZkPrivateOnlyUnlock ||
         signedAuthDeviceOfferedForToken(authToken);
     if (proofOnly &&
         (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
@@ -2018,7 +2018,7 @@ class VaultAIClient {
     String? pin,
     String? zkProofToken,
   }) async {
-    final proofOnly = kEnableZkPrivateOnlyUnlock ||
+    final proofOnly = zkProofToken != null || kEnableZkPrivateOnlyUnlock ||
         signedAuthDeviceOfferedForToken(authToken);
     if (proofOnly &&
         (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
@@ -2058,7 +2058,7 @@ class VaultAIClient {
     String? pin,
     String? zkProofToken,
   }) async {
-    final proofOnly = kEnableZkPrivateOnlyUnlock ||
+    final proofOnly = zkProofToken != null || kEnableZkPrivateOnlyUnlock ||
         signedAuthDeviceOfferedForToken(authToken);
     if (proofOnly &&
         (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
