@@ -10689,6 +10689,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   String _currentFolderPath = '';
   FolderTreeData? _folderTreeData;
   String? _folderTreeSessionToken;
+  String? _privateFolderInventoryToken;
   final Set<String> _serverKnownFolderPaths = <String>{};
   String _folderSearchQuery = '';
   List<VaultLoginItem> vaultLogins = [];
@@ -16037,6 +16038,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     setState(() {
       loadingFiles = true;
+      if (kEnablePrivateLocalFolderTree) {
+        _privateFolderInventoryToken = null;
+      }
     });
 
     try {
@@ -16048,6 +16052,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final pinFreeFileListOffered = ZkPinFreeFileSession.instance
           .listOfferedForToken(token);
+      if (kEnablePrivateLocalFolderTree &&
+          (!pinFreeFileListOffered || !kEnableFileV2UiRead ||
+              zk_mvk_store.ZkActiveMvk.current() == null)) {
+        throw StateError('Private folder inventory is unavailable');
+      }
       if (pinFreeFileListOffered &&
           zk_mvk_store.ZkActiveMvk.current() == null) {
         throw StateError('Vault encryption key is unavailable');
@@ -16067,19 +16076,30 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       final rawFiles = result['files'];
       final parsed = <_VaultStoredFile>[];
+      if (kEnablePrivateLocalFolderTree && pinFreeFileListOffered &&
+          rawFiles is! List) {
+        throw const FormatException('Private file inventory is incomplete');
+      }
 
       if (rawFiles is List) {
         for (final item in rawFiles) {
+          if (kEnablePrivateLocalFolderTree && pinFreeFileListOffered &&
+              (item is! Map || item['file_name'] is! String ||
+                  (item['file_name'] as String).isEmpty)) {
+            throw const FormatException('Private file inventory is incomplete');
+          }
           if (item is Map<String, dynamic>) {
             parsed.add(_VaultStoredFile.fromJson(item));
           } else if (item is Map) {
             parsed.add(
                 _VaultStoredFile.fromJson(Map<String, dynamic>.from(item)));
+          } else if (kEnablePrivateLocalFolderTree && pinFreeFileListOffered) {
+            throw const FormatException('Private file inventory is incomplete');
           }
         }
       }
 
-      if (!mounted ||
+      if (!mounted || app.sessionToken != token ||
           labelMutationGeneration != _savedFileLabelMutationGeneration) return;
       final oldIds = vaultFiles.map((file) => file.id).toSet();
       final newIds = parsed.map((file) => file.id).toSet();
@@ -16089,8 +16109,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       setState(() {
         vaultFiles = parsed;
         _fileListRefreshRequired = false;
+        if (kEnablePrivateLocalFolderTree && pinFreeFileListOffered) {
+          _privateFolderInventoryToken = token;
+        }
       });
     } catch (e) {
+      if (kEnablePrivateLocalFolderTree && mounted &&
+          app.sessionToken == token) {
+        setState(() {
+          _privateFolderInventoryToken = null;
+          _folderTreeData = null;
+        });
+      }
       if (e is ZkLegacyFileListChangedException) {
         if (mounted) {
           setState(() {
@@ -16138,11 +16168,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final localPrivateFolders = kEnableFileV2UiRead &&
           zk_mvk_store.ZkActiveMvk.current() != null;
+      final privateLocalFolders = kEnablePrivateLocalFolderTree;
+      if (privateLocalFolders &&
+          (!localPrivateFolders ||
+              !ZkPinFreeFileSession.instance.listOfferedForToken(token) ||
+              _privateFolderInventoryToken != token)) {
+        throw StateError('Private folder inventory is unavailable');
+      }
       // Never put a newly decrypted private folder name in /folders?path=.
       // A path returned by the older server folder tree is already known to
       // that server and may still be requested to preserve older content.
-      final askServer = !localPrivateFolders || path.isEmpty ||
-          _serverKnownFolderPaths.contains(path);
+      final askServer = !privateLocalFolders &&
+          (!localPrivateFolders || path.isEmpty ||
+              _serverKnownFolderPaths.contains(path));
       final serverTree = askServer
           ? await client.listFolder(
               authToken: token, path: path.isEmpty ? null : path,
@@ -16161,7 +16199,26 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         }
       }
       final Map<String, dynamic> response;
-      if (localPrivateFolders) {
+      if (privateLocalFolders) {
+        response = buildPrivateLocalFolderTree(
+          path: path,
+          files: <Map<String, dynamic>>[
+            for (final file in vaultFiles)
+              <String, dynamic>{
+                'id': file.id,
+                'file_name': file.fileName,
+                'saved_name': file.savedName,
+                'content_type': file.contentType,
+                'asset_type': file.assetType,
+                'file_size': file.fileSize,
+                'needs_naming': file.needsNaming,
+                'relative_path': file.relativePath,
+                'v2_retired': file.v2Retired,
+                'v2_ready': file.v2Ready,
+              },
+          ],
+        );
+      } else if (localPrivateFolders) {
         response = mergePrivateV2FolderTree(
           path: path,
           serverTree: serverTree,
@@ -16219,6 +16276,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         _folderTreeData = FolderTreeData.fromJson(response);
       });
     } catch (e) {
+      if (kEnablePrivateLocalFolderTree && mounted &&
+          app.sessionToken == token) {
+        setState(() => _folderTreeData = null);
+      }
       if (kDebugMode) {
         debugPrint('listFolder failed: $e');
       }
