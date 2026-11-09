@@ -61,11 +61,6 @@ void main() {
             vaultName: 'Synthetic vault',
             pin: rawPin,
           ),
-      () => client.rotateVaultKdf(
-            authToken: token,
-            vaultName: 'Synthetic vault',
-            pin: rawPin,
-          ),
       // Deliberately omit the handle: the transport guard is a second line
       // of defense even if a caller forgets the related-files UI guard.
       () => client.fetchRelatedFiles(

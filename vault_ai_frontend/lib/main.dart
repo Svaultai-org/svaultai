@@ -1469,9 +1469,9 @@ Future<void> main() async {
 const String _kAppLocaleStorageKeyV1 = 'app_locale';
 const String _kAppLocaleStorageKeyV2 = 'app_locale_v2';
 
-/// Legacy KDF rotation sends the PIN to the server. OPAQUE vaults must never
-/// enter that flow after a successful private unlock.
-bool shouldRotateLegacyVaultKdfAfterUnlock(String? vaultHandle) =>
+/// Legacy-only vaults need a second metadata read to detect a concurrent
+/// rotation by an older client. OPAQUE vaults never need this PBKDF2 path.
+bool shouldRefreshLegacyVaultKdfAfterUnlock(String? vaultHandle) =>
     vaultHandle == null || vaultHandle.isEmpty;
 
 class AppState extends ChangeNotifier {
@@ -3142,51 +3142,12 @@ class AppState extends ChangeNotifier {
         'iterations': iterations,
       });
 
-      // Legacy-only: this endpoint accepts a raw PIN. OPAQUE vaults keep
-      // the key derived from the metadata already fetched above and skip it.
-      // 2026-07-21 (c2f917e first-chat regression fix): the previous
-      // shape wrapped the rotate call, a rotated-flag inspection,
-      // and the re-derive in ONE try block that silently swallowed
-      // every failure. That silently desynced the client key from
-      // the DB whenever the server rotated but the flag inspection
-      // failed for any reason, and the very first /chat POST then
-      // encrypted with the stale key. Server re-derived from the
-      // (now-rotated) DB salt, and vault_core.decrypt_message
-      // raised "Invalid PIN or corrupted data" -->
-      // InvalidVaultUnlockException on the client.
-      //
-      // New shape (three-part):
-      //   * Attempt the rotation. Do NOT silently swallow errors -
-      //     log the outcome via vlog. If the rotate call threw the
-      //     server transaction rolled back (see
-      //     vault_core.py:530-533), so K1 from /vault-meta above is
-      //     still valid and no client action is needed.
-      //   * REGARDLESS of the rotate outcome, refetch /vault-meta.
-      //     That is the authoritative source of the CURRENT DB
-      //     salt/iter and closes the "server committed but response
-      //     was malformed or lost" window that no flag inspection
-      //     can catch.
-      //   * If the fresh salt/iter differ from what K1 was derived
-      //     from, re-derive K2 and REPLACE the cached key so the
-      //     next /chat's server-side re-derive matches.
-      if (shouldRotateLegacyVaultKdfAfterUnlock(activeVaultHandle)) {
-        Object? _rotateError;
-        try {
-          await client.rotateVaultKdf(
-            vaultName: activeVaultName,
-            pin: pin,
-            authToken: activeToken,
-          );
-        } catch (e) {
-          _rotateError = e;
-        }
-        vlog('pin.rotate.attempt', {
-          'ok': _rotateError == null,
-          if (_rotateError != null)
-            'error_type': _rotateError.runtimeType.toString(),
-          if (_rotateError != null) 'error': _rotateError.toString(),
-        });
-
+      // A legacy-only vault still derives its local content key from the
+      // server's stored KDF parameters. Another older client may rotate them
+      // between the first metadata read and this unlock. Refetch the current
+      // parameters without transmitting the PIN, then replace the local key
+      // only if that authoritative generation changed.
+      if (shouldRefreshLegacyVaultKdfAfterUnlock(activeVaultHandle)) {
         final freshMeta = await _API.getVaultMeta(
           vaultName: activeVaultName,
           authToken: activeToken,
@@ -3194,37 +3155,22 @@ class AppState extends ChangeNotifier {
         final freshSalt = freshMeta['pin_salt']?.toString();
         final freshIter =
             (freshMeta['kdf_iterations'] as num?)?.toInt() ?? iterations;
-        final saltChanged =
-            freshSalt != null && freshSalt.isNotEmpty && freshSalt != pinSalt;
-        final iterChanged = freshIter != iterations;
-        vlog('pin.rotate.post_meta', {
-          'salt_changed': saltChanged,
-          'iter_changed': iterChanged,
-          'new_iterations': freshIter,
-        });
-        if (freshSalt != null &&
-            freshSalt.isNotEmpty &&
-            (saltChanged || iterChanged)) {
-          // Re-derive the legacy key if a concurrent rotation changed the
-          // authoritative server metadata. Never do this on an OPAQUE vault.
-          final _postRotateCtx = await deriveAndInstallCryptoContext(
+        if (freshSalt == null || freshSalt.isEmpty) {
+          throw const FormatException('Current vault KDF salt is unavailable');
+        }
+        if (freshSalt != pinSalt || freshIter != iterations) {
+          final currentCtx = await deriveAndInstallCryptoContext(
             vaultId: activeVaultId,
             vaultName: activeVaultName,
             pin: pin,
             pinSaltBase64: freshSalt,
             iterations: freshIter,
-            source: 'verify_pin.post_rotate',
+            source: 'verify_pin.refresh_kdf',
           );
-          if (_postRotateCtx == null) {
-            vlog('pin.verify.derive.superseded', {
-              'phase': 'post_rotate',
-              'vaultName': activeVaultName,
-            });
-            return false;
-          }
+          if (currentCtx == null) return false;
         }
       }
-      vlog('pin.timing.rotate_kdf', {'elapsed_ms': tick()});
+      vlog('pin.timing.refresh_kdf', {'elapsed_ms': tick()});
 
       pinAttempts = 0;
       lockoutUntil = null;

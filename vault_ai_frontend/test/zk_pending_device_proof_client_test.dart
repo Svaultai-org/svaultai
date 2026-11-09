@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/services/vault_handle.dart';
+import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
 import 'package:vault_ai_frontend/services/zk_auth_service.dart';
 
 
@@ -271,4 +273,32 @@ void main() {
       zkProofToken: 'synthetic-proof',
     ), throwsStateError);
   }, skip: kEnableZkPrivateOnlyUnlock);
+
+  test('active OPAQUE key blocks legacy device PIN requests before network',
+      () async {
+    final sent = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://example.invalid',
+      httpClient: MockClient((request) async {
+        sent.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+    ZkActiveMvk.set(
+      mvk: SecretKey(List<int>.filled(32, 5)),
+      vaultId: 'synthetic-vault',
+      vaultHandle: 'VLT-SYNTHETIC',
+    );
+    try {
+      await expectLater(client.requestSelfApproval(
+        authToken: 'synthetic-bearer', pin: 'synthetic-pin',
+      ), throwsStateError);
+      await expectLater(client.finalizeSelfApproval(
+        authToken: 'synthetic-bearer', pin: 'synthetic-pin',
+      ), throwsStateError);
+      expect(sent, isEmpty);
+    } finally {
+      ZkActiveMvk.clear();
+    }
+  });
 }

@@ -100,11 +100,6 @@ void main() {
             pin: pin,
             authToken: token,
           ),
-      'KDF rotation': () async => client.rotateVaultKdf(
-            vaultName: 'Private name',
-            pin: pin,
-            authToken: token,
-          ),
       'saved item list': () async => client.listVaultSecureItems(
             vaultName: 'Private name',
             pin: pin,

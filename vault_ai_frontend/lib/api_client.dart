@@ -2032,7 +2032,8 @@ class VaultAIClient {
     String? zkProofToken,
   }) async {
     final proofOnly = zkProofToken != null || kEnableZkPrivateOnlyUnlock ||
-        signedAuthDeviceOfferedForToken(authToken);
+        signedAuthDeviceOfferedForToken(authToken) ||
+        zk_mvk_store.ZkActiveMvk.current() != null;
     if (proofOnly &&
         (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
       throw StateError('Private device approval requires an OPAQUE proof.');
@@ -2072,7 +2073,8 @@ class VaultAIClient {
     String? zkProofToken,
   }) async {
     final proofOnly = zkProofToken != null || kEnableZkPrivateOnlyUnlock ||
-        signedAuthDeviceOfferedForToken(authToken);
+        signedAuthDeviceOfferedForToken(authToken) ||
+        zk_mvk_store.ZkActiveMvk.current() != null;
     if (proofOnly &&
         (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
       throw StateError('Private device approval requires an OPAQUE proof.');
@@ -3426,45 +3428,6 @@ class VaultAIClient {
       ));
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
-  }
-
-  Future<Map<String, dynamic>> rotateVaultKdf({
-    required String vaultName,
-    required String pin,
-    required String authToken,
-  }) async {
-    if (kPrivateOnlyTransportRejectPin ||
-        _hasSignedOpaqueSessionShape(authToken)) {
-      throw StateError('Legacy server PIN rotation is unavailable for this vault.');
-    }
-    final uri = Uri.parse('$baseUrl/rotate-vault-kdf');
-
-    final response = await _sessionHttp.post(
-      uri,
-      headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode({
-        'vault_name': '',
-        'pin': pin,
-      }),
-    );
-
-    if (response.statusCode != 200) {
-      _throwIfAuthExpired(response.statusCode, response.body);
-      _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLockOrFrozen(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'Rotate vault KDF failed',
-        statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
-    }
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw Exception('Invalid rotate vault KDF response format');
-    }
-
-    return decoded;
   }
 
   Future<Map<String, dynamic>> wipeOrphanData({

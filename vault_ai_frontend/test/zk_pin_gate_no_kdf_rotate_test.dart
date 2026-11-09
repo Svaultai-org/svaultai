@@ -2,13 +2,13 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vault_ai_frontend/main.dart'
-    show shouldRotateLegacyVaultKdfAfterUnlock;
+    show shouldRefreshLegacyVaultKdfAfterUnlock;
 
 void main() {
-  test('OPAQUE vault unlock never selects raw-PIN KDF rotation', () {
-    expect(shouldRotateLegacyVaultKdfAfterUnlock('VLT-SYNTHETIC'), isFalse);
-    expect(shouldRotateLegacyVaultKdfAfterUnlock(''), isTrue);
-    expect(shouldRotateLegacyVaultKdfAfterUnlock(null), isTrue);
+  test('OPAQUE unlock skips legacy KDF refresh and never rotates with PIN', () {
+    expect(shouldRefreshLegacyVaultKdfAfterUnlock('VLT-SYNTHETIC'), isFalse);
+    expect(shouldRefreshLegacyVaultKdfAfterUnlock(''), isTrue);
+    expect(shouldRefreshLegacyVaultKdfAfterUnlock(null), isTrue);
 
     final source = File('lib/main.dart').readAsStringSync();
     final verifyStart = source.indexOf('Future<bool> verifyPin(');
@@ -18,12 +18,11 @@ void main() {
     expect(verifyEnd, greaterThan(verifyStart));
     final verify = source.substring(verifyStart, verifyEnd);
     final guard = verify.indexOf(
-      'if (shouldRotateLegacyVaultKdfAfterUnlock(activeVaultHandle)) {',
+      'if (shouldRefreshLegacyVaultKdfAfterUnlock(activeVaultHandle)) {',
     );
-    final rotate = verify.indexOf('await client.rotateVaultKdf(');
+    final refresh = verify.indexOf('final freshMeta = await _API.getVaultMeta(');
     expect(guard, greaterThan(-1));
-    expect(rotate, greaterThan(guard));
-    expect(verify.substring(guard, rotate).contains('}'), isFalse,
-        reason: 'rotation must remain inside the OPAQUE-vault guard');
+    expect(refresh, greaterThan(guard));
+    expect(verify, isNot(contains('rotateVaultKdf(')));
   });
 }

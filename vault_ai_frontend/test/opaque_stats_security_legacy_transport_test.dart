@@ -38,11 +38,6 @@ void main() {
             authToken: authToken, vaultName: 'Synthetic vault', pin: pin),
         throwsStateError,
       );
-      await expectLater(
-        client.rotateVaultKdf(
-            vaultName: 'Synthetic vault', pin: pin, authToken: authToken),
-        throwsStateError,
-      );
       expect(sent, hasLength(1));
     });
   }
