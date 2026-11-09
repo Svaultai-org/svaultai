@@ -18,7 +18,8 @@ ZkLegacyFileReadRoute selectZkLegacyFileReadRoute({
   if (availableV2 || requireReadyV2) {
     return ZkLegacyFileReadRoute.notApplicable;
   }
-  if (!requirePinFreeChat && !signedPrivateChatOffered && !strictPinFreeFiles) {
+  if (!requirePinFreeChat && !signedPrivateChatOffered && !strictPinFreeFiles &&
+      !signedLegacyDownloadOffered) {
     return ZkLegacyFileReadRoute.notApplicable;
   }
   return signedLegacyDownloadOffered

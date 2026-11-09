@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/services/zk_legacy_file_read_route.dart';
 
 void main() {
@@ -29,10 +31,24 @@ void main() {
     expect(route(strictPinFreeFiles: true), ZkLegacyFileReadRoute.unavailable);
   });
 
-  test('ordinary legacy access is unchanged while the cutover flag is off', () {
+  test('ordinary legacy access is unchanged without a signed offer', () {
     expect(route(), ZkLegacyFileReadRoute.notApplicable);
+  });
+
+  test('signed download offer selects proof reader with strict flag off', () {
+    final token = base64Url
+        .encode(<int>[3, 6, ...List<int>.filled(48, 7)])
+        .replaceAll('=', '');
+    expect(signedFileDownloadOfferedForToken(token), isTrue);
+    expect(signedFileDownloadOfferedForToken('ordinary-legacy-token'), isFalse);
     expect(
-      route(signedLegacyDownloadOffered: true),
+      route(
+        signedLegacyDownloadOffered: signedFileDownloadOfferedForToken(token),
+      ),
+      ZkLegacyFileReadRoute.proofOnly,
+    );
+    expect(
+      route(availableV2: true, signedLegacyDownloadOffered: true),
       ZkLegacyFileReadRoute.notApplicable,
     );
   });
@@ -90,6 +106,7 @@ void main() {
           'pinFreeLegacyDownloadOffered',
         ),
       );
+      expect(body, contains('signedFileDownloadOfferedForToken(authToken)'));
       expect(body, contains('strictPinFreeFiles: pinFreeZkFile'));
       final proofEnd = source.indexOf('_fetchRelatedFilesEnvelope(', end);
       expect(proofEnd, greaterThan(end));
@@ -97,6 +114,7 @@ void main() {
       expect(proofBody, isNot(contains('downloadVaultFile(')));
       expect(proofBody, isNot(contains('getDownloadManifest(')));
       expect(proofBody, isNot(contains('currentPinOrThrow(')));
+      expect(proofBody, contains('signedFileDownloadOfferedForToken(authToken)'));
     },
   );
 }

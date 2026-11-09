@@ -16034,8 +16034,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         throw StateError('Unlock your private files on an updated app.');
       }
       final client = VaultAIClient(baseUrl: backendBaseUrl);
-      final pinFreeFileListOffered = ZkPinFreeFileSession.instance
-          .listOfferedForToken(token);
+      final pinFreeFileListOffered = signedFileListOfferedForToken(token) ||
+          ZkPinFreeFileSession.instance.listOfferedForToken(token);
       if (kEnablePrivateLocalFolderTree &&
           (!pinFreeFileListOffered || !kEnableFileV2UiRead ||
               zk_mvk_store.ZkActiveMvk.current() == null)) {
@@ -16155,7 +16155,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final privateLocalFolders = kEnablePrivateLocalFolderTree;
       if (privateLocalFolders &&
           (!localPrivateFolders ||
-              !ZkPinFreeFileSession.instance.listOfferedForToken(token) ||
+              !(signedFileListOfferedForToken(token) ||
+                  ZkPinFreeFileSession.instance.listOfferedForToken(token)) ||
               _privateFolderInventoryToken != token)) {
         throw StateError('Private folder inventory is unavailable');
       }
@@ -18094,8 +18095,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     bool requireReadyV2 = false,
     bool requirePinFreeChat = false,
   }) async {
-    final pinFreeLegacyDownloadOffered = ZkPinFreeFileSession.instance
-        .downloadOfferedForToken(authToken);
+    final pinFreeLegacyDownloadOffered =
+        signedFileDownloadOfferedForToken(authToken) ||
+        ZkPinFreeFileSession.instance.downloadOfferedForToken(authToken);
     if (pinFreeLegacyDownloadOffered &&
         zk_mvk_store.ZkActiveMvk.current() == null) {
       throw StateError('Vault encryption key is unavailable');
@@ -18436,7 +18438,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         !st.SessionTermination.instance.isTerminated &&
         zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
         identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
-        ZkPinFreeFileSession.instance.downloadOfferedForToken(authToken);
+        (signedFileDownloadOfferedForToken(authToken) ||
+            ZkPinFreeFileSession.instance.downloadOfferedForToken(authToken));
     if (vaultId == null || mvk == null || handle?.isNotEmpty != true ||
         !currentAccess()) {
       throw StateError('Private file access is unavailable.');

@@ -350,6 +350,48 @@ void main() {
     expect(sent, isEmpty);
   });
 
+  test('signed download offer fences old APIs without local offer marker',
+      () async {
+    final offeredToken = signedToken(6);
+    SessionTermination.instance.bindSession(offeredToken);
+    ZkPinFreeFileSession.instance.clear();
+    final sent = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        sent.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+    await expectLater(
+      client.downloadVaultFile(
+        vaultName: 'synthetic-vault',
+        fileId: 'synthetic-file',
+        pin: pinMarker,
+        authToken: offeredToken,
+      ),
+      throwsA(isA<StateError>().having(
+        (error) => error.message,
+        'message',
+        'This file uses the private download route.',
+      )),
+    );
+    await expectLater(
+      client.getDownloadManifest(
+        authToken: offeredToken,
+        vaultName: 'synthetic-vault',
+        pin: pinMarker,
+        fileId: 'synthetic-file',
+      ),
+      throwsA(isA<StateError>().having(
+        (error) => error.message,
+        'message',
+        'This file uses the private download route.',
+      )),
+    );
+    expect(sent, isEmpty);
+  });
+
   test(
     'old download remains available without an authenticated offer',
     () async {

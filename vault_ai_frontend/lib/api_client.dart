@@ -117,6 +117,13 @@ void _rejectLegacyFilePinForActiveZk() {
   }
 }
 
+void _rejectOfferedLegacyFileDownload(String authToken) {
+  if (signedFileDownloadOfferedForToken(authToken) ||
+      ZkPinFreeFileSession.instance.downloadOfferedForToken(authToken)) {
+    throw StateError('This file uses the private download route.');
+  }
+}
+
 // Coordinated rollout with VAULTAI_ZK_METADATA_INVENTORY_ENABLED on the API.
 // A missing keyless route must fail closed instead of sending a ZK PIN.
 const bool kEnableKeylessSavedItemRead = bool.fromEnvironment(
@@ -379,6 +386,9 @@ bool signedPasswordAnalysisOfferedForToken(String token) =>
 
 bool signedFileListOfferedForToken(String token) =>
     (_signedOfferBits(token) & 2) != 0;
+
+bool signedFileDownloadOfferedForToken(String token) =>
+    (_signedOfferBits(token) & 4) != 0;
 
 bool signedFileMutationOfferedForToken(String token) =>
     (_signedOfferBits(token) & 32) != 0;
@@ -6108,6 +6118,7 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
+    _rejectOfferedLegacyFileDownload(authToken);
     _rejectLegacyFilePinForActiveZk();
     final uri = Uri.parse('$baseUrl/download-file');
 
@@ -6388,6 +6399,7 @@ class VaultAIClient {
     required String pin,
     required String fileId,
   }) async {
+    _rejectOfferedLegacyFileDownload(authToken);
     _rejectLegacyFilePinForActiveZk();
     final uri = Uri.parse('$baseUrl/download-file/manifest');
 
