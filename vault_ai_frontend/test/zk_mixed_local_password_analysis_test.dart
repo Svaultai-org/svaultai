@@ -222,6 +222,39 @@ void main() {
     expect(requestedOlderKey, isFalse);
   });
 
+  test('older and private items share local reuse counts without outputting values',
+      () async {
+    final result = await loadAndAnalyzeMixedZkPasswords(
+      fetchMetadata: () async => <Map<String, dynamic>>[
+        ...metadata,
+        <String, dynamic>{
+          'item_id': 9,
+          'is_legacy': false,
+          'has_v2_payload': true,
+        },
+      ],
+      fetchV2Items: () async => <String, dynamic>{
+        'items': [
+          <String, dynamic>{
+            'id': 9,
+            'storage_engine': 'ciphertext',
+            'item_type': 'credential',
+            'fields': <String, dynamic>{
+              'password': 'local-password-example-123',
+            },
+          },
+        ],
+      },
+      createLegacySource: createSource,
+      stillCurrent: () => true,
+    );
+    expect(result.analyzedCount, 2);
+    expect(result.reusedGroups, 1);
+    expect(result.toResultMap().toString(),
+        isNot(contains('local-password-example-123')));
+    expect(export.cleared, isTrue);
+  });
+
   test('ordinary V2-only analysis still rejects older rows', () {
     expect(
       () => analyzeZkPasswords(metadata: metadata, decryptedItems: const []),

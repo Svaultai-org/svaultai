@@ -69,7 +69,7 @@ void main() {
   test('strict UI guard precedes the legacy PIN prompt', () async {
     final source = await File('lib/security_center_page.dart').readAsString();
     final start = source.indexOf('Future<void> _runAnalyzePasswords()');
-    final end = source.indexOf('Future<void> _runLocalZkAnalyzePasswords()', start);
+    final end = source.indexOf('Future<void> _runLocalZkAnalyzePasswords(', start);
     expect(start, isNonNegative);
     expect(end, greaterThan(start));
     final body = source.substring(start, end);

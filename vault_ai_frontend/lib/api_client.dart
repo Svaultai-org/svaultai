@@ -297,6 +297,14 @@ void assertOutboundPinFreeRequest(
           _requestBodyContainsPin(body, headers: headers))) {
     throw StateError('Private vault deletion requires an OPAQUE proof.');
   }
+  // Keep the old analyzer fenced if a vault adopts OPAQUE after the screen
+  // collected credentials but before the request reaches transport.
+  if (uri.path == '/security-center/analyze-passwords' &&
+      zk_mvk_store.ZkActiveMvk.current() != null &&
+      (_requestMetadataContainsPin(uri, headers) ||
+          _requestBodyContainsPin(body, headers: headers))) {
+    throw StateError('Use local password analysis for this vault.');
+  }
   if (kPrivateOnlyTransportRejectPin &&
       (_requestMetadataContainsPin(uri, headers) ||
           _requestBodyContainsPin(body, headers: headers))) {

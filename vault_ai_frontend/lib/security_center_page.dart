@@ -33,7 +33,9 @@ bool legacyPasswordAnalysisNeedsPrivateUpgrade({
 }) => pinTransportRejected && !localAnalysisAvailable;
 
 class SecurityCenterPage extends StatefulWidget {
-  const SecurityCenterPage({super.key});
+  final VaultAIClient? client;
+
+  const SecurityCenterPage({super.key, this.client});
 
   @override
   State<SecurityCenterPage> createState() => _SecurityCenterPageState();
@@ -73,7 +75,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
   @override
   void initState() {
     super.initState();
-    _client = VaultAIClient(baseUrl: backendBaseUrl);
+    _client = widget.client ?? VaultAIClient(baseUrl: backendBaseUrl);
     _refresh();
     _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) => _refresh());
   }
@@ -430,6 +432,12 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
 
   Future<void> _runAnalyzePasswords() async {
     if (_analyzing) return;
+    final app = context.read<AppState>();
+    final initialToken = app.sessionToken;
+    final initialVaultId = app.vaultId;
+    if (initialToken == null || initialVaultId == null) return;
+    bool sameVault() => mounted && app.sessionToken == initialToken &&
+        app.vaultId == initialVaultId;
     // Reject before the legacy name/PIN dialog, not after collecting a PIN.
     if (_legacyAnalysisNeedsPrivateUpgrade) return;
     if (_useLocalZkAnalysis) {
@@ -439,31 +447,35 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
     final messenger = ScaffoldMessenger.of(context);
 
     
-    if (!await _confirmAnalyzeWarning()) return;
+    if (!await _confirmAnalyzeWarning() || !sameVault()) return;
+    if (_useLocalZkAnalysis) {
+      await _runLocalZkAnalyzePasswords(warningConfirmed: true);
+      return;
+    }
+    if (_legacyAnalysisNeedsPrivateUpgrade) return;
 
     
     int? cursor;
     setState(() => _analyzing = true);
     try {
       while (true) {
-        final creds = await _promptVaultAndPin();
-        if (creds == null) break;
-        if (!mounted) return;
-        final token = context.read<AppState>().sessionToken;
-        if (token == null) {
-          messenger.showSnackBar(
-            SnackBar(
-              content: Text(
-                AppLocalizations.of(context).errorSessionExpired,
-              ),
-            ),
-          );
+        if (!sameVault()) return;
+        if (_useLocalZkAnalysis) {
+          await _runLocalZkAnalyzePasswords(warningConfirmed: true);
           return;
         }
+        final creds = await _promptVaultAndPin();
+        if (creds == null) break;
+        if (!sameVault()) return;
+        if (_useLocalZkAnalysis) {
+          await _runLocalZkAnalyzePasswords(warningConfirmed: true);
+          return;
+        }
+        if (_legacyAnalysisNeedsPrivateUpgrade) return;
         Map<String, dynamic> result;
         try {
           result = await _client.analyzePasswords(
-            authToken: token,
+            authToken: initialToken,
             vaultName: creds.vaultName,
             pin: creds.pin,
             cursor: cursor,
@@ -475,9 +487,10 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
           );
           return;
         }
-        if (!mounted) return;
+        if (!sameVault()) return;
         final wantsMore = await _showAnalyzeResult(result);
         if (!wantsMore) break;
+        if (!sameVault()) return;
         cursor = result['next_cursor'] as int?;
         if (cursor == null) break;
       }
@@ -488,8 +501,9 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
     }
   }
 
-  Future<void> _runLocalZkAnalyzePasswords() async {
-    if (!await _confirmAnalyzeWarning() || !mounted) return;
+  Future<void> _runLocalZkAnalyzePasswords({bool warningConfirmed = false}) async {
+    if (!warningConfirmed && !await _confirmAnalyzeWarning()) return;
+    if (!mounted) return;
     final app = context.read<AppState>();
     final token = app.sessionToken;
     final vaultId = app.vaultId;
