@@ -94,6 +94,46 @@ class FileV2Writer {
     String? relativePath,
     int chunkSize = defaultChunkSize,
   }) async {
+    final manifest = await prepareStreamed(
+      fileId: fileId,
+      fileName: fileName,
+      totalBytes: bytes.length,
+      savedName: savedName,
+      contentType: contentType,
+      relativePath: relativePath,
+      chunkSize: chunkSize,
+    );
+    if (bytes.length > eagerLimitBytes) return manifest;
+    final chunks = <String>[];
+    final contentKey = await VaultKeyHierarchy(mvk).fileContentKey();
+    for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+      final end = min(offset + chunkSize, bytes.length);
+      chunks.add(b64urlEncode(await aesGcmWrap(
+        contentKey,
+        bytes.sublist(offset, end),
+      )));
+    }
+    return PreparedNewFileV2(
+      fileId: manifest.fileId,
+      totalBytes: manifest.totalBytes,
+      chunkSize: manifest.chunkSize,
+      chunkCount: manifest.chunkCount,
+      manifestCiphertext: manifest.manifestCiphertext,
+      chunkCiphertexts: List<String>.unmodifiable(chunks),
+    );
+  }
+
+  /// Prepare encrypted metadata from dimensions only. The caller encrypts
+  /// and uploads each content chunk separately, keeping file memory bounded.
+  Future<PreparedNewFileV2> prepareStreamed({
+    required String fileId,
+    required String fileName,
+    required int totalBytes,
+    String? savedName,
+    String? contentType,
+    String? relativePath,
+    int chunkSize = defaultChunkSize,
+  }) async {
     if (!RegExp(r'^v2-[A-Za-z0-9_-]{27}$').hasMatch(fileId) ||
         fileName.trim().isEmpty ||
         fileName.length > 255 ||
@@ -101,7 +141,7 @@ class FileV2Writer {
         (contentType?.length ?? 0) > 255) {
       throw const FormatException('Invalid private file upload');
     }
-    final chunkCount = requireChunkCount(bytes.length, chunkSize);
+    final chunkCount = requireChunkCount(totalBytes, chunkSize);
     final hierarchy = VaultKeyHierarchy(mvk);
     final metadataKey = await hierarchy.metadataKey();
     Future<String> wrapMetadata(String value) async =>
@@ -117,21 +157,10 @@ class FileV2Writer {
           requirePrivateV2RelativePath(relativePath, fileName: fileName),
         ),
     };
-    final chunks = <String>[];
-    if (bytes.length <= eagerLimitBytes) {
-      final contentKey = await hierarchy.fileContentKey();
-      for (var offset = 0; offset < bytes.length; offset += chunkSize) {
-        final end = min(offset + chunkSize, bytes.length);
-        chunks.add(b64urlEncode(await aesGcmWrap(
-          contentKey,
-          bytes.sublist(offset, end),
-        )));
-      }
-    }
     final manifest = <String, Object?>{
       'schema': 'vaultai.file.migrated.v1',
       'file_id': fileId,
-      'file_size': bytes.length,
+      'file_size': totalBytes,
       'content_type': null,
       'chunk_size': chunkSize,
       'chunk_count': chunkCount,
@@ -139,13 +168,13 @@ class FileV2Writer {
     };
     return PreparedNewFileV2(
       fileId: fileId,
-      totalBytes: bytes.length,
+      totalBytes: totalBytes,
       chunkSize: chunkSize,
       chunkCount: chunkCount,
       manifestCiphertext: b64urlEncode(
         await aesGcmWrap(metadataKey, utf8.encode(jsonEncode(manifest))),
       ),
-      chunkCiphertexts: List<String>.unmodifiable(chunks),
+      chunkCiphertexts: const <String>[],
     );
   }
 
