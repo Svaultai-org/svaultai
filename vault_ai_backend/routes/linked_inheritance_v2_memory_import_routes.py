@@ -220,9 +220,11 @@ def _recipient_has_unready_memory(cur, *, beneficiary_id: str) -> bool:
     cur.execute(
         """SELECT 1 FROM vault_ai_memory m
             WHERE m.vault_id=%s AND m.superseded_at IS NULL
-              AND (m.payload_ciphertext IS NULL OR
-                   OCTET_LENGTH(m.payload_ciphertext)<29 OR
-                   GET_BYTE(m.payload_ciphertext,0)<>1 OR
+              AND (CASE
+                     WHEN m.payload_ciphertext IS NULL OR
+                          OCTET_LENGTH(m.payload_ciphertext)<29 THEN TRUE
+                     ELSE GET_BYTE(m.payload_ciphertext,0)<>1
+                   END OR
                    m.memory_record_id IS NULL OR
                    m.memory_lookup_hash IS NULL OR
                    OCTET_LENGTH(m.memory_lookup_hash)<>32 OR
