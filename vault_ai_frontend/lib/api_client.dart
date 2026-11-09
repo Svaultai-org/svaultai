@@ -4069,13 +4069,14 @@ class VaultAIClient {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     final itemRead = ZkPinFreeItemReadSession.instance;
     final sessionPinFreeRead = itemRead.activeForToken(authToken);
-    if ((itemRead.wasOfferedForToken(authToken) &&
-            (!sessionPinFreeRead || mvk == null)) ||
-        (itemRead.privateVaultForToken(authToken) && mvk == null)) {
+    if (itemRead.wasOfferedForToken(authToken) &&
+        (!sessionPinFreeRead || mvk == null)) {
       throw StateError('Vault encryption key is unavailable');
     }
+    _requirePrivateSavedItemIdentity(authToken, mvk);
     if (mvk != null) {
       final ciphertext = await _listZkVaultItems(authToken: authToken);
+      _requirePrivateSavedItemIdentity(authToken, mvk);
       // The coordinated keyless build and authenticated read offers use the
       // trusted metadata route. A missing route cannot retry the old list.
       final legacy = (kEnableKeylessSavedItemRead || sessionPinFreeRead ||
@@ -4087,6 +4088,7 @@ class VaultAIClient {
               authToken: authToken,
               beforeResponse: () => _requireSavedItemKey(mvk),
             );
+      _requirePrivateSavedItemIdentity(authToken, mvk);
       final combined = <Map<String, dynamic>>[];
       final seen = <String>{};
       for (final raw in (ciphertext['items'] as List? ?? const [])) {
@@ -4110,6 +4112,7 @@ class VaultAIClient {
           combined.add(item);
         }
       }
+      _requirePrivateSavedItemIdentity(authToken, mvk);
       return <String, dynamic>{
         'items': combined,
         'engine': 'ciphertext_with_legacy_compatibility',
@@ -4614,9 +4617,7 @@ class VaultAIClient {
         (!sessionPinFreeRead || mvk == null)) {
       throw StateError('Vault encryption key is unavailable');
     }
-    if (itemRead.privateVaultForToken(authToken) && mvk == null) {
-      throw StateError('Vault encryption key is unavailable');
-    }
+    _requirePrivateSavedItemIdentity(authToken, mvk);
     if (mvk != null) {
       final item = await _resolveSavedItem(
         vaultName: vaultName,
@@ -4627,6 +4628,7 @@ class VaultAIClient {
         itemId: itemId,
       );
       _requireSavedItemKey(mvk);
+      _requirePrivateSavedItemIdentity(authToken, mvk);
       if (item?['storage_engine'] == 'ciphertext') return item!;
       if (kEnableKeylessSavedItemRead || sessionPinFreeRead) {
         if (item?['storage_engine'] != 'legacy_compatibility') {
@@ -4639,6 +4641,7 @@ class VaultAIClient {
         }
         final detail = await reader(exactId);
         _requireSavedItemKey(mvk);
+        _requirePrivateSavedItemIdentity(authToken, mvk);
         if (detail['id'] != exactId ||
             detail['item_type'] != item?['item_type'] ||
             detail['service'] != item?['service']) {
@@ -4801,6 +4804,19 @@ class VaultAIClient {
     if (expected == null ||
         !identical(expected, zk_mvk_store.ZkActiveMvk.current())) {
       throw StateError('Vault encryption key changed. Unlock and try again.');
+    }
+  }
+
+  void _requirePrivateSavedItemIdentity(String authToken, Object? expected) {
+    final itemRead = ZkPinFreeItemReadSession.instance;
+    if (!itemRead.privateVaultForToken(authToken)) return;
+    _requireSavedItemKey(expected);
+    if (!itemRead.privateVaultKeyMatchesForToken(
+      authToken,
+      vaultId: zk_mvk_store.ZkActiveMvk.currentVaultId(),
+      vaultHandle: zk_mvk_store.ZkActiveMvk.currentVaultHandle(),
+    )) {
+      throw StateError('Vault encryption key belongs to another vault.');
     }
   }
 

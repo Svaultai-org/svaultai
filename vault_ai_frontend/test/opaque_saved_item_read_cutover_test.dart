@@ -238,13 +238,22 @@ void main() {
         return http.Response('{"items":[]}', 200);
       }),
     );
-    await expectLater(client.listVaultSecureItems(
-      vaultName: 'synthetic-vault', pin: pin, authToken: token,
-    ), throwsStateError);
-    await expectLater(client.getVaultSecureItem(
-      vaultName: 'synthetic-vault', pin: pin, authToken: token,
-      service: 'Synthetic account', itemType: 'login',
-    ), throwsStateError);
+    await expectLater(
+        client.listVaultSecureItems(
+          vaultName: 'synthetic-vault',
+          pin: pin,
+          authToken: token,
+        ),
+        throwsStateError);
+    await expectLater(
+        client.getVaultSecureItem(
+          vaultName: 'synthetic-vault',
+          pin: pin,
+          authToken: token,
+          service: 'Synthetic account',
+          itemType: 'login',
+        ),
+        throwsStateError);
     expect(requests, isEmpty);
 
     // A later unrelated legacy-only session must keep its own route.
@@ -253,13 +262,76 @@ void main() {
       sessionToken: 'replacement-legacy-session',
       offered: false,
     );
-    expect(ZkPinFreeItemReadSession.instance.privateVaultForToken(token), isFalse);
+    expect(
+        ZkPinFreeItemReadSession.instance.privateVaultForToken(token), isFalse);
     await client.listVaultSecureItems(
-      vaultName: 'older-vault', pin: pin,
+      vaultName: 'older-vault',
+      pin: pin,
       authToken: 'replacement-legacy-session',
     );
     expect(requests.single.url.path, '/list-secure-items');
   });
+
+  test('a key from another vault is rejected before and after a read await',
+      () async {
+    final mvk = ZkActiveMvk.current()!;
+    ZkPinFreeItemReadSession.instance.bind(
+      sessionToken: token,
+      offered: false,
+      privateVaultSession: true,
+      privateVaultId: 'synthetic-vault',
+      privateVaultHandle: 'synthetic-handle',
+    );
+    final paths = <String>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        paths.add(request.url.path);
+        ZkActiveMvk.set(
+          mvk: mvk,
+          vaultId: 'different-vault',
+          vaultHandle: 'different-handle',
+        );
+        return http.Response('[]', 200);
+      }),
+    );
+    ZkActiveMvk.set(
+      mvk: mvk,
+      vaultId: 'different-vault',
+      vaultHandle: 'different-handle',
+    );
+    await expectLater(
+        client.listVaultSecureItems(
+          vaultName: 'synthetic-vault',
+          pin: pin,
+          authToken: token,
+        ),
+        throwsStateError);
+    await expectLater(
+        client.getVaultSecureItem(
+          vaultName: 'synthetic-vault',
+          pin: pin,
+          authToken: token,
+          service: 'Synthetic account',
+          itemType: 'login',
+        ),
+        throwsStateError);
+    expect(paths, isEmpty);
+
+    ZkActiveMvk.set(
+      mvk: mvk,
+      vaultId: 'synthetic-vault',
+      vaultHandle: 'synthetic-handle',
+    );
+    await expectLater(
+        client.listVaultSecureItems(
+          vaultName: 'synthetic-vault',
+          pin: pin,
+          authToken: token,
+        ),
+        throwsStateError);
+    expect(paths, <String>['/vault/ciphertext/vault-items']);
+  }, skip: !kEnableKeylessSavedItemRead);
 
   test(
     'legacy-only account retains its existing list and detail requests',

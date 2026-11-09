@@ -1742,6 +1742,21 @@ class AppState extends ChangeNotifier {
       if (display != null && display.isNotEmpty) displayName = display;
       final handle = me['vault_handle']?.toString().trim();
       if (handle != null && handle.isNotEmpty) vaultHandle = handle;
+      if (kEnableKeylessSavedItemRead) {
+        final itemRead = ZkPinFreeItemReadSession.instance;
+        if ((handle != null && handle.isNotEmpty) || me['zk'] == true) {
+          itemRead.updatePrivateVaultForToken(
+            sessionToken: token,
+            vaultId: validatedVaultId,
+            vaultHandle: handle,
+          );
+        } else if (me['zk'] == false &&
+            itemRead.clearPrivateVaultForToken(token)) {
+          // The server confirmed that a persisted handle was stale. A prior
+          // confirmed private session remains sticky until it is replaced.
+          vaultHandle = null;
+        }
+      }
       authed = true;
       _signedOutCode = null;
       _sessionVerificationBlocked = false;
@@ -1758,6 +1773,8 @@ class AppState extends ChangeNotifier {
         }
         if (handle != null && handle.isNotEmpty) {
           await NativeSecureStore.writeString('last_vault_handle', handle);
+        } else if (me['zk'] == false && vaultHandle == null) {
+          await NativeSecureStore.deleteString('last_vault_handle');
         }
       }, requireTokenOwnership: true, expectedToken: token);
     } catch (error) {
@@ -2605,7 +2622,10 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> hydrate() async {
-    ZkPinFreeItemReadSession.instance.clear();
+    // A late startup hydrate must not erase a newer in-memory sign-in marker.
+    if (sessionToken == null) {
+      ZkPinFreeItemReadSession.instance.clear();
+    }
     ZkPinFreeFileSession.instance.clear();
     final epoch = _sessionEpoch;
     final sp = await SharedPreferences.getInstance();
@@ -2647,6 +2667,15 @@ class AppState extends ChangeNotifier {
         savedToken != null && savedToken.isNotEmpty ? savedToken : null;
     if (sessionToken != null) {
       st.SessionTermination.instance.bindSession(sessionToken!);
+      ZkPinFreeItemReadSession.instance.bind(
+        sessionToken: sessionToken!,
+        offered: false,
+        // Persisted identity is only a pending safety marker. /auth/me must
+        // supply the vault ID and handle before a private read can proceed.
+        privateVaultSession: kEnableKeylessSavedItemRead &&
+            persistedHandle?.isNotEmpty == true,
+        privateVaultHandle: persistedHandle,
+      );
       _sessionVerificationBlocked = true;
       _sessionVerificationUnavailable = false;
     }
@@ -2701,6 +2730,8 @@ class AppState extends ChangeNotifier {
       offered: pinFreeLegacyItemRead && vaultHandleValue?.isNotEmpty == true,
       privateVaultSession: kEnableKeylessSavedItemRead &&
           vaultHandleValue?.isNotEmpty == true,
+      privateVaultId: vaultIdValue,
+      privateVaultHandle: vaultHandleValue,
     );
     ZkPinFreeFileSession.instance.bind(
       sessionToken: token,
@@ -2741,6 +2772,29 @@ class AppState extends ChangeNotifier {
     if (!_isCurrentSession(token, epoch)) return;
     _startSessionChecks();
     notifyListeners();
+  }
+
+  /// Adoption changes the vault's server identity within the existing
+  /// session. Preserve that transition before any later saved-item request.
+  bool recordAdoptedVaultHandle({
+    required String token,
+    required String expectedVaultId,
+    required String expectedVaultName,
+    required String handle,
+  }) {
+    if (_disposed || handle.isEmpty || sessionToken != token ||
+        vaultId != expectedVaultId || vaultName != expectedVaultName) {
+      return false;
+    }
+    vaultHandle = handle;
+    if (kEnableKeylessSavedItemRead) {
+      ZkPinFreeItemReadSession.instance.updatePrivateVaultForToken(
+        sessionToken: token,
+        vaultId: expectedVaultId,
+        vaultHandle: handle,
+      );
+    }
+    return true;
   }
 
   Future<void> clearSession({
@@ -6948,10 +7002,20 @@ Future<bool> _tryLegacyAdoptionBestEffort({
       get: _zkHttpGet,
     );
 
-    if (app.sessionToken != token || app.vaultId != vaultId) return true;
+    if (app.sessionToken != token || app.vaultId != vaultId ||
+        app.vaultName != vaultName) {
+      return true;
+    }
 
     if (result.adopted && result.newVaultHandle != null) {
-      app.vaultHandle = result.newVaultHandle;
+      if (!app.recordAdoptedVaultHandle(
+        token: token,
+        expectedVaultId: vaultId,
+        expectedVaultName: vaultName,
+        handle: result.newVaultHandle!,
+      )) {
+        return true;
+      }
       try {
         await app._persistSessionIdentity(
           'last_vault_handle', result.newVaultHandle!, token: token);
