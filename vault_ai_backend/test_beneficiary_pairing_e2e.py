@@ -31,17 +31,16 @@ This test suite:
      stub so we can prove the second call succeeds for the same
      ``vault_id`` that the first call used, closing off the
      "silent partial failure" scenario the operator saw.
-  4. Asserts a static-source invariant: no Phase-2 credential
-     retrieval endpoint exists yet. Nothing in the codebase may
-     return decrypted or wrapped-key material to a beneficiary
-     before Phase 2 lands.
+  4. Checks that the original escrow and ciphertext-write routers
+     expose no unguarded credential retrieval path. Later gated
+     release routes have separate authorization and readback tests.
 
 The tests do not require a real Postgres — the ``get_db()`` seam
 in ``routes/vault_ciphertext_write_routes.py`` is patched with a
 dict-of-lists fake that mimics the two SQL statements the
 endpoint uses. This keeps the test in-process and fast while
-still exercising every line the endpoint touches under a real
-session token flow.
+still exercising the endpoint through FastAPI with a fixed trusted
+principal.
 """
 
 from __future__ import annotations
@@ -189,7 +188,7 @@ def _fake_session_principal() -> dict:
 def _build_label_ciphertext_client(fake_conn: _FakeConn):
     """Build a FastAPI TestClient that mounts only the ciphertext
     write router with (a) the DB seam patched to ``fake_conn`` and
-    (b) ``verify_session_token`` short-circuited to a fixed
+    (b) ``verify_trusted_device`` short-circuited to a fixed
     ``SessionPrincipal`` via FastAPI's ``dependency_overrides``.
     """
     from fastapi import FastAPI
@@ -198,6 +197,7 @@ def _build_label_ciphertext_client(fake_conn: _FakeConn):
     from routes import vault_ciphertext_write_routes as vcwr
 
     original_get_db = vcwr.get_db
+    original_require_content_write = vcwr.require_content_write
 
     def _patched_get_db():
         return fake_conn
@@ -209,16 +209,18 @@ def _build_label_ciphertext_client(fake_conn: _FakeConn):
         return _fake_session_principal()
 
     vcwr.get_db = _patched_get_db
+    vcwr.require_content_write = lambda _principal: None
 
     app = FastAPI()
     app.include_router(vcwr.router)
-    app.dependency_overrides[vcwr.verify_session_token] = (
+    app.dependency_overrides[vcwr.verify_trusted_device] = (
         _override_session_principal
     )
     client = TestClient(app)
 
     def _restore():
         vcwr.get_db = original_get_db
+        vcwr.require_content_write = original_require_content_write
 
     return client, _restore
 
@@ -352,16 +354,14 @@ def test_full_pairing_sequence_reaches_the_pairing_code(
 
 
 # ---------------------------------------------------------------------
-# Phase 2 endpoints must NOT exist yet
+# Original escrow router must not expose an unguarded read path
 # ---------------------------------------------------------------------
 
 
 def test_no_beneficiary_read_path_exists_before_phase_two() -> None:
-    """Every credential-material byte the owner escrows must stay in
-    the DB until the Phase 2 release-authorization endpoints land.
-    This test asserts the router surface contains no phase-2 read
-    path AND that no other module exposes a beneficiary-read
-    endpoint that could return the encrypted package.
+    """The original escrow and ciphertext-write routers must not expose
+    an unguarded read path. Gated release and readback routes live in
+    other modules and are tested separately.
     """
     from routes.inheritance_credential_routes import (
         router as inh_router,
@@ -386,13 +386,13 @@ def test_no_beneficiary_read_path_exists_before_phase_two() -> None:
             all_paths.add(p)
     leaked = forbidden & all_paths
     assert not leaked, (
-        f"phase-2 beneficiary-side endpoints leaked into phase-1: "
+        f"original escrow router exposes a read path: "
         f"{sorted(leaked)}"
     )
 
 
 def test_no_endpoint_returns_encrypted_credential_material() -> None:
-    """No Pydantic response model on the phase-1 escrow surface may
+    """No Pydantic response model on the original escrow surface may
     declare a field that carries the wrapped credential material.
     Parsed via ``ast`` so docstrings and internal helper calls
     don't false-positive.
