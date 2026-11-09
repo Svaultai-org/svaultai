@@ -421,6 +421,32 @@ void main() {
     }
   });
 
+  test('missing private key never revives an older PIN rename request',
+      () async {
+    final f = _Fixture();
+    await f.unlock();
+    try {
+      await f.run(() async {
+        final client = VaultAIClient(baseUrl: 'http://localhost:8000');
+        ZkActiveMvk.clear();
+        await expectLater(
+          client.nameVaultFile(
+            vaultName: f.app.vaultName!,
+            fileId: 'file-a',
+            savedName: 'Private title',
+            pin: 'synthetic-pin',
+            authToken: f.app.sessionToken!,
+          ),
+          throwsStateError,
+        );
+        expect(f.requests, isEmpty);
+        expect(f.writes, isEmpty);
+      });
+    } finally {
+      f.dispose();
+    }
+  });
+
   testWidgets('private Files renames an older file without a PIN cache',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(430, 932));

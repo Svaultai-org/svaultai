@@ -5294,9 +5294,8 @@ class VaultAIClient {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     void checkAccess() {
       if (responseIsCurrent?.call() == false ||
-          (requireCiphertext &&
-              (mvk == null ||
-                  !identical(zk_mvk_store.ZkActiveMvk.current(), mvk)))) {
+          mvk == null ||
+          !identical(zk_mvk_store.ZkActiveMvk.current(), mvk)) {
         throw StateError('File rename access changed. Unlock and try again.');
       }
     }
@@ -5345,51 +5344,9 @@ class VaultAIClient {
       }
       throw Exception('Invalid /vault/ciphertext/uploaded-files response');
     }
-    // Saved-file Rename must never fall back to a readable legacy write.
-    if (requireCiphertext) {
-      throw StateError('Unlock your encrypted vault before renaming a file.');
-    }
-    if (pin == null || pin.isEmpty) {
-      throw StateError('Vault PIN required for the older rename route.');
-    }
-    final uri = Uri.parse('$baseUrl/name-file');
-
-    final requestScope =
-        st.SessionTermination.instance.captureRequest(authToken);
-    final request = http.MultipartRequest('POST', uri);
-    request.headers.addAll(
-      _defaultHeaders(authToken: authToken),
-    );
-
-    request.fields['vault_name'] = '';
-    request.fields['file_id'] = fileId;
-    request.fields['saved_name'] = savedName;
-    request.fields['pin'] = pin;
-
-    _assertCurrentRequest(requestScope);
-    final response = await _sendCheckedBaseRequest(request, _httpClient);
-    _assertCurrentRequest(requestScope);
-    final responseBody = await response.stream.bytesToString();
-    checkAccess();
-    _checkSessionResponse(response.statusCode, responseBody, requestScope);
-
-    if (response.statusCode != 200) {
-      _throwIfAuthExpired(response.statusCode, responseBody);
-      _throwIfDeviceNotTrusted(response.statusCode, responseBody);
-      _throwIfLockOrFrozen(response.statusCode, responseBody);
-      throw Exception(_formatBackendError(
-        prefix: 'Name file failed',
-        statusCode: response.statusCode,
-        responseBody: responseBody,
-      ));
-    }
-
-    final decoded = jsonDecode(responseBody);
-    if (decoded is! Map<String, dynamic>) {
-      throw Exception('Invalid name file response format');
-    }
-
-    return decoded;
+    // The legacy-only account needs a separate migration client. Never
+    // revive its PIN-bearing rename route when the private key is absent.
+    throw StateError('Unlock your encrypted vault before renaming a file.');
   }
 
   Future<Map<String, dynamic>> listVaultFiles({

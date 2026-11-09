@@ -17542,11 +17542,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               responseIsCurrent: controller.accessIsCurrent,
             );
           } else {
-            final pin = kEnableZkLegacyFileRename
-                ? null : await _VaultCrypto.currentPinOrThrow();
             await client.nameVaultFile(
               vaultName: vaultName, fileId: controller.fileId,
-              savedName: normalizedName, pin: pin, authToken: token,
+              savedName: normalizedName, authToken: token,
               requireCiphertext: true,
               responseIsCurrent: controller.accessIsCurrent,
             );
