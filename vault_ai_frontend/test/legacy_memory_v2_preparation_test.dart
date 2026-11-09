@@ -13,7 +13,9 @@ void main() {
   final snapshot = List<String>.filled(43, 'S').join();
 
   Future<({LegacyMemoryV2Preparation preparation, List<String> calls})> setup(
-      {bool corruptReadback = false}) async {
+      {bool corruptReadback = false,
+      bool invalidateAfterStage = false,
+      void Function(int)? onProgress}) async {
     final legacyJson = jsonEncode(<String, dynamic>{
       'schema': 'vault_personal_memory_v1',
       'status': 'active',
@@ -26,6 +28,7 @@ void main() {
     final calls = <String>[];
     var page = 0;
     var proof = 0;
+    var current = true;
     String? stagedCiphertext;
     final export = LegacyCiphertextExportClient(
       proofProvider: () async => 'synthetic-export-proof-${++proof}',
@@ -82,7 +85,8 @@ void main() {
       codec: codec,
       mvk: mvk,
       proofProvider: () async => 'synthetic-stage-proof-${++proof}',
-      accessIsCurrent: () => true,
+      accessIsCurrent: () => current,
+      onProgress: onProgress,
       post: (path, body) async {
         calls.add(path);
         expect(path, '/vault/memory/legacy-copy/42/stage');
@@ -94,6 +98,7 @@ void main() {
         expect(body['client_verified_source'], true);
         expect(body['zk_proof_token'], 'synthetic-stage-proof-2');
         stagedCiphertext = body['payload_ciphertext'] as String;
+        if (invalidateAfterStage) current = false;
         return <String, dynamic>{
           'memory_id': 42,
           'prepared': true,
@@ -129,7 +134,29 @@ void main() {
   });
 
   test('mismatched Memory copy readback refuses success', () async {
-    final action = await setup(corruptReadback: true);
+    final verified = <int>[];
+    final action = await setup(
+      corruptReadback: true,
+      onProgress: verified.add,
+    );
     await expectLater(action.preparation.prepare(), throwsFormatException);
+    expect(verified, isEmpty);
+  });
+
+  test('progress follows verified readback and stops after session change',
+      () async {
+    final verified = <int>[];
+    final success = await setup(onProgress: verified.add);
+    expect(await success.preparation.prepare(), 1);
+    expect(verified, <int>[1]);
+
+    verified.clear();
+    final changed = await setup(
+      invalidateAfterStage: true,
+      onProgress: verified.add,
+    );
+    await expectLater(changed.preparation.prepare(), throwsStateError);
+    expect(changed.calls.last, '/vault/memory/legacy-copy/42/stage');
+    expect(verified, isEmpty);
   });
 }

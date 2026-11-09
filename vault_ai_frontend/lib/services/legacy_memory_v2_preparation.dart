@@ -25,6 +25,7 @@ class LegacyMemoryV2Preparation {
   final LegacyMemoryCopyPost post;
   final LegacyMemoryCopyGet get;
   final bool Function() accessIsCurrent;
+  final void Function(int verified)? onProgress;
 
   const LegacyMemoryV2Preparation({
     required this.export,
@@ -34,6 +35,7 @@ class LegacyMemoryV2Preparation {
     required this.post,
     required this.get,
     required this.accessIsCurrent,
+    this.onProgress,
   });
 
   void _requireAccess() {
@@ -114,6 +116,7 @@ class LegacyMemoryV2Preparation {
         throw const FormatException('Older Memory copy does not match source');
       }
       prepared++;
+      onProgress?.call(prepared);
     }
     return prepared;
   }
