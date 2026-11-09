@@ -131,10 +131,12 @@ void main() {
         body: DeleteVaultFlow(
           client: client,
           authToken: 'unsigned-session',
-          zkProofForPin: (pin) async {
-            proofPin = pin;
-            return 'one-use-proof';
-          },
+          zkProofForPin: privateVault || unlockOnRequest
+              ? (pin) async {
+                  proofPin = pin;
+                  return 'one-use-proof';
+                }
+              : null,
         ),
       ),
     ));
@@ -164,15 +166,10 @@ void main() {
     expect(sent.last.body, isNot(contains('"pin"')));
   });
 
-  testWidgets('legacy-only vault retains its existing deletion path',
+  testWidgets('legacy-only vault cannot start raw-PIN deletion',
       (tester) async {
     final sent = await runDialog(tester, privateVault: false);
-    expect(sent.map((r) => r.url.path), [
-      '/vault/delete/status',
-      '/vault/delete/request',
-      '/vault/delete/confirm',
-    ]);
-    expect((jsonDecode(sent.last.body) as Map)['pin'], '123456');
+    expect(sent, isEmpty);
   });
 
   testWidgets('private unlock during delete request cannot fall back to PIN',

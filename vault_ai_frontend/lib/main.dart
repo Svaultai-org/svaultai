@@ -24512,21 +24512,28 @@ class _DeleteVaultSettingsTile extends StatelessWidget {
       return;
     }
     final client = VaultAIClient(baseUrl: backendBaseUrl);
+    final vaultId = app.vaultId;
+    final vaultHandle = app.vaultHandle;
+    final sessionEpoch = app._sessionEpoch;
+    bool deleteSessionCurrent() => app.unlocked && app._sessionForeground &&
+        !app.sessionVerificationBlocked &&
+        app._isCurrentSession(token, sessionEpoch) &&
+        app.vaultId == vaultId && app.vaultHandle == vaultHandle &&
+        vaultHandle?.isNotEmpty == true;
     final deleted = await showDeleteVaultDialog(
       context,
       client: client,
       authToken: token,
       zkProofForPin: (pin) async {
-        final handle = app.vaultHandle;
-        if (handle == null || handle.isEmpty || app.sessionToken != token) {
+        if (!deleteSessionCurrent()) {
           throw StateError('Vault verification is unavailable.');
         }
         final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
-          vaultHandle: handle,
+          vaultHandle: vaultHandle!,
           pin: pin,
           sessionToken: token,
         );
-        if (app.sessionToken != token) {
+        if (!deleteSessionCurrent()) {
           throw StateError('Vault session changed during verification.');
         }
         return proof.token;

@@ -1631,25 +1631,14 @@ class VaultAIClient {
     String? zkProofToken,
     required String confirmationPhrase,
   }) async {
-    if ((pin == null) == (zkProofToken == null)) {
-      throw ArgumentError(
-          'Exactly one delete verification method is required.');
-    }
-    final proofOnly = zkProofToken != null || kEnableZkPrivateOnlyUnlock ||
-        signedAuthDeviceOfferedForToken(authToken) ||
-        zk_mvk_store.ZkActiveMvk.current() != null;
-    if (proofOnly &&
-        (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
+    if (pin != null || zkProofToken == null || zkProofToken.isEmpty) {
       throw StateError('Private vault deletion requires an OPAQUE proof.');
     }
-    if (zkProofToken != null) rejectPinShapedZkProof(zkProofToken);
-    final uri = Uri.parse(proofOnly
-        ? '$baseUrl/vault/delete/confirm-proof'
-        : '$baseUrl/vault/delete/confirm');
+    rejectPinShapedZkProof(zkProofToken);
+    final uri = Uri.parse('$baseUrl/vault/delete/confirm-proof');
     final body = jsonEncode({
       'request_token': requestToken,
-      if (pin != null) 'pin': pin,
-      if (zkProofToken != null) 'zk_proof_token': zkProofToken,
+      'zk_proof_token': zkProofToken,
       'confirmation_phrase': confirmationPhrase,
     });
     final response = await _runWithNetLog(
