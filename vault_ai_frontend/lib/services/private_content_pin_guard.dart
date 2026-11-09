@@ -23,11 +23,13 @@ const bool kEnableZkLocalRelatedFiles = bool.fromEnvironment(
 bool blocksZkLegacyContentRoute({String? vaultHandle}) =>
     kGuardZkPrivateContentPinRoutes &&
     ((vaultHandle?.isNotEmpty ?? false) ||
+        ZkActiveMvk.current() != null ||
         (ZkActiveMvk.currentVaultHandle()?.isNotEmpty ?? false));
 
 bool blocksZkRelatedFilesPinRoute({String? vaultHandle}) =>
     (kGuardZkPrivateContentPinRoutes || kEnableZkLocalRelatedFiles) &&
     ((vaultHandle?.isNotEmpty ?? false) ||
+        ZkActiveMvk.current() != null ||
         (ZkActiveMvk.currentVaultHandle()?.isNotEmpty ?? false));
 
 class PrivateContentSearchUnavailable implements Exception {

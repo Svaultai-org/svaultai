@@ -121,6 +121,19 @@ void main() {
     expect(blocksZkRelatedFilesPinRoute(), false);
   }, skip: kGuardZkPrivateContentPinRoutes || kEnableZkLocalRelatedFiles);
 
+  test('an active private key blocks old content even if its handle is missing',
+      () {
+    ZkActiveMvk.set(
+      mvk: SecretKey(List<int>.filled(32, 11)),
+      vaultId: 'synthetic-vault-id',
+      vaultHandle: '',
+    );
+    if (kGuardZkPrivateContentPinRoutes) {
+      expect(blocksZkLegacyContentRoute(), true);
+    }
+    expect(blocksZkRelatedFilesPinRoute(), true);
+  }, skip: !kGuardZkPrivateContentPinRoutes && !kEnableZkLocalRelatedFiles);
+
   test('related-files opt-in blocks only the OPAQUE PIN request', () async {
     ZkActiveMvk.set(
       mvk: SecretKey(List<int>.filled(32, 11)),
