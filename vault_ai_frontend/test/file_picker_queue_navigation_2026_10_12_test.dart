@@ -16,6 +16,9 @@ import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/main.dart';
 import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
 import 'package:vault_ai_frontend/services/zk_active_sk_vault.dart';
+import 'package:vault_ai_frontend/services/zk_auth_service.dart'
+    show kSignedFileCreateClientEnabled;
+import 'package:vault_ai_frontend/services/folder_picker.dart';
 import 'package:vault_ai_frontend/services/session_termination.dart' as st;
 import 'package:vault_ai_frontend/ui/chat/storage_limit_dialog.dart';
 
@@ -58,6 +61,27 @@ class _Picker extends FilePicker {
   }
 }
 
+class _SyntheticFolderPicker implements FolderPickerService {
+  @override
+  bool get isSupported => true;
+
+  @override
+  String get unsupportedReason => '';
+
+  @override
+  Future<FolderPickResult?> pickFolder() async => FolderPickResult(
+        rootFolderName: 'SyntheticFolder',
+        files: <PickedFolderFile>[
+          PickedFolderFile(
+            name: 'holiday.jpg',
+            relativePath: 'SyntheticFolder/nested/holiday.jpg',
+            size: 4,
+            readBytes: () async => Uint8List.fromList(<int>[1, 2, 3, 4]),
+          ),
+        ],
+      );
+}
+
 FilePickerResult _selected({bool readable = true}) => FilePickerResult([
       PlatformFile(
         name: 'synthetic-file.txt',
@@ -73,9 +97,13 @@ FilePickerResult _selectedTwo() => FilePickerResult([
           bytes: Uint8List.fromList([5, 6, 7, 8])),
     ]);
 
-Future<AppState> _fixture() async {
+String _signedCreateToken() => base64Url.encode(
+      <int>[3, 8, ...List<int>.filled(48, 7)],
+    ).replaceAll('=', '');
+
+Future<AppState> _fixture({bool signedCreate = false}) async {
   final app = _FixtureApp()
-    ..sessionToken = 'synthetic-picker-token'
+    ..sessionToken = signedCreate ? _signedCreateToken() : 'synthetic-picker-token'
     ..vaultId = 'synthetic-picker-vault'
     ..vaultName = 'Synthetic picker vault'
     ..vaultHandle = 'synthetic-picker-handle'
@@ -84,8 +112,8 @@ Future<AppState> _fixture() async {
     ..billingLoadState = BillingLoadState.loaded
     ..billingIncludedBytes = kVaultStorageLimitBytes
     ..billingEffectiveLimitBytes = kVaultStorageLimitBytes;
+  st.SessionTermination.instance.bindSession(app.sessionToken!);
   if (kPrivateOnlyUnlockEnabled) {
-    st.SessionTermination.instance.bindSession(app.sessionToken!);
     installZkPrivateOnlyUnlockKeys(
       app: app,
       origin: ZkPrivateUnlockOrigin.login,
@@ -129,7 +157,8 @@ Future<AppState> _fixture() async {
   return app;
 }
 
-Widget _dashboard(AppState app) => ChangeNotifierProvider<AppState>.value(
+Widget _dashboard(AppState app, {FolderPickerService? folderPicker}) =>
+    ChangeNotifierProvider<AppState>.value(
       value: app,
       child: MaterialApp(
         theme: ThemeData.dark(useMaterial3: true),
@@ -137,7 +166,7 @@ Widget _dashboard(AppState app) => ChangeNotifierProvider<AppState>.value(
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         routes: {'/pin': (_) => const Text('Synthetic PIN route')},
-        home: const ChatDashboardPage(),
+        home: ChatDashboardPage(folderPickerOverride: folderPicker),
       ),
     );
 
@@ -168,9 +197,13 @@ Future<void> _chatFile(WidgetTester tester) async {
 Future<void> _withDashboard(WidgetTester tester,
     Future<void> Function(AppState, _Picker, List<String>) action,
     {Size size = const Size(430, 932),
+    bool signedCreate = false,
+    FolderPickerService? folderPicker,
     Future<http.Response> Function(http.Request)? respond}) async {
   await tester.binding.setSurfaceSize(size);
-  final app = (await tester.runAsync(_fixture))!;
+  final app = (await tester.runAsync(
+    () => _fixture(signedCreate: signedCreate),
+  ))!;
   final picker = _Picker();
   FilePicker? previous;
   try {
@@ -183,7 +216,7 @@ Future<void> _withDashboard(WidgetTester tester,
   setApiClientDeviceId('synthetic-picker-device');
   try {
     await http.runWithClient(() async {
-      await tester.pumpWidget(_dashboard(app));
+      await tester.pumpWidget(_dashboard(app, folderPicker: folderPicker));
       await tester.pumpAndSettle();
       expect(find.text('Synthetic PIN route'), findsNothing);
       await action(app, picker, requests);
@@ -205,6 +238,16 @@ Future<void> _withDashboard(WidgetTester tester,
                   break;
                 case 'GET /vault/ciphertext/vault-items':
                   body = [];
+                  break;
+                case 'GET /vault/files/metadata':
+                  body = {
+                    'records': [],
+                    'has_more': false,
+                    'next_after_file_id': '',
+                  };
+                  break;
+                case 'GET /vault/file-v2':
+                  body = {'files': []};
                   break;
                 default:
                   throw StateError('Unexpected fixture request');
@@ -430,7 +473,8 @@ void main() {
       expect(requests, isNot(contains('POST /list-files')));
       expect(requests, isNot(contains('POST /upload-file')));
       expect(requests, isNot(contains('POST /start-import')));
-    }, respond: (request) async {
+    }, signedCreate: kSignedFileCreateClientEnabled,
+        respond: (request) async {
       final path = request.url.path;
       final body = request.body;
       expectSync(request.headers['x-svaultai-file-v2-reader'], '1');
@@ -520,6 +564,140 @@ void main() {
     });
   },
       skip: !(kEnableFileV2UiRead && kEnableNewFileV2Upload),
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('signed create keeps folder pick queued before unsupported batch',
+      (tester) async {
+    await _withDashboard(tester, (app, picker, requests) async {
+      await tester.tap(find.byKey(const Key('attachment_menu_button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('attachment_menu_upload_folder')));
+      await tester.pumpAndSettle();
+      expect(find.text('holiday.jpg'), findsOneWidget);
+      final beforeSend = List<String>.of(requests);
+      final send = tester.widget<InkWell>(find.descendant(
+        of: find.byKey(const Key('composer_send_button')),
+        matching: find.byType(InkWell),
+      ));
+      send.onTap!();
+      await tester.pumpAndSettle();
+      expect(find.text('holiday.jpg'), findsOneWidget);
+      expect(find.textContaining('Private folder and multiple-file uploads'),
+          findsWidgets);
+      expect(requests, beforeSend,
+          reason: 'the signed offer must not silently skip import semantics');
+    }, signedCreate: true, folderPicker: _SyntheticFolderPicker());
+  },
+      skip: !(kSignedFileCreateClientEnabled &&
+          kEnableFileV2UiRead &&
+          kEnableNewFileV2Upload),
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('signed create keeps a two-file import queued without writes',
+      (tester) async {
+    await _withDashboard(tester, (app, picker, requests) async {
+      picker.action = () async => _selectedTwo();
+      await _createFile(tester);
+      expect(find.text('2 attachment(s) ready'), findsOneWidget);
+      final beforeSend = List<String>.of(requests);
+      final send = tester.widget<InkWell>(find.descendant(
+        of: find.byKey(const Key('composer_send_button')),
+        matching: find.byType(InkWell),
+      ));
+      send.onTap!();
+      await tester.pumpAndSettle();
+      expect(find.text('2 attachment(s) ready'), findsOneWidget);
+      expect(find.textContaining('Private folder and multiple-file uploads'),
+          findsWidgets);
+      expect(requests, beforeSend);
+    }, signedCreate: true);
+  },
+      skip: !(kSignedFileCreateClientEnabled &&
+          kEnableFileV2UiRead &&
+          kEnableNewFileV2Upload),
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('unoffered file-create bearer retains the older single upload',
+      (tester) async {
+    await _withDashboard(tester, (app, picker, requests) async {
+      picker.action = () async => _selected();
+      await _createFile(tester);
+      expect(
+        tester.widget<TextField>(
+          find.byKey(const Key('chat_composer_field')),
+        ).controller?.text,
+        isEmpty,
+      );
+      final send = tester.widget<InkWell>(find.descendant(
+        of: find.byKey(const Key('composer_send_button')),
+        matching: find.byType(InkWell),
+      ));
+      send.onTap!();
+      await tester.pumpAndSettle();
+      expect(requests, contains('POST /upload-file'));
+      expect(requests, isNot(contains('POST /vault/file-v2/manifest')));
+      expect(requests, isNot(contains('POST /chat')));
+    }, respond: (request) async {
+      final path = request.url.path;
+      if (path == '/upload-file') {
+        expectSync(request.body, contains('123456'));
+        return http.Response('{"file_id":"synthetic-legacy-upload"}', 200);
+      }
+      if (path == '/vault/files/metadata') {
+        return http.Response(
+          '{"records":[],"has_more":false,"next_after_file_id":""}', 200);
+      }
+      if (path == '/vault/file-v2') {
+        return http.Response('{"files":[]}', 200);
+      }
+      if (path == '/list-secure-items') {
+        return http.Response('{"items":[]}', 200);
+      }
+      if (path == '/vault/ciphertext/vault-items') {
+        return http.Response('[]', 200);
+      }
+      if (path == '/folders') {
+        return http.Response('{"path":"","folders":[],"files":[]}', 200);
+      }
+      fail('Unexpected unoffered request ${request.method} $path');
+    });
+  },
+      skip: !(kSignedFileCreateClientEnabled &&
+          kEnableFileV2UiRead &&
+          kEnableNewFileV2Upload),
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('signed create stops after its session changes mid-upload',
+      (tester) async {
+    final server = _PrivateV2Server();
+    var replaced = false;
+    await _withDashboard(tester, (app, picker, requests) async {
+      picker.action = () async => _selected();
+      await _createFile(tester);
+      final send = tester.widget<InkWell>(find.descendant(
+        of: find.byKey(const Key('composer_send_button')),
+        matching: find.byType(InkWell),
+      ));
+      send.onTap!();
+      await tester.pumpAndSettle();
+      expect(replaced, isTrue);
+      expect(server.manifestPosts, 1);
+      expect(server.publishCalls, 0);
+      expect(requests, isNot(contains('POST /upload-file')));
+      expect(requests, isNot(contains('POST /upload-file/init')));
+    }, signedCreate: true, respond: (request) async {
+      final response = await server.respond(request);
+      if (!replaced && request.method == 'POST' &&
+          request.url.path == '/vault/file-v2/manifest') {
+        replaced = true;
+        st.SessionTermination.instance.bindSession('replacement-bearer');
+      }
+      return response;
+    });
+  },
+      skip: !(kSignedFileCreateClientEnabled &&
+          kEnableFileV2UiRead &&
+          kEnableNewFileV2Upload),
       variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
   testWidgets('private chat saves V2 attachment and never sends prompt to AI',

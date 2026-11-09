@@ -7,6 +7,46 @@ import 'package:vault_ai_frontend/services/zk_private_upload_guard.dart';
 void main() {
   final mvk = SecretKey(List<int>.filled(32, 17));
 
+  test('signed file-create offer chooses V2; unoffered account keeps legacy',
+      () {
+    ZkFileUploadMode choose({
+      bool offered = false,
+      bool signedClient = true,
+      bool strict = false,
+      bool writer = true,
+      bool reader = true,
+      bool handle = true,
+      bool activeMvk = true,
+      bool files = true,
+    }) =>
+        selectZkFileUploadMode(
+          hasFiles: files,
+          signedCreateClientEnabled: signedClient,
+          signedCreateOffered: offered,
+          strictPinFreeFiles: strict,
+          writerEnabled: writer,
+          readerEnabled: reader,
+          hasOpaqueHandle: handle,
+          hasActiveMvk: activeMvk,
+        );
+
+    expect(choose(offered: true), ZkFileUploadMode.privateV2);
+    expect(choose(offered: true, handle: false),
+        ZkFileUploadMode.privateV2);
+    expect(choose(), ZkFileUploadMode.legacy);
+    expect(choose(activeMvk: false), ZkFileUploadMode.legacy);
+    expect(choose(files: false, offered: true), ZkFileUploadMode.legacy);
+    expect(choose(signedClient: false), ZkFileUploadMode.privateV2);
+    expect(choose(strict: true), ZkFileUploadMode.privateV2);
+    for (final writerReady in <bool>[false, true]) {
+      expect(
+        () => choose(offered: true, writer: writerReady, reader: !writerReady),
+        throwsStateError,
+      );
+    }
+    expect(() => choose(strict: true, writer: false), throwsStateError);
+  });
+
   test('private upload keeps the exact unlocked key and strips prompt', () {
     expect(
         selectV2UploadKey(
@@ -108,7 +148,8 @@ void main() {
 
   test('ordinary attachment send preserves private upload binding', () {
     final source = File('lib/main.dart').readAsStringSync();
-    final start = source.indexOf('final privateV2Upload = hadAttachments');
+    final start = source.indexOf(
+        'privateV2Upload = zk_upload_guard.selectZkFileUploadMode(');
     final end =
         source.indexOf('uploadedFileIds = uploadOutcome.uploadedIds;', start);
     expect(start, greaterThan(0));

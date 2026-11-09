@@ -590,6 +590,7 @@ class _UploadContext {
   final String pin;
   final String authToken;
   final String? vaultId;
+  final int sessionGeneration;
   final SecretKey? v2Mvk;
   final List<int>? keyBytes;
   final String? accompanyingText;
@@ -605,6 +606,7 @@ class _UploadContext {
     required this.pin,
     required this.authToken,
     required this.vaultId,
+    required this.sessionGeneration,
     required this.v2Mvk,
     required this.keyBytes,
     required this.accompanyingText,
@@ -9484,7 +9486,9 @@ class _VaultRecoveryPageState extends State<VaultRecoveryPage> {
 }
 
 class ChatDashboardPage extends StatefulWidget {
-  const ChatDashboardPage({super.key});
+  final FolderPickerService? folderPickerOverride;
+
+  const ChatDashboardPage({super.key, this.folderPickerOverride});
 
   @override
   State<ChatDashboardPage> createState() => _ChatDashboardPageState();
@@ -15320,7 +15324,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       onStorageLimitHit: _onStorageLimitHit,
     );
     _uploadQueue.addListener(_onUploadQueueChanged);
-    _folderPicker = createFolderPickerService();
+    _folderPicker = widget.folderPickerOverride ?? createFolderPickerService();
     _nativeMediaCapture = createNativeMediaCaptureService();
     _recordingStorage = createRecordingStorage();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -16191,12 +16195,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           job.status != UploadJobStatus.cancelled &&
           app.sessionToken == ctx.authToken &&
           app.vaultId == ctx.vaultId &&
+          st.SessionTermination.instance.generation == ctx.sessionGeneration &&
+          !st.SessionTermination.instance.isTerminated &&
+          zk_mvk_store.ZkActiveMvk.currentVaultId() == ctx.vaultId &&
           identical(zk_mvk_store.ZkActiveMvk.current(), ctx.v2Mvk);
       if (!accessIsCurrent()) {
         throw StateError('Private upload session changed');
       }
       if (job.importId != null) {
         throw StateError('Private file cannot use a legacy import session');
+      }
+      if (job.duplicateAction != null || job.duplicateDetail != null) {
+        throw StateError('Private file cannot reuse a legacy conflict decision');
       }
       final writer = FileV2Writer(ctx.v2Mvk!);
       final prepared = job.preparedNewV2 ??= await writer.prepare(
@@ -17175,6 +17185,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final cap = app.uploadSafetyCapBytes;
 
     if (kEnableNewFileV2Upload &&
+        (!kSignedFileCreateClientEnabled ||
+            signedFileCreateOfferedForToken(app.sessionToken ?? '') ||
+            kRequirePinFreeZkFiles) &&
         zk_mvk_store.ZkActiveMvk.current() != null &&
         sizeBytes > FileV2Writer.maxFileBytes) {
       return 'Private file upload currently supports files up to '
@@ -17796,10 +17809,17 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     String? requiredPrivateVaultId,
   }) async {
     final app = context.read<AppState>();
+    final signedCreateOffered = signedFileCreateOfferedForToken(authToken);
+    if (signedCreateOffered && requiredPrivateMvk == null) {
+      throw StateError('Private file upload needs the current vault key.');
+    }
+    final v2WriterAllowed = kEnableNewFileV2Upload &&
+        (!kSignedFileCreateClientEnabled || signedCreateOffered ||
+            kRequirePinFreeZkFiles);
     final v2Mvk = zk_upload_guard.selectV2UploadKey(
       activeMvk: zk_mvk_store.ZkActiveMvk.current(),
       activeVaultId: zk_mvk_store.ZkActiveMvk.currentVaultId(),
-      writerEnabled: kEnableNewFileV2Upload,
+      writerEnabled: v2WriterAllowed,
       readerEnabled: kEnableFileV2UiRead,
       requiredPrivateMvk: requiredPrivateMvk,
       requiredPrivateVaultId: requiredPrivateVaultId,
@@ -17846,12 +17866,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             zk_mvk_store.ZkActiveMvk.current() == null)) {
       throw StateError('Private file upload requires an updated app.');
     }
-    if (kEnableNewFileV2Upload &&
+    if (v2WriterAllowed &&
         !kEnableFileV2UiRead &&
         zk_mvk_store.ZkActiveMvk.current() != null) {
       throw StateError('Private file upload needs the V2 file reader');
     }
-    if (kEnableNewFileV2Upload &&
+    if (v2WriterAllowed &&
         v2Mvk == null &&
         app.vaultHandle?.isNotEmpty == true) {
       throw StateError('Vault encryption key changed. Unlock and try again.');
@@ -17860,6 +17880,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         accompanyingText != null && accompanyingText.isNotEmpty;
     final freshCount = freshAttachments.length;
     final isMultiFileBatch = freshCount >= 2;
+    final hasFolderContext = freshAttachments.any(
+      (a) => a.relativePath != null,
+    );
+    if (zk_upload_guard.signedCreateBatchNeedsParity(
+      signedCreateOffered: signedCreateOffered ||
+          (kRequirePinFreeZkFiles &&
+              (app.vaultHandle?.isNotEmpty == true ||
+                  zk_mvk_store.ZkActiveMvk.current() != null)),
+      hasFolderContext: hasFolderContext,
+      isMultiFileBatch: isMultiFileBatch,
+    )) {
+      throw StateError('Private folder and batch upload needs an update.');
+    }
 
     List<int>? keyBytes;
     final needsChunked =
@@ -17869,9 +17902,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       keyBytes = await _VaultCrypto.currentKeyBytesOrThrow();
     }
 
-    final hasFolderContext = freshAttachments.any(
-      (a) => a.relativePath != null,
-    );
     final zkImportSessionOnly =
         signedImportOfferedForToken(authToken) ||
         (kEnableZkImportSessionActions && app.vaultHandle?.isNotEmpty == true);
@@ -17930,6 +17960,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       pin: v2Mvk == null ? pin : '',
       authToken: authToken,
       vaultId: app.vaultId,
+      sessionGeneration: st.SessionTermination.instance.generation,
       v2Mvk: v2Mvk,
       keyBytes: keyBytes,
       accompanyingText: zk_upload_guard.uploadAccompanyingText(
@@ -22163,6 +22194,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
       return;
     }
+    if (kSignedFileCreateClientEnabled &&
+        !signedFileCreateOfferedForToken(token)) {
+      _appendAssistantMessage(
+        'Private file upload is unavailable in this session.',
+      );
+      return;
+    }
     final vaultName = app.vaultName;
     if (!currentAccess() ||
         vaultName == null ||
@@ -22184,6 +22222,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             ? selected[i].copy(displayName: attachmentTitle)
             : selected[i],
     ];
+    if (zk_upload_guard.signedCreateBatchNeedsParity(
+      signedCreateOffered: signedFileCreateOfferedForToken(token) ||
+          kRequirePinFreeZkFiles,
+      hasFolderContext:
+          pending.any((attachment) => attachment.relativePath != null),
+      isMultiFileBatch: pending.length > 1,
+    )) {
+      _appendAssistantMessage(
+        'Private folder and multiple-file uploads are not available yet. '
+        'Your selected files are still here.',
+      );
+      return;
+    }
     final plannedBytes = pending
         .where((attachment) =>
             !attachment.uploaded &&
@@ -22523,6 +22574,23 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   : rawPendingAttachments[i],
           ];
 
+    if (zk_upload_guard.signedCreateBatchNeedsParity(
+      signedCreateOffered: signedFileCreateOfferedForToken(authToken) ||
+          (kRequirePinFreeZkFiles &&
+              (app.vaultHandle?.isNotEmpty == true ||
+                  zk_mvk_store.ZkActiveMvk.current() != null)),
+      hasFolderContext: pendingAttachments.any(
+        (attachment) => attachment.relativePath != null,
+      ),
+      isMultiFileBatch: pendingAttachments.length > 1,
+    )) {
+      _appendAssistantMessage(
+        'Private folder and multiple-file uploads are not available yet. '
+        'Your selected files are still here.',
+      );
+      return;
+    }
+
     if (pendingAttachments.isNotEmpty) {
       final plannedBytes =
           pendingAttachments.fold<int>(0, (acc, a) => acc + a.size);
@@ -22563,6 +22631,25 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             ))
         .toList(growable: false);
 
+    final hadAttachments = pendingAttachments.isNotEmpty;
+    late final bool privateV2Upload;
+    try {
+      privateV2Upload = zk_upload_guard.selectZkFileUploadMode(
+        hasFiles: hadAttachments,
+        signedCreateClientEnabled: kSignedFileCreateClientEnabled,
+        signedCreateOffered: signedFileCreateOfferedForToken(authToken),
+        strictPinFreeFiles: kRequirePinFreeZkFiles,
+        writerEnabled: kEnableNewFileV2Upload,
+        readerEnabled: kEnableFileV2UiRead,
+        hasOpaqueHandle: app.vaultHandle?.isNotEmpty == true,
+        hasActiveMvk: zk_mvk_store.ZkActiveMvk.current() != null,
+      ) == zk_upload_guard.ZkFileUploadMode.privateV2;
+    } on StateError {
+      _appendAssistantMessage('Private file upload needs an updated app. '
+          'Your selected files are still here.');
+      return;
+    }
+
     setState(() {
       sending = true;
       msgs.add(_Msg(
@@ -22576,13 +22663,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _scrollToBottom();
 
     var uploadedFileIds = <String>[];
-    final hadAttachments = pendingAttachments.isNotEmpty;
-    final pinFreeZkUpload = hadAttachments && kRequirePinFreeZkFiles &&
-        app.vaultHandle?.isNotEmpty == true;
-    final privateV2Upload = hadAttachments &&
-        (kEnableNewFileV2Upload || pinFreeZkUpload) &&
-        (zk_mvk_store.ZkActiveMvk.current() != null ||
-            app.vaultHandle?.isNotEmpty == true);
     var uploadCommitted = false;
 
     try {

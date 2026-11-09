@@ -11,6 +11,83 @@ import 'package:vault_ai_frontend/services/upload_queue.dart';
 import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
 
 void main() {
+  test('independent V2 writes can publish the same name twice', () async {
+    // This documents the remaining duplicate/name-conflict parity gap. The
+    // server sees only randomized IDs and ciphertext; signed create stays off
+    // until a private duplicate decision can be made before publication.
+    final mvk = SecretKey(List<int>.filled(32, 91));
+    ZkActiveMvk.set(
+      mvk: mvk,
+      vaultId: 'synthetic-vault',
+      vaultHandle: 'synthetic-handle',
+    );
+    addTearDown(ZkActiveMvk.clear);
+    final writer = FileV2Writer(mvk);
+    final first = await writer.prepare(
+      fileId: FileV2Writer.newFileId(),
+      fileName: 'same-name.txt',
+      bytes: Uint8List(0),
+    );
+    final second = await writer.prepare(
+      fileId: FileV2Writer.newFileId(),
+      fileName: 'same-name.txt',
+      bytes: Uint8List(0),
+    );
+    final manifests = <String, Map<String, dynamic>>{};
+    final published = <String>{};
+    final writes = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        final path = request.url.path;
+        if (request.method != 'GET') writes.add(request);
+        if (request.method == 'GET' && path.endsWith('/manifest')) {
+          final id = path.split('/')[3];
+          final stored = manifests[id];
+          return stored == null
+              ? http.Response('{"detail":"not_found"}', 404)
+              : http.Response(jsonEncode(<String, dynamic>{
+                  ...stored,
+                  'lifecycle_state': published.contains(id)
+                      ? 'client_v2_ready' : 'file_v2_written',
+                  'verification_state': published.contains(id)
+                      ? 'client_verified' : 'unverified',
+                }), 200);
+        }
+        if (request.method == 'POST' && path == '/vault/file-v2/manifest') {
+          final body = Map<String, dynamic>.from(jsonDecode(request.body) as Map);
+          manifests[body['file_id'] as String] = body;
+          return http.Response('{"created":true}', 200);
+        }
+        if (request.method == 'POST' && path.endsWith('/publish-new')) {
+          final id = path.split('/')[3];
+          published.add(id);
+          return http.Response(jsonEncode(<String, Object>{
+            'file_id': id,
+            'status': 'published',
+          }), 200);
+        }
+        fail('Unexpected private write ${request.method} $path');
+      }),
+    );
+    for (final prepared in <PreparedNewFileV2>[first, second]) {
+      await client.uploadNewV2File(
+        authToken: 'synthetic-session',
+        prepared: prepared,
+        originalBytes: Uint8List(0),
+        mvk: mvk,
+      );
+    }
+    expect(first.fileId, isNot(second.fileId));
+    expect(published, <String>{first.fileId, second.fileId});
+    expect(writes.where((request) => request.url.path.endsWith('/publish-new')),
+        hasLength(2));
+    for (final request in writes) {
+      expect(request.body, isNot(contains('same-name.txt')));
+      expect(request.body, isNot(contains('"pin"')));
+    }
+  });
+
   test('automatic queue retry retains one prepared encrypted file ID',
       () async {
     final mvk = SecretKey(List<int>.filled(32, 67));
