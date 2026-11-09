@@ -124,6 +124,94 @@ void main() {
     expect(generalCalls, 0);
   });
 
+  test('follow-up uses current local ciphertext view, never stale text',
+      () async {
+    var generalCalls = 0;
+    var files = const [
+      ZkLocalChatRecord(
+        kind: ZkLocalChatKind.file,
+        id: 'journal',
+        title: 'journal.txt',
+        searchText: 'OLD PRIVATE CONTENT',
+      ),
+    ];
+    final flow = ZkPrivateChatFlow(
+      accessIsCurrent: () => true,
+      loadIndex: () async => ZkPrivateChatIndex(
+        savedItems: const [],
+        files: files,
+        incomplete: false,
+      ),
+      sendGeneral: (_, __) async {
+        generalCalls++;
+        return 'unexpected';
+      },
+    );
+    expect((await flow.run('Find my journal')).local.selection?.id, 'journal');
+    files = const [
+      ZkLocalChatRecord(
+        kind: ZkLocalChatKind.file,
+        id: 'journal',
+        title: 'updated-journal.txt',
+        searchText: 'CURRENT PRIVATE CONTENT',
+      ),
+    ];
+    final updated = await flow.run('what does it say?');
+    expect(updated.local.selection?.title, 'updated-journal.txt');
+    expect(localFileTextExcerpt(updated.local.selection!),
+        contains('CURRENT PRIVATE CONTENT'));
+    expect(localFileTextExcerpt(updated.local.selection!),
+        isNot(contains('OLD PRIVATE CONTENT')));
+    files = const [];
+    expect((await flow.run('read it')).local.disposition,
+        ZkLocalChatDisposition.notFound);
+    expect(generalCalls, 0);
+  });
+
+  test('missing ordinal result never shifts another file into its place',
+      () async {
+    var generalCalls = 0;
+    var files = const [
+      ZkLocalChatRecord(
+        kind: ZkLocalChatKind.file,
+        id: 'one',
+        title: 'beach sunrise.jpg',
+        mediaKind: ZkLocalMediaKind.photo,
+      ),
+      ZkLocalChatRecord(
+        kind: ZkLocalChatKind.file,
+        id: 'two',
+        title: 'beach sunset.jpg',
+        mediaKind: ZkLocalMediaKind.photo,
+      ),
+    ];
+    final flow = ZkPrivateChatFlow(
+      accessIsCurrent: () => true,
+      loadIndex: () async => ZkPrivateChatIndex(
+        savedItems: const [],
+        files: files,
+        incomplete: false,
+      ),
+      sendGeneral: (_, __) async {
+        generalCalls++;
+        return 'unexpected';
+      },
+    );
+    expect((await flow.run('Find my beach photo')).local.disposition,
+        ZkLocalChatDisposition.ambiguous);
+    files = const [
+      ZkLocalChatRecord(
+        kind: ZkLocalChatKind.file,
+        id: 'two',
+        title: 'beach sunset.jpg',
+        mediaKind: ZkLocalMediaKind.photo,
+      ),
+    ];
+    expect((await flow.run('show the first one')).local.disposition,
+        ZkLocalChatDisposition.notFound);
+    expect(generalCalls, 0);
+  });
+
   test('offered filename lookup stays local after a name miss', () async {
     var generalCalls = 0;
     final flow = ZkPrivateChatFlow(

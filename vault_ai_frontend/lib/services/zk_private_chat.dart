@@ -274,19 +274,22 @@ class ZkLocalChatRouter {
   }) {
     final query = prompt.trim();
     final records = [...savedItems, ...files];
+    // A prior selection is only an identity hint. The local index may have
+    // changed since the previous turn, so never render or act on the older
+    // record's title, searchable text, or file metadata.
+    ZkLocalChatRecord? currentRecord(ZkLocalChatRecord previous) {
+      final matches = records
+          .where((record) =>
+              record.kind == previous.kind && record.id == previous.id)
+          .toList(growable: false);
+      return matches.length == 1 ? matches.single : null;
+    }
+
     final ordinal = _ordinalFollowUp.firstMatch(query);
     if (ordinal != null) {
-      final candidates = previousMatches
-          .where(
-            (candidate) => records.any(
-              (record) =>
-                  record.kind == candidate.kind && record.id == candidate.id,
-            ),
-          )
-          .toList();
       final word = ordinal.group(1)!.toLowerCase();
       final at = word == 'last'
-          ? candidates.length - 1
+          ? previousMatches.length - 1
           : const {
               'first': 0,
               'second': 1,
@@ -294,18 +297,23 @@ class ZkLocalChatRouter {
               'fourth': 3,
               'fifth': 4,
             }[word]!;
-      if (at < 0 || at >= candidates.length) {
+      if (at < 0 || at >= previousMatches.length) {
+        return const ZkLocalChatResult(ZkLocalChatDisposition.notFound);
+      }
+      final selected = currentRecord(previousMatches[at]);
+      if (selected == null) {
         return const ZkLocalChatResult(ZkLocalChatDisposition.notFound);
       }
       return ZkLocalChatResult(
         ZkLocalChatDisposition.found,
-        matches: [candidates[at]],
-        selection: candidates[at],
+        matches: [selected],
+        selection: selected,
         action: _actionFor(query),
       );
     }
     if (_relatedCue.hasMatch(query)) {
-      final previous = previousSelection;
+      final previous =
+          previousSelection == null ? null : currentRecord(previousSelection);
       if (previous == null ||
           previous.kind != ZkLocalChatKind.file ||
           !files.any((file) => file.id == previous.id)) {
@@ -321,12 +329,9 @@ class ZkLocalChatRouter {
         _fileActionFollowUp.hasMatch(query) ||
         _readTextFollowUp.hasMatch(query) ||
         _inspectImageFollowUp.hasMatch(query)) {
-      final previous = previousSelection;
-      if (previous == null ||
-          !records.any(
-            (record) =>
-                record.kind == previous.kind && record.id == previous.id,
-          )) {
+      final previous =
+          previousSelection == null ? null : currentRecord(previousSelection);
+      if (previous == null) {
         return const ZkLocalChatResult(ZkLocalChatDisposition.notFound);
       }
       return ZkLocalChatResult(
