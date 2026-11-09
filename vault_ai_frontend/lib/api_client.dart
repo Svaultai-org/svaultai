@@ -289,6 +289,18 @@ void assertOutboundPinFreeRequest(
   Map<String, String>? headers, {
   Object? body,
 }) {
+  // The private key can become active after a legacy chat/deep-answer method
+  // selected its route. Recheck the session at the last outbound boundary;
+  // those old endpoints decrypt on the server and cannot use a local MVK.
+  final path = uri.path.replaceFirst(RegExp(r'/+$'), '');
+  if ((path == '/chat' &&
+          private_content_guard.blocksZkLegacyContentRoute()) ||
+      ((path == '/vault-analysis/deep-answer' ||
+              RegExp(r'^/vault-analysis/deep-answer/[^/]+/poll$')
+                  .hasMatch(path)) &&
+          private_content_guard.blocksZkDeepAnswerPinRoute())) {
+    throw StateError('This session uses private local chat.');
+  }
   // A vault can acquire its private unlock key while the delete dialog is
   // open. Recheck at the outbound boundary, after the request was selected.
   if (uri.path == '/vault/delete/confirm' &&

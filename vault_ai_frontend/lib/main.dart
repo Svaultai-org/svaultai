@@ -19187,16 +19187,32 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _privateCredentialScanInFlight = true;
     try {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
+      // A completed signed list + download offer also gives this session a
+      // proof-only reader for older files. Include their trusted filename
+      // metadata in the local scan; old contents are never fetched here.
+      final legacyFileInventory =
+          (signedFileListOfferedForToken(token) ||
+                  ZkPinFreeFileSession.instance.listOfferedForToken(token)) &&
+              (signedFileDownloadOfferedForToken(token) ||
+                  ZkPinFreeFileSession.instance.downloadOfferedForToken(token));
       final index = await zk_chat_index.ZkPrivateChatIndexLoader(
         mvk: mvk!,
         accessIsCurrent: currentAccess,
         includeSavedItems: false,
+        includeLegacyDocumentsForRelations: legacyFileInventory,
         fileLimit: 500,
         textFileLimit: 128,
         textFileByteLimit: 256 * 1024,
         extractedTextByteLimit: 256 * 1024,
         totalTextByteLimit: 4 * 1024 * 1024,
         allowPartialFileListing: true,
+        legacyFileInventory: legacyFileInventory
+            ? () => client.listZkFileMetadata(
+                  authToken: token,
+                  requireLegacyComplete: true,
+                  maxPages: 5,
+                )
+            : null,
         get: (path) => client.zkPrivateChatCiphertextGet(
           authToken: token,
           path: path,
@@ -19221,7 +19237,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 fileId: file.id,
                 fileName: file.title,
                 mimeType: file.mimeType,
-                payload: const {'zk_private_chat_v2': true},
+                payload: file.legacyProofRequired
+                    ? const {'pin_free_chat_file': true}
+                    : const {'zk_private_chat_v2': true},
               ),
             );
           }

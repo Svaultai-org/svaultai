@@ -224,6 +224,68 @@ void main() {
     expect(paths.any((path) => path.contains('/c/')), isFalse);
   });
 
+  test('private scan finds older document names without reading old contents',
+      () async {
+    final requested = <String>[];
+    var legacyInventoryReads = 0;
+    final index = await ZkPrivateChatIndexLoader(
+      mvk: _mvk,
+      includeSavedItems: false,
+      includeLegacyDocumentsForRelations: true,
+      accessIsCurrent: () => true,
+      legacyFileInventory: () async {
+        legacyInventoryReads++;
+        return {
+          'files': [
+            {
+              'id': 'older-recovery',
+              'upload_status': 'complete',
+              'v2_ready': false,
+              'v2_retired': false,
+              'file_name': 'github-recovery-codes.txt',
+              'content_type': 'text/plain',
+              'storage_mode': 'inline',
+            },
+          ],
+        };
+      },
+      get: (path) async {
+        requested.add(path);
+        if (path == '/vault/file-v2') return {'files': []};
+        fail('Older content must not be read by the metadata scan: $path');
+      },
+    ).load();
+    final scan = ZkPrivateCredentialScan.scan(index);
+    expect(legacyInventoryReads, 1);
+    expect(requested, ['/vault/file-v2']);
+    expect(scan.matches.map((file) => file.id), ['older-recovery']);
+    expect(scan.matches.single.legacyProofRequired, isTrue);
+    expect(scan.textFilesChecked, 0);
+    expect(scan.summary, contains('partial scan'));
+  });
+
+  test('older filename scan aborts if vault access changes during inventory',
+      () async {
+    var current = true;
+    await expectLater(
+      ZkPrivateChatIndexLoader(
+        mvk: _mvk,
+        includeSavedItems: false,
+        includeLegacyDocumentsForRelations: true,
+        accessIsCurrent: () => current,
+        legacyFileInventory: () async {
+          current = false;
+          return {'files': []};
+        },
+        get: (path) async {
+          if (path == '/vault/file-v2') return {'files': []};
+          fail('Unexpected private GET: $path');
+        },
+      ).load(),
+      throwsStateError,
+    );
+  });
+
   test('ordinary private index keeps its existing extracted-text allowance',
       () async {
     final manifest = await _manifest(
