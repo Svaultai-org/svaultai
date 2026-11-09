@@ -168,6 +168,12 @@ class _Db:
 def harness(monkeypatch):
     db = _Db()
     proof = mock.Mock()
+    # Transport-only fixture: model an indexed vault after the prerequisite.
+    # Production readiness remains false; the separate gate suite checks it.
+    monkeypatch.setattr(
+        "file_create_conflict_gate.new_file_conflict_parity_ready",
+        lambda: True,
+    )
     monkeypatch.setattr(route, "get_db", lambda: db)
     monkeypatch.setattr(route, "_enabled", lambda write=False: None)
     monkeypatch.setattr(route, "_new_upload_enabled", lambda: None)

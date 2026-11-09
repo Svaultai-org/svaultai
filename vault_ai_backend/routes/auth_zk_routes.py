@@ -975,8 +975,9 @@ def _signed_file_create_negotiation(request: Request, *, signed_reads: bool) -> 
     if not signed_reads or not request_has_file_v2_reader(request):
         raise HTTPException(status_code=409, detail="signed_read_offers_required")
     if os.getenv("VAULTAI_SIGNED_FILE_CREATE_ENABLED", "false").strip().lower() != "true":
-        raise HTTPException(status_code=409, detail="signed_file_create_unavailable")
-    return True
+        return False
+    from file_create_conflict_gate import new_file_conflict_parity_ready
+    return new_file_conflict_parity_ready()
 
 
 def _private_local_folder_negotiation(

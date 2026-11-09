@@ -160,6 +160,7 @@ bool hasSignedBeneficiaryOffer(String token) {
 bool signedOfferTokenMatches(
   Map<String, dynamic> response, {
   bool requireFileCreateOffer = false,
+  bool allowFileCreateOffer = false,
   bool requireFileMutationOffer = false,
   bool requirePrivateChatOffer = false,
   bool requirePasswordAnalysisOffer = false,
@@ -170,17 +171,30 @@ bool signedOfferTokenMatches(
   bool requireSavedItemMutationOffer = false,
 }) {
   if (response['pin_free_read_offers_signed'] != true) return false;
+  if (requireFileCreateOffer && allowFileCreateOffer) return false;
+  final fileCreateSigned = response['pin_free_file_create_signed'];
+  if (allowFileCreateOffer && fileCreateSigned is! bool) return false;
   if (requireFileCreateOffer &&
-      (response['pin_free_file_create_signed'] != true ||
-          response['pin_free_v2_file_upload'] is! bool)) return false;
-  if (!requireFileCreateOffer &&
-      response['pin_free_file_create_signed'] == true) {
+      (fileCreateSigned != true ||
+          response['pin_free_v2_file_upload'] is! bool)) {
+    return false;
+  }
+  if (allowFileCreateOffer &&
+      response['pin_free_v2_file_upload'] is! bool) {
+    return false;
+  }
+  if (!requireFileCreateOffer && !allowFileCreateOffer &&
+      fileCreateSigned == true) {
     return false;
   }
   if (requireFileMutationOffer &&
-      response['pin_free_file_mutation_signed'] != true) return false;
+      response['pin_free_file_mutation_signed'] != true) {
+    return false;
+  }
   if (!requireFileMutationOffer &&
-      response['pin_free_file_mutation_signed'] == true) return false;
+      response['pin_free_file_mutation_signed'] == true) {
+    return false;
+  }
   if (requirePrivateChatOffer &&
       response['pin_free_private_chat_signed'] != true) {
     return false;
@@ -208,9 +222,13 @@ bool signedOfferTokenMatches(
     return false;
   }
   if (requireAuthDeviceOffer &&
-      response['pin_free_auth_device_signed'] != true) return false;
+      response['pin_free_auth_device_signed'] != true) {
+    return false;
+  }
   if (!requireAuthDeviceOffer &&
-      response['pin_free_auth_device_signed'] == true) return false;
+      response['pin_free_auth_device_signed'] == true) {
+    return false;
+  }
   if (requireImportOffer && response['pin_free_import_signed'] != true) {
     return false;
   }
@@ -244,7 +262,8 @@ bool signedOfferTokenMatches(
     final expected = (response['pin_free_legacy_item_read'] == true ? 1 : 0) |
         (response['pin_free_legacy_file_list'] == true ? 2 : 0) |
         (response['pin_free_legacy_file_download'] == true ? 4 : 0) |
-        (requireFileCreateOffer ? 8 : 0) |
+        ((requireFileCreateOffer ||
+                (allowFileCreateOffer && fileCreateSigned == true)) ? 8 : 0) |
         (requirePasswordAnalysisOffer ? 16 : 0) |
         (requireFileMutationOffer ? 32 : 0) |
         (requireBeneficiaryOffer &&
@@ -1135,7 +1154,7 @@ class ZkAuthService {
             kSignedSavedItemMutationClientEnabled) &&
         !signedOfferTokenMatches(
           finalizeResponse,
-          requireFileCreateOffer: kSignedFileCreateClientEnabled,
+          allowFileCreateOffer: kSignedFileCreateClientEnabled,
           requireFileMutationOffer: kSignedFileMutationClientEnabled,
           requirePrivateChatOffer: kSignedPrivateChatClientEnabled,
           requirePasswordAnalysisOffer: kSignedPasswordAnalysisClientEnabled,

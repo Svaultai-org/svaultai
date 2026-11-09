@@ -247,6 +247,38 @@ void main() {
         isFalse);
   });
 
+  test('create-capable login accepts only an exact omitted create offer', () {
+    final response = <String, dynamic>{
+      'session_token': signedToken(7),
+      'pin_free_read_offers_signed': true,
+      'pin_free_file_create_signed': false,
+      'pin_free_legacy_item_read': true,
+      'pin_free_legacy_file_list': true,
+      'pin_free_legacy_file_download': true,
+      'pin_free_v2_file_upload': true,
+    };
+    expect(signedOfferTokenMatches(response, allowFileCreateOffer: true),
+        isTrue);
+    response['session_token'] = signedToken(15);
+    expect(signedOfferTokenMatches(response, allowFileCreateOffer: true),
+        isFalse);
+    response['session_token'] = signedToken(7);
+    response['pin_free_file_create_signed'] = true;
+    expect(signedOfferTokenMatches(response, allowFileCreateOffer: true),
+        isFalse);
+    response['session_token'] = signedToken(15);
+    expect(signedOfferTokenMatches(response, allowFileCreateOffer: true),
+        isTrue);
+    response.remove('pin_free_file_create_signed');
+    expect(signedOfferTokenMatches(response, allowFileCreateOffer: true),
+        isFalse);
+    response['pin_free_file_create_signed'] = false;
+    response['session_token'] = signedToken(7);
+    response['pin_free_legacy_file_list'] = false;
+    expect(signedOfferTokenMatches(response, allowFileCreateOffer: true),
+        isFalse);
+  });
+
   test('auth and device offer fences old PIN routes and matches token shape', () {
     final offered = signedToken(128);
     final offeredHeaders = <String, String>{

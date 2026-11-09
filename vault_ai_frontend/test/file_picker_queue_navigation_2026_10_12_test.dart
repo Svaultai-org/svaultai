@@ -97,13 +97,21 @@ FilePickerResult _selectedTwo() => FilePickerResult([
           bytes: Uint8List.fromList([5, 6, 7, 8])),
     ]);
 
-String _signedCreateToken() => base64Url.encode(
-      <int>[3, 8, ...List<int>.filled(48, 7)],
+String _signedToken(int offerBits) => base64Url.encode(
+      <int>[3, offerBits, ...List<int>.filled(48, 7)],
     ).replaceAll('=', '');
 
-Future<AppState> _fixture({bool signedCreate = false}) async {
+Future<AppState> _fixture({
+  bool signedCreate = false,
+  bool signedReadsWithoutCreate = false,
+}) async {
+  assert(!(signedCreate && signedReadsWithoutCreate));
   final app = _FixtureApp()
-    ..sessionToken = signedCreate ? _signedCreateToken() : 'synthetic-picker-token'
+    ..sessionToken = signedCreate
+        ? _signedToken(8)
+        : signedReadsWithoutCreate
+            ? _signedToken(7)
+            : 'synthetic-picker-token'
     ..vaultId = 'synthetic-picker-vault'
     ..vaultName = 'Synthetic picker vault'
     ..vaultHandle = 'synthetic-picker-handle'
@@ -198,11 +206,15 @@ Future<void> _withDashboard(WidgetTester tester,
     Future<void> Function(AppState, _Picker, List<String>) action,
     {Size size = const Size(430, 932),
     bool signedCreate = false,
+    bool signedReadsWithoutCreate = false,
     FolderPickerService? folderPicker,
     Future<http.Response> Function(http.Request)? respond}) async {
   await tester.binding.setSurfaceSize(size);
   final app = (await tester.runAsync(
-    () => _fixture(signedCreate: signedCreate),
+    () => _fixture(
+      signedCreate: signedCreate,
+      signedReadsWithoutCreate: signedReadsWithoutCreate,
+    ),
   ))!;
   final picker = _Picker();
   FilePicker? previous;
@@ -643,7 +655,7 @@ void main() {
       expect(requests, isNot(contains('POST /chat')));
       expect(find.textContaining('Private file upload is unavailable'),
           findsNothing);
-    }, respond: (request) async {
+    }, signedReadsWithoutCreate: true, respond: (request) async {
       final path = request.url.path;
       if (path == '/upload-file') {
         expectSync(request.body, contains('123456'));

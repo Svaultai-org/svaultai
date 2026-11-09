@@ -13,6 +13,12 @@ from routes import file_v2_routes as routes
 @pytest.fixture(autouse=True)
 def _enable_new_file_path(monkeypatch):
     monkeypatch.setenv("VAULTAI_ZK_NEW_FILE_V2_ENABLED", "true")
+    # Transport-only fixture: production cannot stage new files until the
+    # blinded conflict index and legacy backfill are implemented.
+    monkeypatch.setattr(
+        "file_create_conflict_gate.new_file_conflict_parity_ready",
+        lambda: True,
+    )
 
 
 class _Cursor:

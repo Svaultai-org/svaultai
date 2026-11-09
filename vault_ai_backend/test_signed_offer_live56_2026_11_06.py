@@ -149,14 +149,13 @@ def test_negotiation_is_explicit_default_off_and_old_clients_unchanged(
     assert routes._signed_read_offer_negotiation(
         request(signed=True, reader=True),
     ) is True
-    with pytest.raises(HTTPException):
-        routes._signed_file_create_negotiation(
-            request(create=True, reader=True), signed_reads=True,
-        )
+    assert routes._signed_file_create_negotiation(
+        request(create=True, reader=True), signed_reads=True,
+    ) is False
     monkeypatch.setenv("VAULTAI_SIGNED_FILE_CREATE_ENABLED", "true")
     assert routes._signed_file_create_negotiation(
         request(create=True, reader=True), signed_reads=True,
-    ) is True
+    ) is False
 
 
 def test_live_v2_write_offer_requires_both_file_flags_and_new_route(monkeypatch):

@@ -160,6 +160,10 @@ def publish_new_file(
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     _new_upload_enabled()
+    # No new V2 mode may publish before duplicate and name-conflict decisions
+    # can be made atomically over blinded indexes for old and V2 files.
+    from file_create_conflict_gate import require_new_file_conflict_parity
+    require_new_file_conflict_parity()
     if not principal.get("file_v2_reader_capable", False):
         raise HTTPException(status_code=426, detail={
             "code": "client_update_required",

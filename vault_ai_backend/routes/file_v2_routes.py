@@ -190,10 +190,15 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
         raise HTTPException(404, detail='file_v2_extra_stage_disabled')
     if payload.migration_metadata_version == 3 and not _extra_file_v3_enabled():
         raise HTTPException(404, detail='file_v2_extra_v3_disabled')
-    require_content_write(principal)
     _enabled(True); _reject(payload.model_dump())
     if not payload.migrating_legacy and not _new_files_enabled():
         raise HTTPException(404, detail='new_file_v2_disabled')
+    if not payload.migrating_legacy:
+        # Stop every new-file mode before storing ciphertext that cannot be
+        # published with the old duplicate/name-conflict behavior.
+        from file_create_conflict_gate import require_new_file_conflict_parity
+        require_new_file_conflict_parity()
+    require_content_write(principal)
     if payload.migrating_legacy and payload.source_snapshot is None:
         raise HTTPException(400, detail='legacy_source_snapshot_required')
     if not payload.migrating_legacy and payload.source_snapshot is not None:

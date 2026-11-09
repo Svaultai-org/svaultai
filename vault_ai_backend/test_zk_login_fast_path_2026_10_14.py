@@ -215,7 +215,7 @@ def run_finalizer(state, *, header=DEVICE_ID, signed=False, create=False,
     ))
 
 
-def test_negotiated_live56_login_signs_exact_offers_and_fails_closed(
+def test_negotiated_login_omits_unready_file_create_and_keeps_old_access(
     finalizer, monkeypatch,
 ):
     monkeypatch.setenv("VAULT_SESSION_SECRET", "synthetic-live56-signing-secret-" * 3)
@@ -231,22 +231,24 @@ def test_negotiated_live56_login_signs_exact_offers_and_fails_closed(
                     "VAULTAI_ZK_NEW_FILE_V2_ENABLED"):
             monkeypatch.setenv(key, "true")
         monkeypatch.setattr(routes, "_pin_free_legacy_file_list_ready",
-                            lambda _conn, _vault_id: True)
+                            lambda _conn, _vault_id, **_kwargs: True)
         monkeypatch.setattr(routes, "_pin_free_legacy_file_download_ready",
                             lambda _conn, _vault_id, **_kwargs: True)
         offered = run_finalizer(finalizer, signed=True, create=True, reader=True)
         assert offered.pin_free_read_offers_signed is True
-        assert offered.pin_free_file_create_signed is True
+        assert offered.pin_free_file_create_signed is False
         assert offered.pin_free_v2_file_upload is True
         assert auth_local._parse_token_claims(offered.session_token) == (
-            bytes(range(16)), 15,
+            bytes(range(16)), 7,
         )
-        # A transient writer-gate change may hide the V2 write, but the
-        # signed PIN fence must still cover this negotiated bearer.
+        auth_local.require_signed_offer_route(
+            {"pin_free_read_offers": 7}, path="/upload-file",
+        )
+        # A transient writer-gate change does not change the omitted offer.
         monkeypatch.setenv("VAULTAI_ZK_NEW_FILE_V2_ENABLED", "false")
         degraded = run_finalizer(finalizer, signed=True, create=True, reader=True)
         assert degraded.pin_free_v2_file_upload is False
-        assert auth_local._parse_token_claims(degraded.session_token)[1] == 15
+        assert auth_local._parse_token_claims(degraded.session_token)[1] == 7
         old_client = run_finalizer(finalizer)
         assert old_client.session_token == old
         assert old_client.pin_free_read_offers_signed is False
@@ -293,7 +295,7 @@ def test_file_offers_require_trusted_finalize_and_enabled_routes(
     monkeypatch.setenv("VAULTAI_ZK_LEGACY_EXPORT_ENABLED", "true")
     monkeypatch.setenv("VAULTAI_ZK_LEGACY_CHUNK_MANIFEST_ENABLED", "true")
     monkeypatch.setattr(routes, "_pin_free_legacy_file_list_ready",
-                        lambda _conn, _vault_id: True)
+                        lambda _conn, _vault_id, **_kwargs: True)
     monkeypatch.setattr(routes, "_pin_free_legacy_file_download_ready",
                         lambda _conn, _vault_id, **_kwargs: True)
     offered = run_finalizer(finalizer)
