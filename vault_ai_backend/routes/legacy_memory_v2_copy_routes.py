@@ -11,7 +11,7 @@ import binascii
 import os
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 from psycopg2.extras import RealDictCursor
 
@@ -217,6 +217,8 @@ def readback_legacy_memory_copy(
 @router.get("/vault/memory/legacy-copy/list")
 def list_active_legacy_memory_copies(
     http_response: Response,
+    after_memory_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     """Expose only source-bound V2 ciphertext for active old Memory rows.
@@ -238,16 +240,17 @@ def list_active_legacy_memory_copies(
                  FROM vault_ai_memory m
                  LEFT JOIN memory_v2_prepared_copies c
                    ON c.legacy_memory_id=m.id AND c.vault_id=m.vault_id
-                WHERE m.vault_id=%s AND m.superseded_at IS NULL
+                WHERE m.vault_id=%s AND m.id>%s AND m.superseded_at IS NULL
                   AND CASE WHEN OCTET_LENGTH(m.payload_ciphertext)>=29
                     THEN GET_BYTE(m.payload_ciphertext,0)<>1
                     ELSE TRUE END
-                ORDER BY m.id LIMIT 5001""",
-            (principal["vault_id"],),
+                ORDER BY m.id LIMIT %s""",
+            (principal["vault_id"], after_memory_id, limit + 1),
         )
         rows = cur.fetchall()
-        if len(rows) > 5000:
-            raise HTTPException(status_code=409, detail="memory_copy_list_too_large")
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        next_after_memory_id = rows[-1]["id"] if rows else after_memory_id
         copies = []
         unavailable = 0
         for row in rows:
@@ -274,7 +277,9 @@ def list_active_legacy_memory_copies(
     finally:
         conn.close()
     http_response.headers["Cache-Control"] = "no-store"
-    return {"copies": copies, "unavailable_count": unavailable}
+    return {"copies": copies, "unavailable_count": unavailable,
+            "has_more": has_more,
+            "next_after_memory_id": next_after_memory_id}
 
 
 @router.post("/vault/memory/legacy-copy/{memory_id}/edit")

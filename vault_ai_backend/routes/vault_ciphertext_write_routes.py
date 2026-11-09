@@ -994,6 +994,8 @@ def ai_memory_ciphertext_list(
         active_copies = (
             os.getenv("VAULTAI_ZK_LEGACY_MEMORY_ACTIVE_ENABLED", "false")
             .strip().lower() == "true"
+            and os.getenv("VAULTAI_ZK_LEGACY_MEMORY_COPY_ENABLED", "false")
+            .strip().lower() == "true"
             and request.headers.get("x-svaultai-memory-active-copy") == "1"
         )
         cur.execute(
