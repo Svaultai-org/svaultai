@@ -193,6 +193,18 @@ bool _containsRawPinField(Object? value) {
     for (final entry in value) {
       if (_containsRawPinField(entry)) return true;
     }
+  } else if (value is String) {
+    // Multipart metadata can contain serialized JSON in an innocent-looking
+    // field such as `metadata`. Inspect that structure too, while leaving
+    // the actual uploaded file bytes outside this protocol-field check.
+    final trimmed = value.trimLeft();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        return _containsRawPinField(jsonDecode(value));
+      } on FormatException {
+        return false;
+      }
+    }
   }
   return false;
 }
@@ -200,15 +212,14 @@ bool _containsRawPinField(Object? value) {
 bool _requestBodyContainsPin(Object? body, {Map<String, String>? headers}) {
   Object? parsed = body;
   if (body is List<int>) {
-    final contentType = (headers?['Content-Type'] ??
-            headers?['content-type'] ??
-            '')
-        .toLowerCase();
-    if (!contentType.contains('json') &&
-        !contentType.contains('x-www-form-urlencoded')) {
+    // The caller may omit or mislabel Content-Type. A byte-encoded JSON PIN
+    // must still be rejected before the HTTP client sends any bytes. Multipart
+    // file content is handled separately by inspecting only its form fields.
+    try {
+      parsed = utf8.decode(body);
+    } on FormatException {
       return false;
     }
-    parsed = utf8.decode(body, allowMalformed: true);
   }
   final textBody = parsed;
   if (textBody is String) {

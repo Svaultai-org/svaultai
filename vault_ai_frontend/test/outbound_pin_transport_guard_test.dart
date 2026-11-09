@@ -169,9 +169,31 @@ void main() {
         throwsStateError,
       );
       expect(
+        () => assertOutboundPinFreeRequest(
+          origin,
+          const {'Content-Type': 'application/octet-stream'},
+          body: utf8.encode(jsonEncode({'pin': sentinelPin})),
+        ),
+        throwsStateError,
+      );
+      expect(
+        () => assertOutboundPinFreeRequest(
+          origin,
+          const {},
+          body: utf8.encode(jsonEncode({'nested': {'vault_pin': sentinelPin}})),
+        ),
+        throwsStateError,
+      );
+      expect(
         () => assertOutboundPinFreeBaseRequest(
           http.StreamedRequest('POST', origin),
         ),
+        throwsStateError,
+      );
+      final multipart = http.MultipartRequest('POST', origin)
+        ..fields['metadata'] = jsonEncode({'pin': sentinelPin});
+      expect(
+        () => assertOutboundPinFreeBaseRequest(multipart),
         throwsStateError,
       );
     },
