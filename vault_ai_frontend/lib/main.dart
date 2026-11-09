@@ -97,6 +97,7 @@ import 'services/content_hash.dart';
 import 'services/vault_local_file_lookup.dart';
 import 'services/saved_file_rename.dart';
 import 'services/zk_action_proof_prompt.dart';
+import 'services/zk_proof_token_guard.dart';
 import 'services/vault_local_content_command.dart';
 import 'services/memory_title_identity.dart';
 import 'services/zk_private_memory_recall.dart' as zk_memory_recall;
@@ -12097,6 +12098,132 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     await _loadBeneficiaries();
   }
 
+  Future<void> _prepareLinkedOldPrivateAccess({
+    required int linkId,
+    required String beneficiaryLabel,
+  }) async {
+    if (!kEnableLinkedOldInheritanceBeneficiaryUi) return;
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultId = app.vaultId;
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (token == null || vaultId == null || mvk == null ||
+        zk_mvk_store.ZkActiveMvk.currentVaultId() != vaultId ||
+        !_privateBeneficiarySession(app, token)) {
+      _showSnack('Unlock your private vault before preparing access.');
+      return;
+    }
+    final fingerprintCtrl = TextEditingController();
+    String? error;
+    final fingerprint = await showDialog<String>(
+      context: context,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          backgroundColor: VaultColors.surfaceElevated,
+          title: Text('Prepare private access for $beneficiaryLabel'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Ask your beneficiary for the key fingerprint shown in '
+                'their vault. Confirm every character with them through '
+                'a separate channel. This prepares an encrypted copy of '
+                'your vault key; your older inheritance link and saved '
+                'credentials remain in place. The copy is released only '
+                'after approval or the no-response countdown.',
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                key: Key('inheritance_linked_fingerprint_$linkId'),
+                controller: fingerprintCtrl,
+                autocorrect: false,
+                decoration: const InputDecoration(
+                  labelText: 'Beneficiary key fingerprint',
+                ),
+              ),
+              if (error != null) Text(error!,
+                  style: const TextStyle(color: Colors.redAccent)),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final value = fingerprintCtrl.text.trim();
+                final compact = value.replaceAll(RegExp(r'[\s-]'), '');
+                if (!RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(compact)) {
+                  setLocal(() => error = 'Enter the full key fingerprint.');
+                  return;
+                }
+                Navigator.pop(dialogCtx, value);
+              },
+              child: const Text('Prepare private access'),
+            ),
+          ],
+        ),
+      ),
+    );
+    fingerprintCtrl.clear();
+    fingerprintCtrl.dispose();
+    if (fingerprint == null || !mounted) return;
+    final epoch = app._sessionEpoch;
+    bool current() => app.unlocked && app._sessionForeground &&
+        !app.sessionVerificationBlocked &&
+        app._isCurrentSession(token, epoch) && app.vaultId == vaultId &&
+        identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId;
+    if (!current()) return;
+    final client = VaultAIClient(baseUrl: backendBaseUrl);
+    try {
+      final firstPin = await _promptForActionPin(
+        context, 'Verify private inheritance preparation',
+      );
+      if (firstPin == null || !current()) return;
+      final stageProof = rejectPinShapedZkProof(
+        await _zkActionProof(app, token, firstPin),
+      );
+      if (!current()) throw StateError('Owner vault access changed');
+      final staged = await client.stageLinkedOldInheritanceV2(
+        authToken: token,
+        linkId: linkId,
+        ownerVaultId: vaultId,
+        ownerMvk: mvk,
+        confirmedBeneficiaryFingerprint: fingerprint,
+        zkProofToken: stageProof,
+        responseIsCurrent: current,
+      );
+      if (!current() || !mounted) return;
+      final secondPin = await _promptForActionPin(
+        context, 'Verify private inheritance readback',
+      );
+      if (secondPin == null || !current()) {
+        _showSnack('Private package staged. Finish verification later.');
+        return;
+      }
+      final verifierProof = rejectPinShapedZkProof(
+        await _zkActionProof(app, token, secondPin),
+      );
+      if (!current()) throw StateError('Owner vault access changed');
+      await client.registerLinkedOldInheritanceReadbackVerifier(
+        authToken: token,
+        staged: staged,
+        ownerVaultId: vaultId,
+        ownerMvk: mvk,
+        zkProofToken: verifierProof,
+        responseIsCurrent: current,
+      );
+      if (!current() || !mounted) return;
+      _showSnack('Private inheritance access prepared.');
+      await _loadBeneficiaries();
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack('Private inheritance preparation paused. Try again later.');
+    }
+  }
+
   /// Owner-side "Save securely" handler. Returns a record so the
   /// dialog can surface the ACTUAL failure reference tag rather
   /// than the pre-2026-07-22 hardcoded ``INH-CRED-004`` fallback:
@@ -13933,6 +14060,25 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                           ),
                                         ),
                                       ],
+                                      if (kEnableLinkedOldInheritanceBeneficiaryUi &&
+                                          !isZkV2 && credentialsSaved &&
+                                          pairingState == 'credentials_saved' &&
+                                          _privateBeneficiarySession(
+                                              context.read<AppState>(),
+                                              context.read<AppState>()
+                                                      .sessionToken ??
+                                                  ''))
+                                        OutlinedButton.icon(
+                                          key: Key('inheritance_linked_prepare_$id'),
+                                          onPressed: () =>
+                                              _prepareLinkedOldPrivateAccess(
+                                            linkId: id,
+                                            beneficiaryLabel: label,
+                                          ),
+                                          icon: const Icon(Icons.security_outlined,
+                                              size: 18),
+                                          label: const Text('Prepare private copy'),
+                                        ),
                                     ],
                                   ),
                                 ),
@@ -14360,7 +14506,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                   ),
                                 ),
                               ],
-                              if (isZkV2)
+                              if (isZkV2 ||
+                                  (kEnableLinkedOldInheritanceBeneficiaryUi &&
+                                      !isZkV2 && credentialsSaved &&
+                                      _privateBeneficiarySession(
+                                          app, app.sessionToken ?? '')))
                                 TextButton.icon(
                                   onPressed: _showBeneficiaryKeyFingerprint,
                                   icon: const Icon(Icons.verified_user_outlined, size: 16),
