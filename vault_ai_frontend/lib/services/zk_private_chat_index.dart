@@ -51,6 +51,7 @@ class ZkPrivateChatIndexLoader {
   final int extractedTextByteLimit;
   final int totalTextByteLimit;
   final bool allowPartialFileListing;
+
   /// Optional session-only metadata inventory. The caller must supply it only
   /// when this bearer can open older files through the proof-only reader.
   final ZkPrivateLegacyFileInventory? legacyFileInventory;
@@ -188,6 +189,11 @@ class ZkPrivateChatIndexLoader {
       },
     );
     final files = <ZkLocalChatRecord>[];
+    // Caption sidecars are a useful local content source for media, including
+    // older media opened through the proof-only reader. Never guess across
+    // folders or duplicate names: only unique root-level stems may pair.
+    final rootMediaIds = <String>{};
+    final rootCaptions = <(String, String)>[];
     var textFiles = 0;
     var textBytes = 0;
     var contentIndexedFiles = 0;
@@ -243,6 +249,28 @@ class ZkPrivateChatIndexLoader {
           }
         }
         if (fullTextRead) contentIndexedFiles++;
+        final mediaKind = _mediaKind(
+          manifest.contentType,
+          manifest.displayName,
+        );
+        if ((mediaKind == ZkLocalMediaKind.video ||
+                mediaKind == ZkLocalMediaKind.audio) &&
+            (manifest.relativePath?.trim().isEmpty ?? true)) {
+          rootMediaIds.add(manifest.fileId);
+        }
+        if (_isCaptionFile(manifest.contentType, manifest.displayName) &&
+            fullTextRead &&
+            (manifest.relativePath?.trim().isEmpty ?? true)) {
+          final stem = _mediaStem(manifest.displayName);
+          final fullTranscript = _captionTranscript(content);
+          if (fullTranscript.length > 8192) incomplete = true;
+          final transcript = fullTranscript.length > 8192
+              ? fullTranscript.substring(0, 8192)
+              : fullTranscript;
+          if (stem != null && transcript.isNotEmpty) {
+            rootCaptions.add((stem, transcript));
+          }
+        }
         files.add(
           ZkLocalChatRecord(
             kind: ZkLocalChatKind.file,
@@ -250,7 +278,7 @@ class ZkPrivateChatIndexLoader {
             title: manifest.displayName,
             searchText: content,
             mimeType: manifest.contentType,
-            mediaKind: _mediaKind(manifest.contentType, manifest.displayName),
+            mediaKind: mediaKind,
           ),
         );
       } catch (_) {
@@ -275,13 +303,18 @@ class ZkPrivateChatIndexLoader {
           continue;
         }
         final id = raw['id'];
-        if (id is! String || id.isEmpty || id.length > 128 ||
+        if (id is! String ||
+            id.isEmpty ||
+            id.length > 128 ||
             raw['upload_status'] != 'complete') {
           incomplete = true;
           continue;
         }
-        if (seenIds.contains(id) || raw['v2_ready'] == true ||
-            raw['v2_retired'] == true) continue;
+        if (seenIds.contains(id) ||
+            raw['v2_ready'] == true ||
+            raw['v2_retired'] == true) {
+          continue;
+        }
         final name = raw['saved_name'] is String &&
                 (raw['saved_name'] as String).trim().isNotEmpty
             ? (raw['saved_name'] as String).trim()
@@ -290,7 +323,8 @@ class ZkPrivateChatIndexLoader {
                 : '';
         final mime = raw['content_type'];
         final mode = raw['storage_mode'];
-        if (name.isEmpty || name.length > 255 ||
+        if (name.isEmpty ||
+            name.length > 255 ||
             (mime != null && (mime is! String || mime.length > 255)) ||
             (mode != 'inline' && mode != 'chunked' && mode != 'chunks')) {
           incomplete = true;
@@ -299,21 +333,71 @@ class ZkPrivateChatIndexLoader {
         final kind = _mediaKind(mime as String?, name);
         if (kind != ZkLocalMediaKind.photo &&
             kind != ZkLocalMediaKind.video &&
-            kind != ZkLocalMediaKind.audio) continue;
+            kind != ZkLocalMediaKind.audio) {
+          continue;
+        }
         if (files.length >= fileLimit) {
           incomplete = true;
           break;
         }
-        files.add(ZkLocalChatRecord(
-          kind: ZkLocalChatKind.file,
-          id: id,
-          title: name,
-          mimeType: mime,
-          mediaKind: kind,
-          legacyProofRequired: true,
-        ));
+        files.add(
+          ZkLocalChatRecord(
+            kind: ZkLocalChatKind.file,
+            id: id,
+            title: name,
+            mimeType: mime,
+            mediaKind: kind,
+            legacyProofRequired: true,
+          ),
+        );
+        final path = raw['relative_path'];
+        if (path == null || (path is String && path.trim().isEmpty)) {
+          if (kind == ZkLocalMediaKind.video ||
+              kind == ZkLocalMediaKind.audio) {
+            rootMediaIds.add(id);
+          }
+        }
         seenIds.add(id);
       }
+    }
+    // A caption is associated only when it and one playable media record
+    // share a unique root-level basename. Otherwise leave the caption as its
+    // own searchable file; guessing a media match could show the wrong item.
+    final captionsByStem = <String, List<String>>{};
+    for (final (stem, transcript) in rootCaptions) {
+      captionsByStem.putIfAbsent(stem, () => []).add(transcript);
+    }
+    final mediaByStem = <String, List<int>>{};
+    for (var i = 0; i < files.length; i++) {
+      final file = files[i];
+      if (!rootMediaIds.contains(file.id)) continue;
+      final stem = _mediaStem(file.title);
+      if (stem != null) mediaByStem.putIfAbsent(stem, () => []).add(i);
+    }
+    // An omitted file could have the same stem, so a partial inventory
+    // cannot establish the uniqueness required for pairing.
+    final pairingInventoryComplete = !incomplete;
+    for (final entry in captionsByStem.entries) {
+      if (!pairingInventoryComplete) break;
+      final positions = mediaByStem[entry.key];
+      if (entry.value.length != 1 ||
+          positions == null ||
+          positions.length != 1) {
+        incomplete = true;
+        continue;
+      }
+      final at = positions.single;
+      final media = files[at];
+      final caption = entry.value.single;
+      files[at] = ZkLocalChatRecord(
+        kind: media.kind,
+        id: media.id,
+        title: media.title,
+        searchText: '${media.searchText} $caption'.trim(),
+        mimeType: media.mimeType,
+        mediaKind: media.mediaKind,
+        legacyProofRequired: media.legacyProofRequired,
+      );
     }
     _checkAccess();
     return ZkPrivateChatIndex(
@@ -332,7 +416,50 @@ class ZkPrivateChatIndexLoader {
         lowerMime == 'application/json' ||
         lowerName.endsWith('.txt') ||
         lowerName.endsWith('.md') ||
-        lowerName.endsWith('.json');
+        lowerName.endsWith('.json') ||
+        _isCaptionFile(mime, name);
+  }
+
+  static bool _isCaptionFile(String? mime, String name) {
+    final lowerMime = (mime ?? '').toLowerCase();
+    final lowerName = name.toLowerCase();
+    return lowerMime == 'text/vtt' ||
+        lowerMime == 'application/x-subrip' ||
+        lowerName.endsWith('.vtt') ||
+        lowerName.endsWith('.srt');
+  }
+
+  static String? _mediaStem(String name) {
+    final trimmed = name.trim().toLowerCase();
+    final dot = trimmed.lastIndexOf('.');
+    if (dot <= 0) return null;
+    final stem = trimmed.substring(0, dot).trim();
+    return stem.isEmpty ? null : stem;
+  }
+
+  static String _captionTranscript(String raw) {
+    final lines = <String>[];
+    var skipBlock = false;
+    for (final source in raw.split(RegExp(r'\r?\n'))) {
+      final line = source.trim();
+      if (line.isEmpty) {
+        skipBlock = false;
+        continue;
+      }
+      if (line == 'WEBVTT') continue;
+      if (RegExp(r'^(NOTE|STYLE|REGION)(?:\s|$)').hasMatch(line)) {
+        skipBlock = true;
+        continue;
+      }
+      if (skipBlock ||
+          line.contains('-->') ||
+          RegExp(r'^\d+$').hasMatch(line)) {
+        continue;
+      }
+      final text = line.replaceAll(RegExp(r'<[^>]{1,100}>'), ' ').trim();
+      if (text.isNotEmpty) lines.add(text);
+    }
+    return lines.join(' ');
   }
 
   static ZkLocalMediaKind _mediaKind(String? mime, String name) {
