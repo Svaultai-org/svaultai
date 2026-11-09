@@ -24322,13 +24322,14 @@ class VaultCryptoRegistry {
   }
 
   /// Clear the context — session end / vault switch / explicit
-  /// invalidation. Also resets the generation counter for the next
-  /// unlock cycle so the numbers stay small in logs.
+  /// invalidation. The generation counter can restart, but operation IDs
+  /// must never be reused: an earlier PBKDF2 derive may still finish after
+  /// this clear and must not match a new session's reservation.
   static void clear({String? reason}) {
     final prev = _current;
     _current = null;
     _generationSeq = 0;
-    _operationSeq = 0;
+    _operationSeq++;
     if (prev != null) {
       vlog('crypto.context.cleared', {
         'reason': reason ?? 'unspecified',

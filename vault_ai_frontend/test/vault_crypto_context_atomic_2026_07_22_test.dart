@@ -213,6 +213,37 @@ void main() {
   // Test 2 (spec) — stale async completion cannot overwrite
   // -------------------------------------------------------------
   group('Test 2 — stale async cannot clobber newer context', () {
+    test('logout cannot reuse an operation id from a prior PIN derive', () {
+      final salt = base64.encode(Uint8List(16));
+      final oldOperation = VaultCryptoRegistry.nextOperationId();
+      VaultCryptoRegistry.clear(reason: 'logout during PIN derive');
+
+      final newOperation = VaultCryptoRegistry.nextOperationId();
+      expect(newOperation, isNot(oldOperation));
+      final newContext = _makeCtx(
+        vaultId: 'new-vault', vaultName: 'new-name',
+        key: SecretKey(Uint8List(32)..[0] = 0xAB),
+        saltBase64: salt, iterations: 1000,
+        generation: VaultCryptoRegistry.nextGeneration(),
+        source: 'new-session',
+      );
+      expect(VaultCryptoRegistry.install(
+        operationId: newOperation, context: newContext,
+      ), isTrue);
+
+      final staleContext = _makeCtx(
+        vaultId: 'old-vault', vaultName: 'old-name',
+        key: SecretKey(Uint8List(32)),
+        saltBase64: salt, iterations: 1000,
+        generation: VaultCryptoRegistry.nextGeneration(),
+        source: 'old-session-PIN-derive',
+      );
+      expect(VaultCryptoRegistry.install(
+        operationId: oldOperation, context: staleContext,
+      ), isFalse);
+      expect(VaultCryptoRegistry.current, same(newContext));
+    });
+
     test(
       'earlier operationId cannot overwrite a later install',
       () {
