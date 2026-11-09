@@ -24,6 +24,14 @@ bool useLocalZkPasswordAnalysis({
 }) =>
     hasZkHandle || hasMvk || signedPasswordAnalysisOffered;
 
+/// A strict PIN-free build cannot offer the older server analyzer to a
+/// legacy-only session. Keep this separate from ordinary legacy compatibility
+/// until those accounts have a supported private upgrade path.
+bool legacyPasswordAnalysisNeedsPrivateUpgrade({
+  required bool localAnalysisAvailable,
+  required bool pinTransportRejected,
+}) => pinTransportRejected && !localAnalysisAvailable;
+
 class SecurityCenterPage extends StatefulWidget {
   const SecurityCenterPage({super.key});
 
@@ -55,6 +63,12 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
           signedPasswordAnalysisOfferedForToken(token),
     );
   }
+
+  bool get _legacyAnalysisNeedsPrivateUpgrade =>
+      legacyPasswordAnalysisNeedsPrivateUpgrade(
+        localAnalysisAvailable: _useLocalZkAnalysis,
+        pinTransportRejected: kPrivateOnlyTransportRejectPin,
+      );
 
   @override
   void initState() {
@@ -304,10 +318,11 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
           localOnly
               ? 'SVaultAI will check your saved login passwords on this '
                   'device. Passwords and the check results stay on this device.'
-              : 'Svaultai will temporarily decrypt your saved logins on this '
-                  'device to compute password health. Passwords are never '
-                  'shown or stored on the server. Hashes are user-salted and '
-                  'used only to detect reused passwords inside your own vault.',
+              : 'This older check sends your vault PIN to SVaultAI and '
+                  'analyzes saved login passwords on the server. It saves '
+                  'strength scores and one-way hashes to detect reused '
+                  'passwords in your vault. Continue only if you accept '
+                  'this legacy check.',
           style: const TextStyle(height: 1.4),
         ),
         actions: [
@@ -415,6 +430,8 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
 
   Future<void> _runAnalyzePasswords() async {
     if (_analyzing) return;
+    // Reject before the legacy name/PIN dialog, not after collecting a PIN.
+    if (_legacyAnalysisNeedsPrivateUpgrade) return;
     if (_useLocalZkAnalysis) {
       await _runLocalZkAnalyzePasswords();
       return;
@@ -612,6 +629,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
   }
 
   Widget _passwordSection(Map<String, dynamic> s) {
+    final needsPrivateUpgrade = _legacyAnalysisNeedsPrivateUpgrade;
     final p = (s['passwords'] ?? const {}) as Map;
     final weak = (p['weak'] ?? 0) as int;
     final moderate = (p['moderate'] ?? 0) as int;
@@ -674,11 +692,21 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
               style: const TextStyle(color: Color(0xFF8C8C8C), fontSize: 12),
             ),
           ],
+          if (needsPrivateUpgrade) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'Password analysis needs a private vault upgrade for this '
+              'account. Your saved items remain unchanged.',
+              key: Key('legacy_password_analysis_upgrade_required'),
+              style: TextStyle(color: Color(0xFFFFA726), fontSize: 13),
+            ),
+          ],
           const SizedBox(height: 12),
           Align(
             alignment: Alignment.centerRight,
             child: OutlinedButton.icon(
-              onPressed: _analyzing ? null : _runAnalyzePasswords,
+              onPressed: _analyzing || needsPrivateUpgrade
+                  ? null : _runAnalyzePasswords,
               icon: _analyzing
                   ? const SizedBox(
                       width: 14,
