@@ -121,6 +121,7 @@ SENSITIVE_PATH_PREFIXES: tuple[str, ...] = (
     "/manage/",
     "/get-login",
     "/reveal-",
+    "/inheritance/",
     # 2026-07-21 root-cause fix for the "first chat forces PIN"
     # production incident. /vault-meta is the authoritative source of
     # (pin_salt, kdf_iterations) that the client uses to derive the
