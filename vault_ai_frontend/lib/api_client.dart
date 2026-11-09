@@ -377,6 +377,9 @@ bool signedPrivateChatOfferedForToken(String token) =>
 bool signedPasswordAnalysisOfferedForToken(String token) =>
     (_signedOfferBits(token) & 16) != 0;
 
+bool signedFileListOfferedForToken(String token) =>
+    (_signedOfferBits(token) & 2) != 0;
+
 bool signedFileMutationOfferedForToken(String token) =>
     (_signedOfferBits(token) & 32) != 0;
 
@@ -5216,7 +5219,10 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
-    if (ZkPinFreeFileSession.instance.listOfferedForToken(authToken)) {
+    // A signed bearer remains authoritative if the local offer marker was
+    // lost, so do not fall back to the older PIN request in that case.
+    if (signedFileListOfferedForToken(authToken) ||
+        ZkPinFreeFileSession.instance.listOfferedForToken(authToken)) {
       if (zk_mvk_store.ZkActiveMvk.current() == null) {
         throw StateError('Vault encryption key is unavailable');
       }
