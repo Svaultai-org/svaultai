@@ -38,6 +38,8 @@ import 'services/linked_inheritance_v2_readback_proof.dart'
     as linked_inh_proof;
 import 'services/linked_inheritance_v2_item_import.dart'
     as linked_inh_items;
+import 'services/linked_inheritance_v2_memory_import.dart'
+    as linked_inh_memory;
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/private_content_pin_guard.dart' as private_content_guard;
 
@@ -3549,6 +3551,94 @@ class VaultAIClient {
         'GET', Uri.parse('$baseUrl/inheritance/old-link-v2/$id/item-copies')
             .replace(queryParameters: {'source_inventory_sha256': digest}),
       ),
+      accessIsCurrent: () {
+        try {
+          checkAccess();
+          return true;
+        } catch (_) {
+          return false;
+        }
+      },
+    );
+  }
+
+  /// Copy only Memory after a released old-link V2 readback receipt. A fresh
+  /// OPAQUE proof is requested for every destination write; source and
+  /// destination ciphertext are verified by the beneficiary device.
+  Future<linked_inh_memory.LinkedV2MemoryImport>
+      importLinkedOldInheritanceV2Memories({
+    required String authToken,
+    required String beneficiaryVaultId,
+    required SecretKey beneficiaryMvk,
+    required linked_inh_release.ReleasedLinkedInheritanceV2 released,
+    required linked_inh_proof.LinkedReadbackReceipt readbackReceipt,
+    required Future<String> Function() freshZkProof,
+    bool Function()? responseIsCurrent,
+  }) async {
+    const enabled = bool.fromEnvironment(
+      'VAULTAI_ENABLE_LINKED_INHERITANCE_MEMORY_IMPORT',
+      defaultValue: false,
+    );
+    if (!enabled) {
+      throw StateError('Linked inheritance Memory import is unavailable');
+    }
+    void checkAccess() {
+      _requireSavedItemKey(beneficiaryMvk);
+      if (zk_mvk_store.ZkActiveMvk.currentVaultId() != beneficiaryVaultId ||
+          responseIsCurrent?.call() == false) {
+        throw StateError('Beneficiary vault access changed');
+      }
+    }
+
+    Future<Map<String, dynamic>> request(
+      String method, Uri uri, [Map<String, dynamic>? body]
+    ) async {
+      checkAccess();
+      final transport = _sessionHttpWithGuard(checkAccess);
+      final response = method == 'POST'
+          ? await transport.post(
+              uri,
+              headers: _defaultHeaders(authToken: authToken, json: true),
+              body: jsonEncode(body ?? <String, dynamic>{}),
+            )
+          : await transport.get(
+              uri, headers: _defaultHeaders(authToken: authToken),
+            );
+      checkAccess();
+      if (response.statusCode != 200) {
+        _throwIfAuthExpired(response.statusCode, response.body);
+        _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        throw StateError('Inherited Memory copy unavailable');
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Invalid inherited Memory response');
+      }
+      return decoded;
+    }
+
+    checkAccess();
+    return linked_inh_memory.importLinkedV2Memories(
+      released: released,
+      readbackReceipt: readbackReceipt,
+      beneficiaryVaultId: beneficiaryVaultId,
+      beneficiaryMvk: beneficiaryMvk,
+      fetchExport: (id) => request(
+        'GET', Uri.parse('$baseUrl/inheritance/old-link-v2/$id/vault-memories'),
+      ),
+      copyMemory: (body) => request(
+        'POST', Uri.parse('$baseUrl/inheritance/old-link-v2/memory-copy'), body,
+      ),
+      readbackCopies: (id, digest) => request(
+        'GET', Uri.parse('$baseUrl/inheritance/old-link-v2/$id/memory-copies')
+            .replace(queryParameters: {'source_inventory_sha256': digest}),
+      ),
+      freshZkProof: () async {
+        checkAccess();
+        final proof = rejectPinShapedZkProof(await freshZkProof());
+        checkAccess();
+        return proof;
+      },
       accessIsCurrent: () {
         try {
           checkAccess();
