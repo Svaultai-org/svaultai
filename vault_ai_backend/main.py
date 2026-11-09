@@ -513,12 +513,16 @@ from routes.inheritance_v2_export_routes import (
 from routes.inheritance_v2_file_export_routes import (
     router as inheritance_v2_file_export_router,
 )
+from routes.linked_inheritance_v2_upgrade_routes import (
+    router as linked_inheritance_v2_upgrade_router,
+)
 from inheritance_error_codes import install_inheritance_redaction
 install_inheritance_redaction()
 app.include_router(inheritance_credential_router)
 app.include_router(inheritance_release_router)
 app.include_router(inheritance_v2_export_router)
 app.include_router(inheritance_v2_file_export_router)
+app.include_router(linked_inheritance_v2_upgrade_router)
 
                                                                       
 from routes.billing_routes import router as billing_router
