@@ -88,6 +88,15 @@ def _require_file_extra_v3_enabled() -> None:
         raise HTTPException(status_code=404, detail="not_found")
 
 
+def _require_memory_copy_enabled() -> None:
+    # A signed saved-item offer may permit this export grant while the broad
+    # export flag is off. That offer must not grant Memory access by accident.
+    if os.getenv(
+        "VAULTAI_ZK_LEGACY_MEMORY_COPY_ENABLED", "false",
+    ).strip().lower() != "true":
+        raise HTTPException(status_code=404, detail="not_found")
+
+
 def _b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
@@ -158,12 +167,15 @@ class LegacyExportPageRequest(BaseModel):
     mode: Literal[
         "list_items", "list_files", "read_item", "read_file",
         "read_file_extra", "read_file_extra_v3",
+        "list_memories", "read_memory",
     ]
     limit: int = Field(default=20, ge=1, le=LIST_MAX_RECORDS)
     after_item_id: int = Field(default=0, ge=0)
     after_file_id: str = Field(default="", max_length=128)
+    after_memory_id: int = Field(default=0, ge=0)
     item_id: Optional[int] = Field(default=None, gt=0)
     file_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    memory_id: Optional[int] = Field(default=None, gt=0)
     offset: int = Field(default=0, ge=0)
     max_chars: int = Field(default=CHUNK_MAX_CHARS, ge=1, le=CHUNK_MAX_CHARS)
 
@@ -320,6 +332,77 @@ def _list_files(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
         "records": records,
         "has_more": len(rows) > payload.limit,
         "next_after_file_id": records[-1]["file_id"] if records else None,
+    }
+
+
+def _list_memories(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
+    """Inventory legacy PIN-key ciphertext without opening its contents."""
+    cur.execute(
+        """SELECT id, memory_type,
+                  OCTET_LENGTH(payload_ciphertext) AS ciphertext_chars
+             FROM vault_ai_memory
+            WHERE vault_id=%s AND superseded_at IS NULL AND id>%s
+              AND CASE WHEN OCTET_LENGTH(payload_ciphertext) > 0
+                       THEN GET_BYTE(payload_ciphertext,0) <> 1
+                       ELSE FALSE END
+            ORDER BY id LIMIT %s""",
+        (vault_id, payload.after_memory_id, payload.limit + 1),
+    )
+    rows = cur.fetchall() or []
+    records = [{
+        "memory_id": int(row["id"]),
+        "memory_type": str(row["memory_type"]),
+        "ciphertext_chars": int(row["ciphertext_chars"]),
+    } for row in rows[:payload.limit]]
+    return {
+        "records": records,
+        "has_more": len(rows) > payload.limit,
+        "next_after_memory_id": (
+            records[-1]["memory_id"] if records else None
+        ),
+    }
+
+
+def _read_memory(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
+    if payload.memory_id is None:
+        raise HTTPException(status_code=400, detail="memory_id_required")
+    cur.execute(
+        """SELECT id, memory_type, payload_ciphertext, memory_record_id,
+                  memory_lookup_hash
+             FROM vault_ai_memory
+            WHERE id=%s AND vault_id=%s AND superseded_at IS NULL
+              AND CASE WHEN OCTET_LENGTH(payload_ciphertext) > 0
+                       THEN GET_BYTE(payload_ciphertext,0) <> 1
+                       ELSE FALSE END
+            FOR SHARE""",
+        (payload.memory_id, vault_id),
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="legacy_memory_not_found")
+    try:
+        ciphertext = bytes(row["payload_ciphertext"]).decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=409,
+                            detail="legacy_memory_invalid") from exc
+    total = len(ciphertext)
+    if total > MAX_SOURCE_CIPHERTEXT_CHARS:
+        raise HTTPException(status_code=413, detail="legacy_streaming_required")
+    if payload.offset > total:
+        raise HTTPException(status_code=416, detail="offset_out_of_range")
+    chunk = ciphertext[payload.offset:payload.offset + payload.max_chars]
+    next_offset = payload.offset + len(chunk)
+    return {
+        "memory_id": payload.memory_id,
+        "offset": payload.offset,
+        "ciphertext_chunk": chunk,
+        "total_chars": total,
+        "next_offset": next_offset,
+        "done": next_offset >= total,
+        "source_snapshot": legacy_source_snapshot(
+            "memory", row, vault_id=vault_id, record_id=payload.memory_id,
+        ),
+        "source_metadata": {"memory_type": row["memory_type"]},
     }
 
 
@@ -499,6 +582,8 @@ def legacy_export_page(
         _require_file_extra_stage_enabled()
     elif payload.mode == "read_file_extra_v3":
         _require_file_extra_v3_enabled()
+    elif payload.mode in ("list_memories", "read_memory"):
+        _require_memory_copy_enabled()
     if not _grant_belongs_to_session(payload.export_token, principal):
         raise HTTPException(status_code=401, detail="invalid_export_grant")
 
@@ -536,6 +621,10 @@ def legacy_export_page(
             data = _list_items(cur, principal["vault_id"], payload)
         elif payload.mode == "list_files":
             data = _list_files(cur, principal["vault_id"], payload)
+        elif payload.mode == "list_memories":
+            data = _list_memories(cur, principal["vault_id"], payload)
+        elif payload.mode == "read_memory":
+            data = _read_memory(cur, principal["vault_id"], payload)
         elif payload.mode in ("read_file_extra", "read_file_extra_v3"):
             data = _read_file_extra(cur, principal["vault_id"], payload)
         else:

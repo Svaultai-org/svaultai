@@ -84,6 +84,30 @@ class LegacyCiphertextExportClient {
     idKey: 'file_id',
   );
 
+  Future<List<Map<String, dynamic>>> listMemoriesBounded({
+    required int maxRecords,
+  }) => _list(
+    mode: 'list_memories',
+    afterKey: 'after_memory_id',
+    nextKey: 'next_after_memory_id',
+    idKey: 'memory_id',
+    maxRecords: maxRecords,
+  );
+
+  Future<LegacyCiphertextSource> readMemorySource({
+    required int memoryId,
+    required int ciphertextChars,
+  }) {
+    if (memoryId <= 0) throw const FormatException('Invalid memory ID');
+    return _read(
+      'read_memory',
+      'memory_id',
+      memoryId,
+      ciphertextChars,
+      requireSource: true,
+    );
+  }
+
   Future<String> readItemCiphertext({
     required int itemId,
     required int ciphertextChars,

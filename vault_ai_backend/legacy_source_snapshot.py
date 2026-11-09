@@ -29,6 +29,10 @@ FILE_SOURCE_FIELDS = (
     "detected_type_ciphertext", "detected_service_ciphertext",
     "asset_type_ciphertext",
 )
+MEMORY_SOURCE_FIELDS = (
+    "payload_ciphertext", "memory_type", "memory_record_id",
+    "memory_lookup_hash",
+)
 MAX_SOURCE_CIPHERTEXT_CHARS = 64 * 1024 * 1024
 
 
@@ -52,6 +56,8 @@ def source_digest(
         fields = ITEM_SOURCE_FIELDS
     elif kind == "file":
         fields = FILE_SOURCE_FIELDS
+    elif kind == "memory":
+        fields = MEMORY_SOURCE_FIELDS
     else:
         raise ValueError("invalid legacy source kind")
     hasher = hashlib.sha256(f"legacy-{kind}-source/v1\x00".encode("ascii"))
