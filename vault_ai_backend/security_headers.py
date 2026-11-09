@@ -232,6 +232,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
             return response
         apply_security_headers(response, request.url.path or "")
+        # A newly added authenticated route may not yet be in the sensitive
+        # path inventory. Do not let its private response enter a browser or
+        # shared cache merely because the path list was not updated.
+        if request.headers.get("authorization"):
+            for key, value in NO_STORE_CACHE_HEADERS.items():
+                response.headers[key] = value
 
         # 2026-07-26 diagnostic — if chat_endpoint tagged the request
         # with a chat_path enum, surface it as a response header. Read
