@@ -31,6 +31,7 @@ class SyntheticTransfer {
   int? revokeAfterSourceReads;
   bool revokeOnFinalManifest = false;
   bool changeRevisionOnFinalManifest = false;
+  bool renameTargetAfterPublish = false;
   int sourceManifestReads = 0;
   String? targetFileId;
   int targetNameVersion = 0;
@@ -180,6 +181,10 @@ class SyntheticTransfer {
       }
       final prior = published;
       published = true;
+      if (renameTargetAfterPublish) {
+        targetNameVersion = 1;
+        targetNameOverride = 'synthetic-beneficiary-rename';
+      }
       if (losePublishAckOnce) {
         losePublishAckOnce = false;
         throw StateError('Synthetic lost publish response');
@@ -324,6 +329,21 @@ void main() {
       fixture.transfer(),
       throwsA(isA<InheritedV2FileNameReviewRequired>()),
     );
+    expect(fixture.targetManifestPosts, 1);
+    expect(fixture.publishCalls, 1);
+    expect(fixture.proofCalls, 1);
+  });
+
+  test('target renamed just after publish needs review before success',
+      () async {
+    final fixture = SyntheticTransfer(totalBytes: 29, chunkSize: 8);
+    await fixture.initialize();
+    fixture.renameTargetAfterPublish = true;
+    await expectLater(
+      fixture.transfer(),
+      throwsA(isA<InheritedV2FileNameReviewRequired>()),
+    );
+    expect(fixture.published, isTrue);
     expect(fixture.targetManifestPosts, 1);
     expect(fixture.publishCalls, 1);
     expect(fixture.proofCalls, 1);

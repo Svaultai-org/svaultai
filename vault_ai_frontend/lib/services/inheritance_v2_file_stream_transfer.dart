@@ -357,10 +357,20 @@ Future<Map<String, dynamic>> transferReleasedV2FileStreamed({
     throw const FormatException('Inherited target publish unconfirmed');
   }
   final ready = await request('GET', manifestPath);
+  if (ready != null &&
+      ready['file_id'] == targetId &&
+      ready['lifecycle_state'] == 'client_v2_ready' &&
+      ready['verification_state'] == 'client_verified' &&
+      ((ready['name_version'] is int && ready['name_version'] != 0) ||
+          ready['saved_name_override_ciphertext'] is String)) {
+    throw InheritedV2FileNameReviewRequired(targetId);
+  }
   if (ready == null ||
       ready['file_id'] != targetId ||
       ready['lifecycle_state'] != 'client_v2_ready' ||
       ready['verification_state'] != 'client_verified' ||
+      ready['name_version'] != 0 ||
+      ready['saved_name_override_ciphertext'] != null ||
       ready['manifest_ciphertext'] != prepared.manifestCiphertext) {
     throw const FormatException('Inherited target publish state unavailable');
   }
