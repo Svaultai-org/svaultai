@@ -19,6 +19,7 @@ class ReleasedLinkedInheritanceV2 {
   final String offerCommitment;
   final String ownerVaultId;
   final SecretKey ownerMvk;
+  final SecretKey? ownerLegacyKey;
 
   const ReleasedLinkedInheritanceV2({
     required this.linkId,
@@ -26,6 +27,7 @@ class ReleasedLinkedInheritanceV2 {
     required this.offerCommitment,
     required this.ownerVaultId,
     required this.ownerMvk,
+    this.ownerLegacyKey,
   });
 }
 
@@ -78,5 +80,6 @@ Future<ReleasedLinkedInheritanceV2> readReleasedLinkedInheritanceV2({
     offerCommitment: commitment,
     ownerVaultId: ownerId,
     ownerMvk: decoded.ownerMvk,
+    ownerLegacyKey: decoded.ownerLegacyKey,
   );
 }

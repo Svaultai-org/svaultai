@@ -7,11 +7,13 @@ import 'package:vault_ai_frontend/services/linked_inheritance_v2_release_readbac
 
 void main() {
   late SecretKey ownerMvk;
+  late SecretKey ownerLegacyKey;
   late SecretKey beneficiarySk;
   late Map<String, dynamic> released;
 
   setUp(() async {
     ownerMvk = SecretKey(List<int>.filled(32, 27));
+    ownerLegacyKey = SecretKey(List<int>.filled(32, 53));
     final pair = await X25519().newKeyPair();
     beneficiarySk = SecretKey(await pair.extractPrivateKeyBytes());
     final pk = await pair.extractPublicKey();
@@ -19,6 +21,7 @@ void main() {
       beneficiaryLinkId: 41,
       ownerVaultId: 'synthetic-owner',
       ownerMvk: ownerMvk,
+      ownerLegacyKey: ownerLegacyKey,
       beneficiaryPublicKey: Uint8List.fromList(pk.bytes),
     );
     released = {
@@ -48,6 +51,8 @@ void main() {
     expect(result.stageRevision, 2);
     expect(await result.ownerMvk.extractBytes(),
         await ownerMvk.extractBytes());
+    expect(await result.ownerLegacyKey!.extractBytes(),
+        await ownerLegacyKey.extractBytes());
   });
 
   test('unreleased or mismatched owner package fails closed', () async {

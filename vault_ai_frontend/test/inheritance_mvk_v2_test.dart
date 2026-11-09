@@ -39,7 +39,9 @@ void main() {
     final beneficiary = await X25519().newKeyPair();
     final publicKey = await beneficiary.extractPublicKey();
     final ownerMvk = SecretKey(List<int>.filled(32, 27));
-    final ownerLegacyKey = SecretKey(List<int>.filled(32, 61));
+    final ownerLegacyKey = SecretKey([
+      ...utf8.encode('123456'), ...List<int>.filled(26, 61),
+    ]);
     final envelope = await encryptInheritanceMvk(
       beneficiaryLinkId: 93,
       ownerVaultId: 'synthetic-old-owner',
@@ -51,6 +53,7 @@ void main() {
     final wire = jsonEncode(body);
     expect(body.keys, isNot(contains('pin')));
     expect(body.keys, isNot(contains('owner_legacy_key')));
+    expect(wire, isNot(contains('123456')));
     expect(wire, isNot(contains(base64Url.encode(
       await ownerLegacyKey.extractBytes(),
     ).replaceAll('=', ''))));

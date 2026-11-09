@@ -108,58 +108,90 @@ Future<InheritanceMvkEnvelope> encryptInheritanceMvk({
       beneficiaryPublicKey.length != 32) {
     throw ArgumentError('Invalid inheritance envelope context');
   }
-  final mvkBytes = await ownerMvk.extractBytes();
-  if (mvkBytes.length != 32) {
-    throw StateError('Owner private vault key is unavailable');
+  // extractBytes may return the key's own read-only view. Work on copies so
+  // cleanup never modifies the live vault keys or their original buffers.
+  final mvkBytes = Uint8List.fromList(await ownerMvk.extractBytes());
+  Uint8List? legacyBytes;
+  Uint8List? plain;
+  Uint8List? cek;
+  SecretKeyData? cekKey;
+  try {
+    if (mvkBytes.length != 32) {
+      throw StateError('Owner private vault key is unavailable');
+    }
+    if (ownerLegacyKey != null) {
+      legacyBytes = Uint8List.fromList(await ownerLegacyKey.extractBytes());
+      if (legacyBytes.length != 32) {
+        throw StateError('Owner legacy content key is unavailable');
+      }
+    }
+    final random = randomForTest ?? Random.secure();
+    cek = _randomBytes(random, 32);
+    cekKey = SecretKeyData(cek, overwriteWhenDestroyed: true);
+    final payloadNonce = _randomBytes(random, 12);
+    // JSON encoding creates short-lived immutable strings that Dart cannot
+    // wipe. The mutable UTF-8 buffer and extracted key copies are wiped.
+    plain = Uint8List.fromList(utf8.encode(jsonEncode({
+      'version': inheritanceMvkCryptoVersion,
+      'beneficiary_link_id': beneficiaryLinkId,
+      'owner_vault_id': ownerVaultId,
+      'mvk': _b64(mvkBytes),
+      if (legacyBytes != null) 'owner_legacy_key': _b64(legacyBytes),
+    })));
+    final payloadBox = await _aes.encrypt(
+      plain,
+      secretKey: cekKey,
+      nonce: payloadNonce,
+    );
+    final x25519 = X25519();
+    final ephemeral = await x25519.newKeyPair();
+    try {
+      final ephemeralPublic = await ephemeral.extractPublicKey();
+      final shared = await x25519.sharedSecretKey(
+        keyPair: ephemeral,
+        remotePublicKey: SimplePublicKey(
+          beneficiaryPublicKey,
+          type: KeyPairType.x25519,
+        ),
+      );
+      try {
+        final wrapKey = await _hkdf.deriveKey(
+          secretKey: shared,
+          nonce: ephemeralPublic.bytes,
+          info: utf8.encode(_info),
+        );
+        try {
+          final wrapNonce = _randomBytes(random, 12);
+          final wrapBox = await _aes.encrypt(
+            cek,
+            secretKey: wrapKey,
+            nonce: wrapNonce,
+          );
+          return InheritanceMvkEnvelope(
+            encryptedPayload: _b64([
+              ...payloadBox.cipherText, ...payloadBox.mac.bytes,
+            ]),
+            payloadNonce: _b64(payloadNonce),
+            wrappedKey: _b64([...wrapBox.cipherText, ...wrapBox.mac.bytes]),
+            wrappingEphemeralPk: _b64(ephemeralPublic.bytes),
+            wrappingNonce: _b64(wrapNonce),
+          );
+        } finally {
+          wrapKey.destroy();
+        }
+      } finally {
+        shared.destroy();
+      }
+    } finally {
+      ephemeral.destroy();
+    }
+  } finally {
+    plain?.fillRange(0, plain.length, 0);
+    mvkBytes.fillRange(0, mvkBytes.length, 0);
+    legacyBytes?.fillRange(0, legacyBytes.length, 0);
+    cekKey?.destroy();
+    cek?.fillRange(0, cek.length, 0);
   }
-  final legacyBytes = await ownerLegacyKey?.extractBytes();
-  if (legacyBytes != null && legacyBytes.length != 32) {
-    throw StateError('Owner legacy content key is unavailable');
-  }
-  final random = randomForTest ?? Random.secure();
-  final cek = _randomBytes(random, 32);
-  final payloadNonce = _randomBytes(random, 12);
-  final plain = utf8.encode(jsonEncode({
-    'version': inheritanceMvkCryptoVersion,
-    'beneficiary_link_id': beneficiaryLinkId,
-    'owner_vault_id': ownerVaultId,
-    'mvk': _b64(mvkBytes),
-    if (legacyBytes != null) 'owner_legacy_key': _b64(legacyBytes),
-  }));
-  final payloadBox = await _aes.encrypt(
-    plain,
-    secretKey: SecretKey(cek),
-    nonce: payloadNonce,
-  );
-
-  final x25519 = X25519();
-  final ephemeral = await x25519.newKeyPair();
-  final ephemeralPublic = await ephemeral.extractPublicKey();
-  final shared = await x25519.sharedSecretKey(
-    keyPair: ephemeral,
-    remotePublicKey: SimplePublicKey(
-      beneficiaryPublicKey,
-      type: KeyPairType.x25519,
-    ),
-  );
-  final wrapKey = await _hkdf.deriveKey(
-    secretKey: shared,
-    nonce: ephemeralPublic.bytes,
-    info: utf8.encode(_info),
-  );
-  final wrapNonce = _randomBytes(random, 12);
-  final wrapBox = await _aes.encrypt(
-    cek,
-    secretKey: wrapKey,
-    nonce: wrapNonce,
-  );
-  return InheritanceMvkEnvelope(
-    encryptedPayload: _b64([...payloadBox.cipherText, ...payloadBox.mac.bytes]),
-    payloadNonce: _b64(payloadNonce),
-    wrappedKey: _b64([...wrapBox.cipherText, ...wrapBox.mac.bytes]),
-    wrappingEphemeralPk: _b64(ephemeralPublic.bytes),
-    wrappingNonce: _b64(wrapNonce),
-  );
 }
 
 Future<DecryptedInheritanceMvk> decryptInheritanceMvk({
