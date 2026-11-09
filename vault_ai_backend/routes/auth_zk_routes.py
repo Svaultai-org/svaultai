@@ -204,6 +204,7 @@ from auth_local import (
     PIN_FREE_IMPORT_OFFER,
     PIN_FREE_PRIVATE_CHAT_OFFER,
     PIN_FREE_MEMORY_OFFER,
+    PIN_FREE_SAVED_ITEM_MUTATION_OFFER,
     issue_session_token,
     sign_opaque_read_offer_token,
     _vault_meta_snapshot,
@@ -932,6 +933,8 @@ class ZkLoginFinalizeResponse(BaseModel):
     pin_free_beneficiary_v2: bool = False
     pin_free_memory_signed: bool = False
     pin_free_memory_v2: bool = False
+    pin_free_saved_item_mutation_signed: bool = False
+    pin_free_saved_item_mutation_ready: bool = False
     pin_free_private_chat_signed: bool = False
     # Additive hints: old clients ignore these and keep their existing
     # registration + metadata fetch. False/null always requires fallback.
@@ -995,6 +998,32 @@ def _signed_file_mutation_negotiation(
         if os.getenv(flag, "false").strip().lower() != "true":
             raise HTTPException(status_code=409,
                                 detail="signed_file_mutation_unavailable")
+    return True
+
+
+def _signed_saved_item_mutation_negotiation(
+    request: Request, *, signed_reads: bool,
+) -> bool:
+    """Fence old item edits only for clients with both private row paths."""
+    header = request.headers.get("x-svaultai-pin-free-saved-item-mutation", "")
+    if header not in ("", "1"):
+        raise HTTPException(status_code=400,
+                            detail="invalid_saved_item_mutation_capability")
+    if header != "1":
+        return False
+    if not signed_reads or not request_has_file_v2_reader(request):
+        raise HTTPException(status_code=409, detail="signed_read_offers_required")
+    for flag in (
+        "VAULTAI_SIGNED_SAVED_ITEM_MUTATION_ENABLED",
+        "VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_EDIT",
+        "VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_RENAME",
+        "VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_DELETE",
+        "VAULTAI_ZK_METADATA_INVENTORY_ENABLED",
+        "VAULTAI_ZK_LEGACY_EXPORT_ENABLED",
+    ):
+        if os.getenv(flag, "false").strip().lower() != "true":
+            raise HTTPException(status_code=409,
+                                detail="signed_saved_item_mutation_unavailable")
     return True
 
 
@@ -1159,11 +1188,12 @@ def _signed_offer_token(
     auth_device: bool = False,
     import_session: bool = False,
     memory: bool = False,
+    saved_item_mutation: bool = False,
 ) -> str:
     if not signed_reads:
         if (file_create or file_mutation or private_chat or
                 password_analysis or beneficiary or auth_device or
-                import_session or memory):
+                import_session or memory or saved_item_mutation):
             raise ValueError("capability requires negotiated session offers")
         return token
     if file_download and not file_list:
@@ -1180,7 +1210,8 @@ def _signed_offer_token(
             (PIN_FREE_AUTH_DEVICE_OFFER if auth_device else 0) |
             (PIN_FREE_IMPORT_OFFER if import_session else 0) |
             (PIN_FREE_MEMORY_OFFER if memory else 0) |
-            (PIN_FREE_PRIVATE_CHAT_OFFER if private_chat else 0))
+            (PIN_FREE_PRIVATE_CHAT_OFFER if private_chat else 0) |
+            (PIN_FREE_SAVED_ITEM_MUTATION_OFFER if saved_item_mutation else 0))
     return sign_opaque_read_offer_token(token, bits)
 
 
@@ -1347,6 +1378,9 @@ def _zk_login_finalize_sync(
             request, signed_reads=signed_read_offers_requested,
         )
         signed_file_mutation_requested = _signed_file_mutation_negotiation(
+            request, signed_reads=signed_read_offers_requested,
+        )
+        signed_saved_item_mutation_requested = _signed_saved_item_mutation_negotiation(
             request, signed_reads=signed_read_offers_requested,
         )
         signed_password_analysis_requested = _signed_password_analysis_negotiation(
@@ -1569,6 +1603,7 @@ def _zk_login_finalize_sync(
             auth_device=signed_auth_device_requested,
             import_session=signed_import_requested,
             memory=memory_capable,
+            saved_item_mutation=(signed_saved_item_mutation_requested and offer_base),
             private_chat=(signed_private_chat_requested and offer_base and
                           file_list_offer and file_download_offer),
         )
@@ -1596,6 +1631,10 @@ def _zk_login_finalize_sync(
             pin_free_beneficiary_v2=beneficiary_capable,
             pin_free_memory_signed=signed_memory_requested,
             pin_free_memory_v2=memory_capable,
+            pin_free_saved_item_mutation_signed=signed_saved_item_mutation_requested,
+            pin_free_saved_item_mutation_ready=(
+                signed_saved_item_mutation_requested and offer_base
+            ),
             pin_free_private_chat_signed=(
                 signed_private_chat_requested and offer_base and
                 file_list_offer and file_download_offer

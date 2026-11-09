@@ -129,11 +129,13 @@ PIN_FREE_AUTH_DEVICE_OFFER = 128
 PIN_FREE_IMPORT_OFFER = 256
 PIN_FREE_PRIVATE_CHAT_OFFER = 512
 PIN_FREE_MEMORY_OFFER = 1024
+PIN_FREE_SAVED_ITEM_MUTATION_OFFER = 2048
 _SIGNED_OFFER_MASK = (31 | PIN_FREE_FILE_MUTATION_OFFER |
                       PIN_FREE_BENEFICIARY_OFFER | PIN_FREE_AUTH_DEVICE_OFFER)
 _SIGNED_WIDE_OFFER_MASK = (_SIGNED_OFFER_MASK | PIN_FREE_IMPORT_OFFER |
                            PIN_FREE_PRIVATE_CHAT_OFFER |
-                           PIN_FREE_MEMORY_OFFER)
+                           PIN_FREE_MEMORY_OFFER |
+                           PIN_FREE_SAVED_ITEM_MUTATION_OFFER)
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -203,7 +205,9 @@ def _parse_token_claims(token: str) -> Optional[tuple[bytes, int]]:
                 (offer_bits & PIN_FREE_PRIVATE_CHAT_OFFER and
                  (offer_bits & (PIN_FREE_ITEM_READ_OFFER |
                                 PIN_FREE_FILE_LIST_OFFER |
-                                PIN_FREE_FILE_DOWNLOAD_OFFER)) != 7)):
+                                PIN_FREE_FILE_DOWNLOAD_OFFER)) != 7) or
+                (offer_bits & PIN_FREE_SAVED_ITEM_MUTATION_OFFER and
+                 not offer_bits & PIN_FREE_ITEM_READ_OFFER)):
             return None
         payload = raw[:3 + _TOKEN_ID_BYTES]
         token_id_bytes = raw[3:3 + _TOKEN_ID_BYTES]
@@ -240,6 +244,9 @@ def sign_opaque_read_offer_token(token: str, offer_bits: int) -> str:
                           PIN_FREE_FILE_LIST_OFFER |
                           PIN_FREE_FILE_DOWNLOAD_OFFER) != 7):
         raise ValueError("private chat requires complete read offers")
+    if (offer_bits & PIN_FREE_SAVED_ITEM_MUTATION_OFFER and
+            not offer_bits & PIN_FREE_ITEM_READ_OFFER):
+        raise ValueError("saved-item mutation requires item reads")
     claims = _parse_token_claims(token)
     if claims is None or len(_b64url_decode(token)) != 48:
         raise ValueError("fresh login bearer required")
@@ -786,6 +793,10 @@ def require_signed_offer_route(principal: SessionPrincipal, *, path: str) -> Non
             offers & ~_SIGNED_WIDE_OFFER_MASK):
         raise _auth_401("invalid_session")
     path = path.rstrip("/")
+    if (offers & PIN_FREE_SAVED_ITEM_MUTATION_OFFER and path in (
+            "/update-secure-item", "/delete-secure-item")):
+        raise HTTPException(status_code=409,
+                            detail="pin_free_saved_item_mutation_required")
     if offers & PIN_FREE_ITEM_READ_OFFER and path in (
             "/delete-login", "/manage/login", "/manage/login/delete",
             "/crypto/save-wallet-profile", "/crypto/save-sensitive-backup",

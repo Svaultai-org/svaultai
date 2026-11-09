@@ -301,11 +301,12 @@ int _signedOfferBits(String token) {
       return wire[1];
     }
     if (wire[0] == 4) {
-      if (wire.length != 51) return 2047;
+      if (wire.length != 51) return 4095;
       final offers = (wire[1] << 8) | wire[2];
-      if ((offers & ~2047) != 0 || offers <= 255 ||
-          ((offers & 512) != 0 && (offers & 7) != 7)) {
-        return 2047;
+      if ((offers & ~4095) != 0 || offers <= 255 ||
+          ((offers & 512) != 0 && (offers & 7) != 7) ||
+          ((offers & 2048) != 0 && (offers & 1) == 0)) {
+        return 4095;
       }
       return offers;
     }
@@ -329,6 +330,9 @@ bool signedAuthDeviceOfferedForToken(String token) =>
 
 bool signedImportOfferedForToken(String token) =>
     (_signedOfferBits(token) & 256) != 0;
+
+bool signedSavedItemMutationOfferedForToken(String token) =>
+    (_signedOfferBits(token) & 2048) != 0;
 
 /// An authenticated OPAQUE offer replaces specific older routes for the life
 /// of that bearer. Reject those paths before transport, including requests
@@ -368,6 +372,10 @@ void assertOfferedReadPinFreeRequest(
       (path == '/imports/start' ||
        RegExp(r'^/imports/[^/]+/(cancel|complete)$').hasMatch(path))) {
     throw StateError('This import action uses the private vault route.');
+  }
+  if ((signedOffers & 2048) != 0 &&
+      (path == '/update-secure-item' || path == '/delete-secure-item')) {
+    throw StateError('This saved-item action uses the private vault route.');
   }
   if ((signedOffers & 32) != 0 &&
       (path == '/name-file' || path == '/manage/file' ||

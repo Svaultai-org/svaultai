@@ -24,10 +24,15 @@ MAX_PAGE_SIZE = 100
 MAX_LABEL_BYTES = 4096
 
 
-def _require_inventory(vault_id: str) -> None:
+def _require_inventory(vault_id: str, principal: SessionPrincipal) -> None:
+    from auth_local import PIN_FREE_SAVED_ITEM_MUTATION_OFFER
+    signed_item_mutation = (
+        principal.get("pin_free_read_offers", 0) &
+        PIN_FREE_SAVED_ITEM_MUTATION_OFFER
+    )
     if os.getenv(
         "VAULTAI_ZK_METADATA_INVENTORY_ENABLED", "false",
-    ).strip().lower() != "true":
+    ).strip().lower() != "true" and not signed_item_mutation:
         raise HTTPException(status_code=404, detail="not_found")
     if not is_vault_zk_adopted(vault_id):
         raise HTTPException(status_code=409, detail="zk_vault_required")
@@ -57,7 +62,7 @@ def item_metadata_inventory(
     limit: int = Query(default=MAX_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
-    _require_inventory(principal["vault_id"])
+    _require_inventory(principal["vault_id"], principal)
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -104,7 +109,7 @@ def file_metadata_inventory(
     require_legacy_complete: bool = False,
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
-    _require_inventory(principal["vault_id"])
+    _require_inventory(principal["vault_id"], principal)
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)

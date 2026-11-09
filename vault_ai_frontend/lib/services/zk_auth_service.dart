@@ -93,6 +93,10 @@ const bool kSignedMemoryClientEnabled = bool.fromEnvironment(
   'VAULTAI_ENABLE_SIGNED_MEMORY',
   defaultValue: false,
 );
+const bool kSignedSavedItemMutationClientEnabled = bool.fromEnvironment(
+  'VAULTAI_ENABLE_SIGNED_SAVED_ITEM_MUTATION',
+  defaultValue: false,
+);
 
 /// A version signal for the backend's old-client rejection at OPAQUE
 /// finalize. It does not grant any content capability by itself.
@@ -121,8 +125,9 @@ bool hasSignedBeneficiaryOffer(String token) {
     if (wire[0] == 4) {
       if (wire.length != 51) return true;
       final offers = (wire[1] << 8) | wire[2];
-      if ((offers & ~2047) != 0 || offers <= 255 ||
-          ((offers & 512) != 0 && (offers & 7) != 7)) {
+      if ((offers & ~4095) != 0 || offers <= 255 ||
+          ((offers & 512) != 0 && (offers & 7) != 7) ||
+          ((offers & 2048) != 0 && (offers & 1) == 0)) {
         return true;
       }
       return (offers & 64) != 0;
@@ -144,6 +149,7 @@ bool signedOfferTokenMatches(
   bool requireAuthDeviceOffer = false,
   bool requireImportOffer = false,
   bool requireMemoryOffer = false,
+  bool requireSavedItemMutationOffer = false,
 }) {
   if (response['pin_free_read_offers_signed'] != true) return false;
   if (requireFileCreateOffer &&
@@ -203,6 +209,16 @@ bool signedOfferTokenMatches(
           response['pin_free_memory_v2'] == true)) {
     return false;
   }
+  if (requireSavedItemMutationOffer &&
+      (response['pin_free_saved_item_mutation_signed'] != true ||
+          response['pin_free_saved_item_mutation_ready'] is! bool)) {
+    return false;
+  }
+  if (!requireSavedItemMutationOffer &&
+      (response['pin_free_saved_item_mutation_signed'] == true ||
+          response['pin_free_saved_item_mutation_ready'] == true)) {
+    return false;
+  }
   final token = response['session_token'];
   if (token is! String || token.isEmpty) return false;
   try {
@@ -222,8 +238,13 @@ bool signedOfferTokenMatches(
         (requireMemoryOffer && response['pin_free_memory_v2'] == true
             ? 1024
             : 0) |
-        (requirePrivateChatOffer ? 512 : 0);
+        (requirePrivateChatOffer ? 512 : 0) |
+        (requireSavedItemMutationOffer &&
+                response['pin_free_saved_item_mutation_ready'] == true
+            ? 2048
+            : 0);
     if ((expected & 4) != 0 && (expected & 2) == 0) return false;
+    if ((expected & 2048) != 0 && (expected & 1) == 0) return false;
     if (expected > 255) {
       if ((expected & 512) != 0 && (expected & 7) != 7) return false;
       return wire.length == 51 && wire[0] == 4 &&
@@ -1092,7 +1113,8 @@ class ZkAuthService {
             kSignedBeneficiaryClientEnabled ||
             kSignedAuthDeviceClientEnabled ||
             kSignedImportClientEnabled ||
-            kSignedMemoryClientEnabled) &&
+            kSignedMemoryClientEnabled ||
+            kSignedSavedItemMutationClientEnabled) &&
         !signedOfferTokenMatches(
           finalizeResponse,
           requireFileCreateOffer: kSignedFileCreateClientEnabled,
@@ -1103,6 +1125,8 @@ class ZkAuthService {
           requireAuthDeviceOffer: kSignedAuthDeviceClientEnabled,
           requireImportOffer: kSignedImportClientEnabled,
           requireMemoryOffer: kSignedMemoryClientEnabled,
+          requireSavedItemMutationOffer:
+              kSignedSavedItemMutationClientEnabled,
         )) {
       throw OpaqueUnavailable('Authenticated session offer unavailable');
     }

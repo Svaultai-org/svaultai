@@ -5539,6 +5539,18 @@ Future<Map<String, dynamic>> _zkHttpPost(
     }
     headers['X-SVaultAI-Pin-Free-Memory'] = '1';
   }
+  if (path == '/auth/zk-login-finalize' &&
+      kSignedSavedItemMutationClientEnabled) {
+    if (!kSignedReadOffersClientEnabled || !kEnableFileV2UiRead ||
+        !kEnableKeylessSavedItemRead || !kEnableKeylessSavedItemWrite ||
+        !kEnableKeylessLegacySavedItemEdit ||
+        !kEnableKeylessLegacySavedItemRename ||
+        !kEnableKeylessLegacySavedItemDelete) {
+      throw OpaqueUnavailable(
+          'Signed saved-item mutation needs private edit and delete.');
+    }
+    headers['X-SVaultAI-Pin-Free-Saved-Item-Mutation'] = '1';
+  }
   if (path == '/auth/zk-login-finalize' ||
       path == '/auth/zk-register-finalize') {
     headers.addAll(strictPinFreeClientHeaders(

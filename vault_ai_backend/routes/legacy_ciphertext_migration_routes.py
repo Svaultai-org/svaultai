@@ -66,8 +66,19 @@ def _flag(name: str) -> bool:
     return os.getenv(name, "false").strip().lower() == "true"
 
 
-def _require_flag(name: str) -> None:
-    if not _flag(name):
+def _require_flag(name: str, principal: SessionPrincipal | None = None) -> None:
+    from auth_local import PIN_FREE_SAVED_ITEM_MUTATION_OFFER
+    item_mutation_flags = {
+        "VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_EDIT",
+        "VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_RENAME",
+        "VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_DELETE",
+    }
+    signed_item_mutation = (
+        name in item_mutation_flags and principal is not None and
+        principal.get("pin_free_read_offers", 0) &
+        PIN_FREE_SAVED_ITEM_MUTATION_OFFER
+    )
+    if not _flag(name) and not signed_item_mutation:
         raise HTTPException(status_code=404, detail="not_found")
 
 
@@ -296,14 +307,16 @@ def _legacy_item_edit_ciphertext(value: str) -> None:
         raise HTTPException(status_code=400, detail="candidate_ciphertext_invalid")
 
 
-def _legacy_item_rename_fields(payload: LegacyItemEditStageRequest) -> tuple[bytes | None, bytes | None]:
+def _legacy_item_rename_fields(
+    payload: LegacyItemEditStageRequest, principal: SessionPrincipal,
+) -> tuple[bytes | None, bytes | None]:
     encrypted = payload.new_service_ciphertext
     lookup = payload.new_title_lookup_hash
     if (encrypted is None) != (lookup is None):
         raise HTTPException(status_code=400, detail="encrypted_title_incomplete")
     if encrypted is None:
         return None, None
-    _require_flag("VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_RENAME")
+    _require_flag("VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_RENAME", principal)
     raw = _decode(encrypted, field="new_service_ciphertext", max_bytes=4096)
     if _b64(raw) != encrypted or len(raw) < 30 or raw[0] != 1:
         raise HTTPException(status_code=400, detail="encrypted_title_invalid")
@@ -457,12 +470,12 @@ def stage_legacy_item_edit(
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     """Keep an encrypted proposed edit separate from the active legacy item."""
-    _require_flag("VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_EDIT")
+    _require_flag("VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_EDIT", principal)
     require_content_write(principal)
     if item_id <= 0:
         raise HTTPException(status_code=400, detail="invalid_item_id")
     _legacy_item_edit_ciphertext(payload.candidate_encrypted_data)
-    new_service_ct, new_title_hash = _legacy_item_rename_fields(payload)
+    new_service_ct, new_title_hash = _legacy_item_rename_fields(payload, principal)
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -518,7 +531,7 @@ def readback_legacy_item_edit(
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     """Return exactly the candidate the client must decrypt before promotion."""
-    _require_flag("VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_EDIT")
+    _require_flag("VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_EDIT", principal)
     if item_id <= 0:
         raise HTTPException(status_code=400, detail="invalid_item_id")
     conn = get_db()
@@ -570,7 +583,7 @@ def promote_legacy_item_edit(
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     """Atomically promote a verified candidate, retaining the prior source."""
-    _require_flag("VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_EDIT")
+    _require_flag("VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_EDIT", principal)
     require_content_write(principal)
     if item_id <= 0:
         raise HTTPException(status_code=400, detail="invalid_item_id")
@@ -602,7 +615,7 @@ def promote_legacy_item_edit(
             raise HTTPException(status_code=409, detail="readback_required")
         rename = candidate["new_service_ciphertext"] is not None
         if rename:
-            _require_flag("VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_RENAME")
+            _require_flag("VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_RENAME", principal)
             if candidate["new_title_lookup_hash"] is None:
                 raise HTTPException(status_code=409, detail="encrypted_title_incomplete")
         service_ct = (
@@ -700,7 +713,7 @@ def delete_legacy_item_without_pin(
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     """Delete an owner-confirmed source and retained edit history atomically."""
-    _require_flag("VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_DELETE")
+    _require_flag("VAULTAI_ENABLE_KEYLESS_LEGACY_ITEM_DELETE", principal)
     if item_id <= 0:
         raise HTTPException(status_code=400, detail="invalid_item_id")
     if not payload.confirm:

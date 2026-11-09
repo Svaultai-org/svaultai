@@ -65,8 +65,13 @@ def _enabled() -> bool:
     ).strip().lower() == "true"
 
 
-def _require_enabled() -> None:
-    if not _enabled():
+def _require_enabled(principal: SessionPrincipal) -> None:
+    from auth_local import PIN_FREE_SAVED_ITEM_MUTATION_OFFER
+    signed_item_mutation = (
+        principal.get("pin_free_read_offers", 0) &
+        PIN_FREE_SAVED_ITEM_MUTATION_OFFER
+    )
+    if not _enabled() and not signed_item_mutation:
         raise HTTPException(status_code=404, detail="not_found")
 
 
@@ -181,7 +186,7 @@ def legacy_export_start(
     principal: SessionPrincipal = Depends(verify_trusted_device),
     http_response: Response = None,
 ) -> dict:
-    _require_enabled()
+    _require_enabled(principal)
     # Do not burn the one-time proof if the account is ineligible.
     conn = get_db()
     try:
@@ -486,7 +491,7 @@ def legacy_export_page(
     principal: SessionPrincipal = Depends(verify_trusted_device),
     http_response: Response = None,
 ) -> dict:
-    _require_enabled()
+    _require_enabled(principal)
     if payload.mode == "read_file_extra":
         _require_file_extra_stage_enabled()
     elif payload.mode == "read_file_extra_v3":
