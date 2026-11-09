@@ -86,6 +86,27 @@ def test_signed_item_read_offer_rejects_pin_body_before_receive(path):
     assert blocked.value.detail == "pin_free_read_required"
 
 
+@pytest.mark.parametrize("path", [
+    "/update-secure-item", "/delete-secure-item",
+])
+def test_signed_item_mutation_offer_rejects_pin_before_receive(path):
+    old = auth_local._format_token(bytes(range(16)))
+    read_only = auth_local.sign_opaque_read_offer_token(old, 1)
+    offered = auth_local.sign_opaque_read_offer_token(old, 2049)
+    for candidate in (path, path + "/"):
+        assert asyncio.run(_probe(candidate, _header(offered))) == (
+            0, 409, {"detail": "pin_free_saved_item_mutation_required"},
+        )
+    assert asyncio.run(_probe(path, _header(old))) == (1, 200, b"ok")
+    assert asyncio.run(_probe(path, _header(read_only))) == (1, 200, b"ok")
+    assert asyncio.run(_probe(path, _header(old) + _header(offered))) == (
+        0, 409, {"detail": "pin_free_saved_item_mutation_required"},
+    )
+    assert asyncio.run(_probe(path, _header(offered), "OPTIONS")) == (
+        1, 200, b"ok",
+    )
+
+
 @pytest.mark.parametrize("bits,path,reason", [
     (2, "/list-files", "pin_free_read_required"),
     (2, "/files/synthetic/related", "pin_free_read_required"),
