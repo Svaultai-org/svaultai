@@ -7,6 +7,8 @@ import inspect
 
 import main
 from device_gate import verify_trusted_device
+from security_headers import apply_security_headers
+from starlette.responses import Response
 
 
 def test_session_stats_route_requires_trusted_device_and_no_pin():
@@ -36,3 +38,24 @@ def test_session_stats_use_authenticated_vault_without_pin(monkeypatch):
     ))
     assert result == {"file_count": 2}
     assert calls == [("synthetic-legacy-vault", False)]
+
+
+def test_private_vault_get_routes_cannot_be_cached_after_logout(monkeypatch):
+    monkeypatch.setenv("VAULTAI_SECURITY_HEADERS_ENABLED", "true")
+    for path in (
+        "/vault-stats", "/vault-stats/zk", "/vault-stats/session",
+        "/vault/ciphertext/vault-items", "/vault/file-v2",
+        "/vault/memory/legacy-copy/list", "/memory/list",
+        "/inheritance/v2/41/files/synthetic-file/manifest",
+    ):
+        response = Response('{"file_count":2}', media_type="application/json")
+        apply_security_headers(response, path)
+        assert response.headers["Cache-Control"] == (
+            "no-store, no-cache, must-revalidate, private"
+        )
+        assert response.headers["Pragma"] == "no-cache"
+        assert response.headers["Expires"] == "0"
+
+    public = Response("ok")
+    apply_security_headers(public, "/health")
+    assert "Cache-Control" not in public.headers

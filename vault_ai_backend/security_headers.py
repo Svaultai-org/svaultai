@@ -112,6 +112,10 @@ SENSITIVE_PATH_PREFIXES: tuple[str, ...] = (
     "/auth/",
     "/verify-pin",
     "/vault/delete/",
+    # Authenticated vault ciphertext and metadata readers use GET. The bytes
+    # are encrypted, but cached responses can outlive logout or key rotation.
+    "/vault/",
+    "/memory/",
     "/logins/",
     "/secure-items/",
     "/ids/",
@@ -137,6 +141,9 @@ SENSITIVE_PATH_PREFIXES: tuple[str, ...] = (
     # session-authenticated, per-user, and MUST always reflect the
     # current row — never a cached one.
     "/vault-meta",
+    # Session-authenticated GETs return private item/file counts and quota.
+    # Browser caches must not retain those aggregates after logout.
+    "/vault-stats",
 )
 
 
