@@ -4069,12 +4069,15 @@ class VaultAIClient {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     final itemRead = ZkPinFreeItemReadSession.instance;
     final sessionPinFreeRead = itemRead.activeForToken(authToken);
-    if (itemRead.wasOfferedForToken(authToken) &&
-        (!sessionPinFreeRead || mvk == null)) {
+    if ((itemRead.wasOfferedForToken(authToken) &&
+            (!sessionPinFreeRead || mvk == null)) ||
+        (itemRead.privateVaultForToken(authToken) && mvk == null)) {
       throw StateError('Vault encryption key is unavailable');
     }
     if (mvk != null) {
       final ciphertext = await _listZkVaultItems(authToken: authToken);
+      // The coordinated keyless build and authenticated read offers use the
+      // trusted metadata route. A missing route cannot retry the old list.
       final legacy = (kEnableKeylessSavedItemRead || sessionPinFreeRead ||
               kEnableZkPinFreeSavedItemIndex)
           ? await _listZkItemMetadata(authToken: authToken, mvk: mvk)
@@ -4231,6 +4234,12 @@ class VaultAIClient {
     required String authToken,
     void Function()? beforeResponse,
   }) async {
+    if ((kEnableKeylessSavedItemRead &&
+            zk_mvk_store.ZkActiveMvk.current() != null) ||
+        ZkPinFreeItemReadSession.instance.wasOfferedForToken(authToken) ||
+        ZkPinFreeItemReadSession.instance.privateVaultForToken(authToken)) {
+      throw StateError('This vault uses the private saved-item list.');
+    }
     final uri = Uri.parse('$baseUrl/list-secure-items');
 
     final response = await _sessionHttpWithGuard(beforeResponse).post(
@@ -4600,12 +4609,15 @@ class VaultAIClient {
   }) async {
     final itemRead = ZkPinFreeItemReadSession.instance;
     final sessionPinFreeRead = itemRead.activeForToken(authToken);
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (itemRead.wasOfferedForToken(authToken) &&
-        (!sessionPinFreeRead || zk_mvk_store.ZkActiveMvk.current() == null)) {
+        (!sessionPinFreeRead || mvk == null)) {
       throw StateError('Vault encryption key is unavailable');
     }
-    if (zk_mvk_store.ZkActiveMvk.current() != null) {
-      final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (itemRead.privateVaultForToken(authToken) && mvk == null) {
+      throw StateError('Vault encryption key is unavailable');
+    }
+    if (mvk != null) {
       final item = await _resolveSavedItem(
         vaultName: vaultName,
         pin: pin,
@@ -4616,11 +4628,13 @@ class VaultAIClient {
       );
       _requireSavedItemKey(mvk);
       if (item?['storage_engine'] == 'ciphertext') return item!;
-      itemId = item?['id']?.toString() ?? itemId;
       if (kEnableKeylessSavedItemRead || sessionPinFreeRead) {
-        final exactId = int.tryParse(itemId ?? '');
+        if (item?['storage_engine'] != 'legacy_compatibility') {
+          throw StateError('Saved item not found');
+        }
+        final exactId = item?['id'];
         final reader = legacyZkItemReader;
-        if (exactId == null || exactId <= 0 || reader == null) {
+        if (exactId is! int || exactId <= 0 || reader == null) {
           throw StateError('Private saved-item reader is unavailable');
         }
         final detail = await reader(exactId);
@@ -4632,9 +4646,13 @@ class VaultAIClient {
         }
         return detail;
       }
-      // Older builds and the previous chat-confirmation path wrote to the
-      // legacy encrypted table. Fall through so those records stay usable;
-      // all new dashboard and chat-card writes remain client-encrypted.
+      // Until the coordinated cutover is enabled, older builds retain their
+      // legacy item detail path for sessions without a private read offer.
+      itemId = item?['id']?.toString() ?? itemId;
+    }
+    if (itemRead.wasOfferedForToken(authToken) ||
+        itemRead.privateVaultForToken(authToken)) {
+      throw StateError('This vault uses the private saved-item reader.');
     }
     final uri = Uri.parse('$baseUrl/get-secure-item');
 

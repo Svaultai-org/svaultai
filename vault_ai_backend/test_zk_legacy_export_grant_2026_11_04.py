@@ -56,6 +56,7 @@ class _Cursor:
                 "item_type": "login", "service": "synthetic",
                 "item_type_ciphertext": None,
                 "service_ciphertext": None,
+                "payload_ciphertext": None,
             }
         elif "select length(encrypted_file_data)" in normalized:
             vault_id, record_id = params
@@ -102,6 +103,7 @@ class _Db:
         self.files = [{
             "id": "synthetic-file-1", "file_size": 42,
             "content_type": "text/plain", "ciphertext_chars": 12,
+            "extra_text_bytes": None, "extra_path_bytes": None,
             **{name: None for name in (
                 "file_name_ciphertext", "saved_name_ciphertext",
                 "content_type_ciphertext", "detected_type_ciphertext",

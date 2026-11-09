@@ -73,6 +73,7 @@ class FakeCursor:
                 "service": "example",
                 "item_type_ciphertext": None,
                 "service_ciphertext": None,
+                "payload_ciphertext": None,
             }] if vault_id == VAULT and item_id == 7 else []
         elif normalized.startswith("SELECT LENGTH(encrypted_file_data) AS total_chars"):
             vault_id, file_id = params

@@ -2699,6 +2699,8 @@ class AppState extends ChangeNotifier {
     ZkPinFreeItemReadSession.instance.bind(
       sessionToken: token,
       offered: pinFreeLegacyItemRead && vaultHandleValue?.isNotEmpty == true,
+      privateVaultSession: kEnableKeylessSavedItemRead &&
+          vaultHandleValue?.isNotEmpty == true,
     );
     ZkPinFreeFileSession.instance.bind(
       sessionToken: token,

@@ -11,8 +11,13 @@ final class ZkPinFreeItemReadSession {
   SessionRequestScope? _scope;
   bool _active = false;
   bool _offered = false;
+  bool _privateVaultSession = false;
 
-  void bind({required String sessionToken, required bool offered}) {
+  void bind({
+    required String sessionToken,
+    required bool offered,
+    bool privateVaultSession = false,
+  }) {
     final scope = SessionTermination.instance.captureRequest(sessionToken);
     if (!SessionTermination.instance.isCurrentRequest(scope)) {
       throw StateError('Vault item session changed.');
@@ -20,6 +25,7 @@ final class ZkPinFreeItemReadSession {
     _scope = scope;
     _active = offered;
     _offered = offered;
+    _privateVaultSession = privateVaultSession;
   }
 
   bool activeForToken(String token) =>
@@ -29,6 +35,12 @@ final class ZkPinFreeItemReadSession {
   /// a fallback within the same bearer, including late UI work.
   bool wasOfferedForToken(String token) =>
       _offered && _sameSession(token);
+
+  /// An OPAQUE vault must not regain the legacy PIN route after its MVK is
+  /// cleared or a server read offer is withheld. This marker is token-bound
+  /// and survives lock until the session is cleared or replaced.
+  bool privateVaultForToken(String token) =>
+      _privateVaultSession && _sameSession(token);
 
   bool _sameSession(String token) {
     final scope = _scope;
@@ -47,5 +59,6 @@ final class ZkPinFreeItemReadSession {
     _scope = null;
     _active = false;
     _offered = false;
+    _privateVaultSession = false;
   }
 }

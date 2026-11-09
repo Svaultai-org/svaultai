@@ -47,6 +47,22 @@ class Fixture {
     if (request.method == 'GET' && path == '/vault/ciphertext/vault-items') {
       return http.Response(jsonEncode(rows), 200);
     }
+    if (request.method == 'GET' && path == '/vault/items/metadata') {
+      if (lockDuringInventoryRead) ZkActiveMvk.clear();
+      return http.Response(jsonEncode({
+        'records': [
+          for (final row in legacy)
+            {
+              'item_id': row['id'],
+              'item_type': row['item_type'],
+              'service': row['service'],
+              'is_legacy': true,
+            },
+        ],
+        'has_more': false,
+        'next_after_item_id': legacy.isEmpty ? null : legacy.last['id'],
+      }), 200);
+    }
     if (path == '/list-secure-items') {
       if (lockDuringInventoryRead) ZkActiveMvk.clear();
       return http.Response(jsonEncode({'items': legacy}), 200);
