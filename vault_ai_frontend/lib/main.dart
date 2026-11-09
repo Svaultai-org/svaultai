@@ -16715,6 +16715,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     } on MemoryTitleConflictException {
       _showSnack(kMemoryTitleConflictMessage);
       return false;
+    } on MemoryInventoryIncompleteException {
+      _showSnack(kMemoryInventoryIncompleteMessage);
+      return false;
     } catch (_) {
       return false;
     }
@@ -20310,6 +20313,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     } on MemoryTitleConflictException {
       if (accessIsCurrent?.call() == false) return true;
       _appendLocalVaultReply(text, kMemoryTitleConflictMessage);
+      return true;
+    } on MemoryInventoryIncompleteException {
+      if (accessIsCurrent?.call() == false) return true;
+      _appendLocalVaultReply(text, kMemoryInventoryIncompleteMessage);
       return true;
     } on MemorySaveReadbackException catch (e) {
       if (accessIsCurrent?.call() == false) return true;

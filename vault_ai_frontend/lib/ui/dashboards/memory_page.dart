@@ -742,6 +742,8 @@ class _MemoryPageState extends State<MemoryPage> {
       if (!mounted) return;
       _showSnack(e is MemoryTitleConflictException
           ? kMemoryTitleConflictMessage
+          : e is MemoryInventoryIncompleteException
+              ? kMemoryInventoryIncompleteMessage
           : e is MemorySaveReadbackException
               ? e.toString()
               : 'Could not save memory');

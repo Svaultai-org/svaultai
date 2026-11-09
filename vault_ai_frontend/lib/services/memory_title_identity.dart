@@ -11,6 +11,17 @@ class MemoryTitleConflictException implements Exception {
   String toString() => kMemoryTitleConflictMessage;
 }
 
+const String kMemoryInventoryIncompleteMessage =
+    'Some older memories changed or could not be opened. Refresh Memory '
+    'before saving a new title.';
+
+class MemoryInventoryIncompleteException implements Exception {
+  const MemoryInventoryIncompleteException();
+
+  @override
+  String toString() => kMemoryInventoryIncompleteMessage;
+}
+
 String _normalizedMemoryTitle(String title) =>
     title.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 

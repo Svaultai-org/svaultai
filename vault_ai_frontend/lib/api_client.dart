@@ -6540,6 +6540,13 @@ class VaultAIClient {
     String? editingMemoryId,
   }) async {
     final inventory = await listZkMemories(authToken: authToken, limit: 0);
+    // Older-client edits invalidate the prepared copy. An unavailable row may
+    // contain this title, so a private V2 write must not guess that it is free.
+    if (kEnableLegacyMemoryV2ActiveRead &&
+        (inventory['unavailable_count'] is! int ||
+            (inventory['unavailable_count'] as int) != 0)) {
+      throw const MemoryInventoryIncompleteException();
+    }
     final rows = ((inventory['items'] as List?) ?? const [])
         .whereType<Map>()
         .map((row) => Map<String, dynamic>.from(row));
