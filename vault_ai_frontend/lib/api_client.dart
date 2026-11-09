@@ -30,6 +30,7 @@ import 'services/file_v2_reader.dart';
 import 'services/file_v2_renamer.dart';
 import 'services/file_v2_writer.dart';
 import 'services/inheritance_v2_file_stream_transfer.dart';
+import 'services/inheritance_v2_file_stage.dart' show inheritedTargetFileId;
 import 'services/inheritance_v2_file_batch_transfer.dart';
 import 'services/inheritance_mvk_v2.dart' show decryptInheritanceMvk;
 import 'services/linked_inheritance_v2_stage.dart' as linked_inh_stage;
@@ -5627,6 +5628,19 @@ class VaultAIClient {
       if (response.statusCode == 429) {
         throw _rateLimitedFromBody(response.body);
       }
+      if (response.statusCode == 409) {
+        try {
+          final error = jsonDecode(response.body);
+          if (error is Map<String, dynamic> &&
+              error['detail'] == 'inherited_source_changed') {
+            throw const InheritedV2SourceChangedException();
+          }
+        } on InheritedV2SourceChangedException {
+          rethrow;
+        } catch (_) {
+          // Preserve the ordinary V2 error below for unrelated conflicts.
+        }
+      }
       if (response.statusCode != 200) {
         _throwIfAuthExpired(response.statusCode, response.body);
         _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -5742,6 +5756,12 @@ class VaultAIClient {
         beneficiaryMvk: beneficiaryMvk,
         releasedPackage: releasedPackage,
         responseIsCurrent: responseIsCurrent,
+      ),
+      expectedTargetFileId: (sourceId) => inheritedTargetFileId(
+        linkId: linkId,
+        ownerVaultId: package.ownerVaultId,
+        sourceFileId: sourceId,
+        beneficiaryMvk: beneficiaryMvk,
       ),
       onFileProgress: onFileProgress,
     );

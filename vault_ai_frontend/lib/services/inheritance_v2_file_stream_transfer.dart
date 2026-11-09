@@ -26,6 +26,24 @@ typedef InheritedV2TargetRequest = Future<Map<String, dynamic>?> Function(
 
 const int _gcmFramingBytes = 29;
 
+/// A prior beneficiary copy exists, but its saved name no longer matches the
+/// released source (or the beneficiary renamed it independently). Never make
+/// a second target or overwrite the beneficiary's chosen name automatically.
+class InheritedV2FileNameReviewRequired implements Exception {
+  final String targetFileId;
+  const InheritedV2FileNameReviewRequired(this.targetFileId);
+
+  @override
+  String toString() => 'Inherited file name needs review before retry.';
+}
+
+class InheritedV2SourceChangedException implements Exception {
+  const InheritedV2SourceChangedException();
+
+  @override
+  String toString() => 'Inherited source changed. Refresh the file copy.';
+}
+
 void _checkMetadata(FileV2Manifest source) {
   if (source.fileName == null ||
       source.fileName!.trim().isEmpty ||
@@ -60,6 +78,23 @@ void _checkTargetManifest(
     throw const FormatException('Inherited target metadata differs');
   }
 }
+
+bool _sameStableTargetMetadata(
+  FileV2Manifest target,
+  FileV2Manifest source,
+  String targetId,
+) =>
+    target.fileId == targetId &&
+    target.totalBytes == source.totalBytes &&
+    target.chunkSize == source.chunkSize &&
+    target.chunkCount == source.chunkCount &&
+    target.fileName == source.fileName &&
+    target.contentType == source.contentType &&
+    target.relativePath == source.relativePath &&
+    target.assetType == null &&
+    target.detectedType == null &&
+    target.detectedService == null &&
+    target.extractedText == null;
 
 Future<FileV2Manifest> _decodeTargetManifest({
   required Map<String, dynamic> raw,
@@ -184,11 +219,12 @@ Future<Map<String, dynamic>> transferReleasedV2FileStreamed({
     if (existing['file_id'] != targetId ||
         existing['manifest_ciphertext'] is! String ||
         existing['migration_metadata_version'] != 1 ||
-        existing['name_version'] != 0 ||
         !((existing['lifecycle_state'] == 'file_v2_written' &&
-                existing['verification_state'] == 'not_verified') ||
+                existing['verification_state'] == 'not_verified' &&
+                existing['name_version'] == 0) ||
             (existing['lifecycle_state'] == 'client_v2_ready' &&
-                existing['verification_state'] == 'client_verified'))) {
+                existing['verification_state'] == 'client_verified' &&
+                existing['name_version'] is int))) {
       throw const FormatException('Inherited target manifest differs');
     }
     final target = await _decodeTargetManifest(
@@ -197,7 +233,18 @@ Future<Map<String, dynamic>> transferReleasedV2FileStreamed({
       targetId: targetId,
       beneficiaryMvk: beneficiaryMvk,
     );
-    _checkTargetManifest(target, source.manifest, targetId);
+    try {
+      _checkTargetManifest(target, source.manifest, targetId);
+    } on FormatException {
+      if (existing['lifecycle_state'] == 'client_v2_ready' &&
+          existing['verification_state'] == 'client_verified' &&
+          _sameStableTargetMetadata(target, source.manifest, targetId) &&
+          (target.savedName != source.manifest.savedName ||
+              target.nameVersion != 0)) {
+        throw InheritedV2FileNameReviewRequired(targetId);
+      }
+      rethrow;
+    }
     prepared = PreparedNewFileV2(
       fileId: targetId,
       totalBytes: target.totalBytes,
@@ -299,6 +346,7 @@ Future<Map<String, dynamic>> transferReleasedV2FileStreamed({
       'confirm': true,
       'inheritance_link_id': linkId,
       'inheritance_source_file_id': sourceFileId,
+      'inheritance_source_revision': source.sourceRevision,
       'zk_proof_token': beneficiaryProofToken,
     },
   );

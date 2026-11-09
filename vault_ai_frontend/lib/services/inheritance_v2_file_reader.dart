@@ -22,12 +22,14 @@ const int maxInheritedFileInMemoryBytes = 16 * 1024 * 1024;
 
 class ReleasedV2FileStream {
   final String ownerVaultId;
+  final String sourceRevision;
   final FileV2Manifest manifest;
   final FileV2Reader _reader;
   final bool Function() _accessIsCurrent;
 
   const ReleasedV2FileStream({
     required this.ownerVaultId,
+    required this.sourceRevision,
     required this.manifest,
     required FileV2Reader reader,
     required bool Function() accessIsCurrent,
@@ -75,13 +77,15 @@ class ReleasedV2FileStream {
   }
 }
 
-Future<({String ownerVaultId, FileV2Reader reader})> _scopedReader({
+Future<({String ownerVaultId, FileV2Reader reader,
+    String? Function() sourceRevision})> _scopedReader({
   required int linkId,
   required String fileId,
   required SecretKey beneficiaryPrivateKey,
   required Map<String, dynamic> releasedPackage,
   required FetchInheritedFileCiphertext fetch,
   required bool Function() accessIsCurrent,
+  bool requireSourceRevision = false,
 }) async {
   if (!RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(fileId)) {
     throw const FormatException('Invalid inherited file identity');
@@ -99,6 +103,7 @@ Future<({String ownerVaultId, FileV2Reader reader})> _scopedReader({
   checkAccess();
 
   final expectedPrefix = '/vault/file-v2/$fileId/';
+  String? sourceRevision;
   final reader = FileV2Reader(
     mvk: inherited.ownerMvk,
     get: (path) async {
@@ -119,10 +124,25 @@ Future<({String ownerVaultId, FileV2Reader reader})> _scopedReader({
           response['owner_vault_id'] != inherited.ownerVaultId) {
         throw const FormatException('Inherited file context mismatch');
       }
+      if (suffix == 'manifest') {
+        final revision = response['source_revision'];
+        if (requireSourceRevision &&
+            (revision is! String ||
+                !RegExp(r'^[0-9a-f]{64}$').hasMatch(revision))) {
+          throw const FormatException('Inherited source revision unavailable');
+        }
+        if (revision is String) {
+          if (sourceRevision != null && sourceRevision != revision) {
+            throw StateError('Inherited source changed during transfer');
+          }
+          sourceRevision = revision;
+        }
+      }
       return response;
     },
   );
-  return (ownerVaultId: inherited.ownerVaultId, reader: reader);
+  return (ownerVaultId: inherited.ownerVaultId, reader: reader,
+      sourceRevision: () => sourceRevision);
 }
 
 Future<ReleasedV2FileStream> openReleasedV2FileStream({
@@ -140,11 +160,17 @@ Future<ReleasedV2FileStream> openReleasedV2FileStream({
     releasedPackage: releasedPackage,
     fetch: fetch,
     accessIsCurrent: accessIsCurrent,
+    requireSourceRevision: true,
   );
   final manifest = await scoped.reader.readManifest(fileId, requireReady: true);
   if (!accessIsCurrent()) throw StateError('Vault access changed');
+  final revision = scoped.sourceRevision();
+  if (revision == null) {
+    throw const FormatException('Inherited source revision unavailable');
+  }
   return ReleasedV2FileStream(
     ownerVaultId: scoped.ownerVaultId,
+    sourceRevision: revision,
     manifest: manifest,
     reader: scoped.reader,
     accessIsCurrent: accessIsCurrent,

@@ -159,6 +159,7 @@ def test_released_file_inventory_manifest_and_chunk_are_ciphertext_only(ready):
         "next_after_file_id": None,
     }
     manifest = export.get_released_v2_file_manifest(17, FILE_ID, BENEFICIARY)
+    assert manifest["source_revision"] == export._source_revision(ready.file)
     chunk = export.get_released_v2_file_chunk(17, FILE_ID, 0, BENEFICIARY)
     assert base64.urlsafe_b64decode(
         manifest["manifest_ciphertext"] + "==",
@@ -188,6 +189,7 @@ def test_inherited_publish_checks_release_and_source_in_same_transaction(ready):
         confirm=True,
         inheritance_link_id=17,
         inheritance_source_file_id=FILE_ID,
+        inheritance_source_revision=export._source_revision(ready.file),
     )
     new_upload._require_inheritance_release_for_publish(
         ready.cursor(), payload=payload,
@@ -195,6 +197,27 @@ def test_inherited_publish_checks_release_and_source_in_same_transaction(ready):
     )
     assert len(ready.queries) == 3
     assert "FOR SHARE OF BL, IC" in ready.queries[0][0]
+    assert "FOR SHARE OF R, U" in ready.queries[2][0]
+    ready.queries.clear()
+    ready.file["name_version"] = 1
+    ready.file["saved_name_override_ciphertext"] = b"renamed-ciphertext"
+    with pytest.raises(HTTPException) as changed:
+        new_upload._require_inheritance_release_for_publish(
+            ready.cursor(), payload=payload,
+            beneficiary_vault_id=BENEFICIARY["vault_id"],
+        )
+    assert changed.value.status_code == 409
+    assert changed.value.detail == "inherited_source_changed"
+    ready.file["name_version"] = 0
+    ready.file["saved_name_override_ciphertext"] = None
+    ready.file["manifest_ciphertext"] = MANIFEST[:-1] + b"x"
+    with pytest.raises(HTTPException) as reencrypted:
+        new_upload._require_inheritance_release_for_publish(
+            ready.cursor(), payload=payload,
+            beneficiary_vault_id=BENEFICIARY["vault_id"],
+        )
+    assert reencrypted.value.status_code == 409
+    assert reencrypted.value.detail == "inherited_source_changed"
     ready.queries.clear()
     ready.link["pairing_state"] = "paired_no_credentials"
     with pytest.raises(HTTPException) as revoked:

@@ -12,6 +12,9 @@ typedef FetchReleasedV2FilePage = Future<Map<String, dynamic>> Function(
 typedef CopyReleasedV2File = Future<Map<String, dynamic>> Function(
   String sourceFileId,
 );
+typedef ExpectedInheritedTargetFileId = Future<String> Function(
+  String sourceFileId,
+);
 
 const int maxInheritedV2BatchFiles = 1000;
 const int maxInheritedV2BatchPages = 11;
@@ -115,6 +118,7 @@ Future<ReleasedV2FileBatchResult> copyReleasedV2FileInventory({
   required String ownerVaultId,
   required FetchReleasedV2FilePage fetchPage,
   required CopyReleasedV2File copyFile,
+  required ExpectedInheritedTargetFileId expectedTargetFileId,
   required bool Function() accessIsCurrent,
   void Function(int completed, int total)? onFileProgress,
 }) async {
@@ -130,9 +134,11 @@ Future<ReleasedV2FileBatchResult> copyReleasedV2FileInventory({
   var copiedBytes = 0;
   for (var i = 0; i < initial.length; i++) {
     if (!accessIsCurrent()) throw StateError('Vault access changed');
+    final expectedId = await expectedTargetFileId(initial[i].id);
+    if (!accessIsCurrent()) throw StateError('Vault access changed');
     final result = await copyFile(initial[i].id);
     if (!accessIsCurrent()) throw StateError('Vault access changed');
-    if (result['file_id'] is! String ||
+    if (result['file_id'] != expectedId ||
         !const {'published', 'already_published'}.contains(result['status'])) {
       throw const FormatException('Inherited file copy unconfirmed');
     }

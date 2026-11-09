@@ -30,8 +30,11 @@ class SyntheticTransfer {
   int? failPutAt;
   int? revokeAfterSourceReads;
   bool revokeOnFinalManifest = false;
+  bool changeRevisionOnFinalManifest = false;
   int sourceManifestReads = 0;
   String? targetFileId;
+  int targetNameVersion = 0;
+  String? targetNameOverride;
   Map<String, Object>? targetManifestBody;
   final Map<int, String> targetChunks = {};
   bool published = false;
@@ -80,6 +83,10 @@ class SyntheticTransfer {
       return <String, dynamic>{
         'beneficiary_link_id': 31,
         'owner_vault_id': 'synthetic-owner',
+        'source_revision':
+            (changeRevisionOnFinalManifest && sourceManifestReads > 1)
+                ? List.filled(64, 'b').join()
+                : List.filled(64, 'a').join(),
         ...sourceManifest.toManifestBody(),
         'lifecycle_state': 'client_v2_ready',
         'verification_state': 'client_verified',
@@ -117,9 +124,9 @@ class SyntheticTransfer {
         ...targetManifestBody!,
         'lifecycle_state': published ? 'client_v2_ready' : 'file_v2_written',
         'verification_state': published ? 'client_verified' : 'not_verified',
-        'name_version': 0,
+        'name_version': targetNameVersion,
         'migration_metadata_version': 1,
-        'saved_name_override_ciphertext': null,
+        'saved_name_override_ciphertext': targetNameOverride,
       };
 
   Future<Map<String, dynamic>?> requestTarget(
@@ -167,6 +174,7 @@ class SyntheticTransfer {
     if (method == 'POST' && path.endsWith('/publish-new')) {
       publishCalls++;
       expect(body?['zk_proof_token'], 'synthetic-opaque-proof');
+      expect(body?['inheritance_source_revision'], List.filled(64, 'a').join());
       if (targetChunks.length != sourceManifest.chunkCount) {
         fail('Published incomplete synthetic file');
       }
@@ -288,6 +296,37 @@ void main() {
     expect(fixture.sourceManifestReads, 2);
     expect(fixture.publishCalls, 0);
     expect(fixture.published, isFalse);
+  });
+
+  test('source revision change before publication prevents visibility',
+      () async {
+    final fixture = SyntheticTransfer(totalBytes: 29, chunkSize: 8);
+    await fixture.initialize();
+    fixture.changeRevisionOnFinalManifest = true;
+    await expectLater(fixture.transfer(), throwsStateError);
+    expect(fixture.publishCalls, 0);
+    expect(fixture.proofCalls, 0);
+    expect(fixture.published, isFalse);
+  });
+
+  test('renamed published target requires review without duplicate upload',
+      () async {
+    final fixture = SyntheticTransfer(totalBytes: 29, chunkSize: 8);
+    await fixture.initialize();
+    await fixture.transfer();
+    final targetKey = await VaultKeyHierarchy(fixture.beneficiaryMvk)
+        .metadataKey();
+    fixture.targetNameVersion = 1;
+    fixture.targetNameOverride = b64urlEncode(
+      await aesGcmWrap(targetKey, utf8.encode('Beneficiary chosen name')),
+    );
+    await expectLater(
+      fixture.transfer(),
+      throwsA(isA<InheritedV2FileNameReviewRequired>()),
+    );
+    expect(fixture.targetManifestPosts, 1);
+    expect(fixture.publishCalls, 1);
+    expect(fixture.proofCalls, 1);
   });
 
   test('PIN-shaped substitute is rejected after readback before publish',

@@ -52,6 +52,9 @@ class PublishNewFile(BaseModel):
     inheritance_source_file_id: str | None = Field(
         default=None, min_length=1, max_length=128,
     )
+    inheritance_source_revision: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$",
+    )
     zk_proof_token: str | None = Field(default=None, min_length=1, max_length=128)
 
 
@@ -148,9 +151,14 @@ def _require_inheritance_release_for_publish(
         beneficiary_vault_id=beneficiary_vault_id,
     )
     inheritance_files._require_all_owner_files_ready(cur, owner)
-    inheritance_files._ready_file(
+    source = inheritance_files._ready_file(
         cur, owner_vault_id=owner, file_id=source_id,
+        lock_source=True,
     )
+    if (payload.inheritance_source_revision is None or
+            inheritance_files._source_revision(source) !=
+            payload.inheritance_source_revision):
+        raise HTTPException(409, detail="inherited_source_changed")
 
 
 @router.post("/vault/file-v2/{file_id}/publish-new")
@@ -180,7 +188,10 @@ def publish_new_file(
         inheritance_files._enabled()
         if payload.zk_proof_token is None:
             raise HTTPException(400, detail="inheritance_beneficiary_proof_required")
-    elif payload.zk_proof_token is not None:
+        if payload.inheritance_source_revision is None:
+            raise HTTPException(400, detail="inherited_source_revision_required")
+    elif (payload.zk_proof_token is not None or
+          payload.inheritance_source_revision is not None):
         raise HTTPException(400, detail="unexpected_beneficiary_proof")
     vault_id = principal["vault_id"]
     if not is_vault_zk_adopted(vault_id):

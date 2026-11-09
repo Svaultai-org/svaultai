@@ -216,12 +216,29 @@ def test_inherited_publish_needs_one_beneficiary_proof(harness, monkeypatch):
     inherited = {
         "inheritance_link_id": 17,
         "inheritance_source_file_id": "synthetic-owner-file",
+        "inheritance_source_revision": "a" * 64,
     }
     with pytest.raises(HTTPException) as missing:
         route.publish_new_file(
             FILE, route.PublishNewFile(confirm=True, **inherited), PRINCIPAL,
         )
     assert missing.value.status_code == 400
+    assert db.commits == 0 and db.cur.sql == []
+    assert release.call_count == 0 and consume.call_count == 0
+
+    with pytest.raises(HTTPException) as missing_revision:
+        route.publish_new_file(
+            FILE,
+            route.PublishNewFile(
+                confirm=True,
+                inheritance_link_id=17,
+                inheritance_source_file_id="synthetic-owner-file",
+                zk_proof_token="synthetic-opaque-proof",
+            ),
+            PRINCIPAL,
+        )
+    assert missing_revision.value.status_code == 400
+    assert missing_revision.value.detail == "inherited_source_revision_required"
     assert db.commits == 0 and db.cur.sql == []
     assert release.call_count == 0 and consume.call_count == 0
 

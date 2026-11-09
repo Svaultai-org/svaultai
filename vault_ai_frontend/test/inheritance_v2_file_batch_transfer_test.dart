@@ -32,6 +32,7 @@ void main() {
         pass++;
         return page([file('b')]);
       },
+      expectedTargetFileId: (id) async => 'beneficiary-$id',
       copyFile: (id) async {
         calls.add('copy:$id');
         return {'file_id': 'beneficiary-$id', 'status': 'published'};
@@ -58,6 +59,7 @@ void main() {
         ownerVaultId: 'synthetic-owner',
         accessIsCurrent: () => true,
         fetchPage: (_) async => page([file('a', version: renamed ? 1 : 0)]),
+        expectedTargetFileId: (id) async => 'beneficiary-$id',
         copyFile: (_) async {
           copies++;
           renamed = true;
@@ -82,6 +84,7 @@ void main() {
           ownerVaultId: 'synthetic-owner',
           accessIsCurrent: () => true,
           fetchPage: (_) async => badPage,
+          expectedTargetFileId: (id) async => 'target-$id',
           copyFile: (_) async {
             copies++;
             return {'file_id': 'target', 'status': 'published'};
@@ -102,6 +105,7 @@ void main() {
         ownerVaultId: 'synthetic-owner',
         accessIsCurrent: () => active,
         fetchPage: (_) async => page([file('a'), file('b')]),
+        expectedTargetFileId: (id) async => 'target-$id',
         copyFile: (id) async {
           copies++;
           if (id == 'a') active = false;
@@ -111,5 +115,22 @@ void main() {
       throwsStateError,
     );
     expect(copies, 1);
+  });
+
+  test('wrong target ID cannot masquerade as a copied source file', () async {
+    await expectLater(
+      copyReleasedV2FileInventory(
+        linkId: 17,
+        ownerVaultId: 'synthetic-owner',
+        accessIsCurrent: () => true,
+        fetchPage: (_) async => page([file('a')]),
+        expectedTargetFileId: (id) async => 'expected-$id',
+        copyFile: (_) async => {
+          'file_id': 'unrelated-target',
+          'status': 'published',
+        },
+      ),
+      throwsFormatException,
+    );
   });
 }

@@ -8,6 +8,8 @@ exposes plaintext metadata, or treats a partly migrated vault as complete.
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import os
 import re
 
@@ -105,9 +107,33 @@ def _require_all_owner_files_ready(cur, owner_vault_id: str) -> None:
         )
 
 
-def _ready_file(cur, *, owner_vault_id: str, file_id: str) -> dict:
-    cur.execute(
-        """SELECT r.file_id, r.crypto_version, r.manifest_ciphertext,
+def _source_revision(row: dict) -> str:
+    """Bind publication to the immutable ciphertext and current rename state."""
+    fields = {
+        "file_id": str(row["file_id"]),
+        "crypto_version": str(row["crypto_version"]),
+        "total_bytes": int(row["total_bytes"]),
+        "chunk_size": int(row["chunk_size"]),
+        "chunk_count": int(row["chunk_count"]),
+        "lifecycle_state": str(row["lifecycle_state"]),
+        "verification_state": str(row["verification_state"]),
+        "name_version": int(row["name_version"]),
+        "migration_metadata_version": int(row["migration_metadata_version"]),
+    }
+    digest = hashlib.sha256(b"svaultai.inheritance.file.source.v1\0")
+    digest.update(json.dumps(fields, sort_keys=True, separators=(",", ":")).encode())
+    for key in ("manifest_ciphertext", "saved_name_override_ciphertext"):
+        value = row[key]
+        digest.update(b"\0" if value is None else b"\1")
+        raw = bytes(value) if value is not None else b""
+        digest.update(len(raw).to_bytes(8, "big"))
+        digest.update(raw)
+    return digest.hexdigest()
+
+
+def _ready_file(cur, *, owner_vault_id: str, file_id: str,
+                lock_source: bool = False) -> dict:
+    sql = """SELECT r.file_id, r.crypto_version, r.manifest_ciphertext,
                   r.total_bytes, r.chunk_size, r.chunk_count,
                   r.lifecycle_state, r.verification_state,
                   r.saved_name_override_ciphertext, r.name_version,
@@ -122,7 +148,11 @@ def _ready_file(cur, *, owner_vault_id: str, file_id: str) -> dict:
               AND r.crypto_version = 'client_mvk_v2'
               AND r.verification_state = 'client_verified'
               AND r.lifecycle_state IN
-                  ('legacy_migration_retired', 'client_v2_ready')""",
+                  ('legacy_migration_retired', 'client_v2_ready')"""
+    if lock_source:
+        sql += " FOR SHARE OF r, u"
+    cur.execute(
+        sql,
         (file_id, owner_vault_id),
     )
     row = cur.fetchone()
@@ -227,6 +257,7 @@ def get_released_v2_file_manifest(
                 "name_version", "migration_metadata_version",
             )},
             "manifest_ciphertext": _b64(row["manifest_ciphertext"]),
+            "source_revision": _source_revision(row),
             "saved_name_override_ciphertext": (
                 _b64(override) if override is not None else None
             ),

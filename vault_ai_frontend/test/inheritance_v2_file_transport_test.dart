@@ -9,6 +9,7 @@ import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/services/file_v2_writer.dart';
 import 'package:vault_ai_frontend/services/inheritance_mvk_v2.dart';
 import 'package:vault_ai_frontend/services/inheritance_v2_file_stage.dart';
+import 'package:vault_ai_frontend/services/inheritance_v2_file_stream_transfer.dart';
 import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
 
 void main() {
@@ -48,6 +49,7 @@ void main() {
     final targetChunks = <int, String>{};
     var published = false;
     var publishCalls = 0;
+    var rejectStaleRevision = false;
     final writes = <http.Request>[];
     final client = VaultAIClient(
       baseUrl: 'https://synthetic.example',
@@ -64,6 +66,7 @@ void main() {
             jsonEncode(<String, dynamic>{
               'beneficiary_link_id': 37,
               'owner_vault_id': 'synthetic-owner',
+              'source_revision': List.filled(64, 'a').join(),
               ...source.toManifestBody(),
               'lifecycle_state': 'client_v2_ready',
               'verification_state': 'client_verified',
@@ -146,10 +149,14 @@ void main() {
             'confirm': true,
             'inheritance_link_id': 37,
             'inheritance_source_file_id': source.fileId,
+            'inheritance_source_revision': List.filled(64, 'a').join(),
             'zk_proof_token': 'synthetic-opaque-proof',
           });
           expect(targetChunks.length, 1);
           publishCalls++;
+          if (rejectStaleRevision) {
+            return http.Response('{"detail":"inherited_source_changed"}', 409);
+          }
           published = true;
           return http.Response(
             jsonEncode(<String, dynamic>{
@@ -180,6 +187,28 @@ void main() {
     ]);
     expect(writes.any((request) => request.url.path.contains('download-file')),
         isFalse);
+
+    // A revision can change after client readback but before the final server
+    // transaction. The already-published retry must surface it without
+    // staging a second target or consuming another successful publication.
+    rejectStaleRevision = true;
+    await expectLater(
+      client.transferInheritedV2File(
+        authToken: 'synthetic-session',
+        linkId: 37,
+        sourceFileId: source.fileId,
+        freshBeneficiaryProof: () async => 'synthetic-opaque-proof',
+        beneficiaryPrivateKey: privateKey,
+        beneficiaryMvk: beneficiaryMvk,
+        releasedPackage: package,
+      ),
+      throwsA(isA<InheritedV2SourceChangedException>()),
+    );
+    expect(publishCalls, 2);
+    expect(writes.where((request) =>
+        request.url.path == '/vault/file-v2/manifest'), hasLength(1));
+    expect(writes.where((request) =>
+        request.url.path == '/vault/file-v2/chunk'), hasLength(1));
   });
 
   test('batch adapter verifies the released owner and rechecks empty inventory',
