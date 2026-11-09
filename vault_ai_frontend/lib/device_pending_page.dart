@@ -20,6 +20,28 @@ const bool kEnableZkPendingDeviceProof = bool.fromEnvironment(
   defaultValue: false,
 );
 
+enum PendingDeviceCredentialMode { opaqueProof, legacyPin, unavailable }
+
+PendingDeviceCredentialMode pendingDeviceCredentialMode({
+  required bool proofFlagEnabled,
+  required bool proofOffered,
+  required bool privateOnly,
+  required bool legacyFallbackEnabled,
+  required bool hasVaultHandle,
+}) {
+  if (proofFlagEnabled || proofOffered) {
+    if (hasVaultHandle) return PendingDeviceCredentialMode.opaqueProof;
+    if (proofOffered || privateOnly || !legacyFallbackEnabled) {
+      return PendingDeviceCredentialMode.unavailable;
+    }
+    return PendingDeviceCredentialMode.legacyPin;
+  }
+  if (privateOnly || hasVaultHandle || !legacyFallbackEnabled) {
+    return PendingDeviceCredentialMode.unavailable;
+  }
+  return PendingDeviceCredentialMode.legacyPin;
+}
+
 
 class DevicePendingPage extends StatefulWidget {
   
@@ -208,30 +230,30 @@ class _DevicePendingPageState extends State<DevicePendingPage> {
     required String confirmLabel,
   }) async {
     final app = context.read<AppState>();
-    if (kPrivateOnlyUnlockEnabled && !kEnableZkPendingDeviceProof) {
+    final handle = app.vaultHandle;
+    final mode = pendingDeviceCredentialMode(
+      proofFlagEnabled: kEnableZkPendingDeviceProof,
+      proofOffered: signedAuthDeviceOfferedForToken(token),
+      privateOnly: kPrivateOnlyUnlockEnabled,
+      legacyFallbackEnabled: kEnableLegacyAuthFallback,
+      hasVaultHandle: handle?.isNotEmpty == true,
+    );
+    if (mode == PendingDeviceCredentialMode.unavailable) {
       throw StateError('Private device approval is unavailable.');
     }
-    if (kEnableZkPendingDeviceProof) {
-      final handle = app.vaultHandle;
-      if (handle != null && handle.isNotEmpty) {
-        final pin = await _promptPinOnly(
-          title: title,
-          confirmLabel: confirmLabel,
-        );
-        if (pin == null) return null;
-        final proof = await _pendingOpaqueProof(
-          client: client,
-          token: token,
-          handle: handle,
-          pin: pin,
-        );
-        return (pin: null, proof: proof);
-      }
-      // A normal ZK build cannot infer a legacy account from a missing
-      // handle. Only an explicit legacy migration build may use the PIN path.
-      if (kPrivateOnlyUnlockEnabled || !kEnableLegacyAuthFallback) {
-        throw StateError('Sign in again to verify this device.');
-      }
+    if (mode == PendingDeviceCredentialMode.opaqueProof) {
+      final pin = await _promptPinOnly(
+        title: title,
+        confirmLabel: confirmLabel,
+      );
+      if (pin == null) return null;
+      final proof = await _pendingOpaqueProof(
+        client: client,
+        token: token,
+        handle: handle!,
+        pin: pin,
+      );
+      return (pin: null, proof: proof);
     }
     final creds = await _promptVaultAndPin(
       title: title,
