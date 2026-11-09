@@ -7,8 +7,11 @@ content category, not a complete inheritance cutover or old-PIN retirement.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 import re
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -21,6 +24,7 @@ from device_gate import verify_trusted_device
 from rate_limit_sensitive import enforce_export_rate_limit
 from subscription_entitlement import require_content_write
 from vault_core import get_db
+from routes.auth_zk_routes import consume_recent_zk_proof_on_cursor
 from routes.linked_inheritance_v2_upgrade_routes import (
     _b64, _decode, _feed, _load_releasable_old_link, _offer_commitment,
     _readback_proof_enabled, _verified_release_stage,
@@ -36,6 +40,20 @@ _MAX_DESTINATION_GROWTH = 4096
 _ITEM_FIELDS = (
     "item_type_ciphertext", "service_ciphertext", "payload_ciphertext",
 )
+_RESTART_CONFIRMATION = "DELETE_UNCHANGED_INHERITED_COPIES"
+_RESTART_TTL = timedelta(minutes=10)
+# Every known FK to vault_items except the import's own mapping. A new FK must
+# be reviewed before this deletion route is allowed to run.
+_ITEM_REFERENCE_COLUMNS = {
+    ("semantic_index", "vault_item_id"),
+    ("vault_asset_tags", "vault_item_id"),
+    ("vault_password_audit", "vault_item_id"),
+    ("vault_relationships", "source_item_id"),
+    ("vault_relationships", "target_item_id"),
+    ("vault_expiry_alerts", "source_item_id"),
+    ("legacy_item_edit_candidates", "item_id"),
+    ("linked_inheritance_v2_item_copies", "beneficiary_item_id"),
+}
 
 
 class CopyLinkedV2Item(BaseModel):
@@ -53,9 +71,32 @@ class CopyLinkedV2Item(BaseModel):
     content_scope: Literal["saved_items_only"]
 
 
+class ConfirmLinkedV2ItemRestart(BaseModel):
+    """A separate, explicit destructive action after a prepared review."""
+
+    model_config = ConfigDict(extra="forbid")
+    beneficiary_link_id: int = Field(gt=0)
+    restart_token: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    stage_revision: int = Field(gt=0)
+    offer_commitment: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    old_source_inventory_sha256: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    current_source_inventory_sha256: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    copies_sha256: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    copy_count: int = Field(gt=0, le=_MAX_ITEMS)
+    confirmation: Literal["DELETE_UNCHANGED_INHERITED_COPIES"]
+    zk_proof_token: str = Field(min_length=1, max_length=128)
+
+
 def _enabled() -> None:
     _readback_proof_enabled()
     if os.getenv(FLAG_NAME, "false").strip().lower() != "true":
+        raise HTTPException(status_code=404, detail="not_found")
+
+
+def _restart_enabled() -> None:
+    _enabled()
+    if (os.getenv("VAULTAI_ZK_LINKED_BENEFICIARY_ITEM_RESTART_ENABLED", "false")
+            .strip().lower() != "true"):
         raise HTTPException(status_code=404, detail="not_found")
 
 
@@ -180,6 +221,152 @@ def _destination_fields(payload: CopyLinkedV2Item) -> dict[str, bytes]:
     return fields
 
 
+def _destination_hash(
+    *, link_id: int, source_item_id: int, beneficiary_vault_id: str,
+    beneficiary_item_id: int, row: dict,
+) -> bytes:
+    """Bind the original copied row, including its identity and mutable shape."""
+    h = hashlib.sha256(b"linked-old-v2-item-destination/v1\x00")
+    for value in (
+        link_id, source_item_id, beneficiary_vault_id, beneficiary_item_id,
+        row.get("item_type"), row.get("service"), row.get("encrypted_data"),
+        row.get("title_revision"), row.get("legacy_item_rename_active"),
+        row.get("title_lookup_hash"),
+        *(row.get(field) for field in _ITEM_FIELDS),
+    ):
+        _feed(h, value)
+    return h.digest()
+
+
+def _lock_restart_vaults(cur, link: dict) -> None:
+    # Locking the vault rows also blocks new vault_items FK inserts while the
+    # owner inventory and destination set are being checked. The link was
+    # already locked by _context, so concurrent copy/restart calls serialize.
+    cur.execute(
+        """SELECT vault_id FROM vaults
+            WHERE vault_id IN (%s,%s) ORDER BY vault_id FOR UPDATE""",
+        (str(link["passer_vault_id"]), str(link["beneficiary_vault_id"])),
+    )
+    if {str(row["vault_id"]) for row in (cur.fetchall() or [])} != {
+            str(link["passer_vault_id"]), str(link["beneficiary_vault_id"])}:
+        raise HTTPException(status_code=409, detail="restart_vault_changed")
+
+
+def _restart_copy_state(
+    cur, *, link_id: int, beneficiary_vault_id: str,
+    stage_revision: int, current_inventory: str,
+) -> dict:
+    cur.execute(
+        """SELECT c.source_item_id,c.beneficiary_item_id,
+                  c.beneficiary_vault_id,c.stage_revision,
+                  c.source_inventory_sha256,c.destination_ciphertext_sha256,
+                  v.vault_id AS destination_vault_id,v.item_type,v.service,
+                  v.encrypted_data,v.title_revision,
+                  v.legacy_item_rename_active,v.title_lookup_hash,
+                  v.item_type_ciphertext,v.service_ciphertext,
+                  v.payload_ciphertext
+             FROM linked_inheritance_v2_item_copies c
+             JOIN vault_items v ON v.id=c.beneficiary_item_id
+            WHERE c.old_link_id=%s ORDER BY c.source_item_id
+            FOR UPDATE OF c,v""",
+        (link_id,),
+    )
+    copies = cur.fetchall() or []
+    if not 0 < len(copies) <= _MAX_ITEMS:
+        raise HTTPException(status_code=409, detail="restart_copies_unavailable")
+    previous_source_id = 0
+    previous_inventory = None
+    h = hashlib.sha256(b"linked-old-v2-item-restart-copies/v1\x00")
+    for copy in copies:
+        source_id = copy["source_item_id"]
+        dest_id = copy["beneficiary_item_id"]
+        old_inventory = copy["source_inventory_sha256"]
+        original_hash = copy.get("destination_ciphertext_sha256")
+        if (not isinstance(source_id, int) or source_id <= previous_source_id or
+                not isinstance(dest_id, int) or dest_id <= 0 or
+                str(copy["beneficiary_vault_id"]) != beneficiary_vault_id or
+                str(copy["destination_vault_id"]) != beneficiary_vault_id or
+                int(copy["stage_revision"]) != stage_revision or
+                not isinstance(old_inventory, str) or
+                (previous_inventory is not None and
+                 old_inventory != previous_inventory) or
+                original_hash is None or len(bytes(original_hash)) != 32 or
+                copy.get("item_type") is not None or
+                copy.get("service") is not None or
+                copy.get("encrypted_data") is not None or
+                copy.get("title_revision") != 0 or
+                copy.get("legacy_item_rename_active") is not False or
+                copy.get("title_lookup_hash") is None or
+                len(bytes(copy["title_lookup_hash"])) != 32 or
+                any(copy.get(field) is None for field in _ITEM_FIELDS)):
+            raise HTTPException(status_code=409, detail="restart_copy_changed")
+        if any(not 29 <= len(bytes(copy[field])) <= _MAX_FIELD_BYTES or
+               bytes(copy[field])[0] != 1 for field in _ITEM_FIELDS):
+            raise HTTPException(status_code=409, detail="restart_copy_changed")
+        actual_hash = _destination_hash(
+            link_id=link_id, source_item_id=source_id,
+            beneficiary_vault_id=beneficiary_vault_id,
+            beneficiary_item_id=dest_id, row=copy,
+        )
+        if not hmac.compare_digest(actual_hash, bytes(original_hash)):
+            raise HTTPException(status_code=409, detail="restart_copy_changed")
+        _feed(h, source_id)
+        _feed(h, dest_id)
+        _feed(h, actual_hash)
+        previous_source_id = source_id
+        previous_inventory = old_inventory
+    if previous_inventory == current_inventory:
+        raise HTTPException(status_code=409, detail="restart_not_needed")
+    return {
+        "old_inventory": previous_inventory,
+        "copies_digest": h.digest(),
+        "copies": copies,
+    }
+
+
+def _assert_no_restart_dependents(cur, destination_ids: list[int]) -> None:
+    # A new FK or an existing tag/relationship/alert must not be silently
+    # cascaded when a copied item is removed. The parent rows are FOR UPDATE,
+    # which blocks concurrent FK inserts while these checks run.
+    cur.execute(
+        """SELECT c.conrelid::regclass::text AS table_name,
+                  array_agg(a.attname ORDER BY k.ordinality) AS column_names
+             FROM pg_constraint c
+             CROSS JOIN LATERAL unnest(c.conkey)
+                  WITH ORDINALITY AS k(attnum,ordinality)
+             JOIN pg_attribute a
+               ON a.attrelid=c.conrelid AND a.attnum=k.attnum
+            WHERE c.contype='f' AND c.confrelid='vault_items'::regclass
+            GROUP BY c.oid""",
+        (),
+    )
+    references = cur.fetchall() or []
+    observed = {
+        (row["table_name"].split(".")[-1], row["column_names"][0])
+        for row in references if len(row["column_names"]) == 1
+    }
+    if (len(references) != len(_ITEM_REFERENCE_COLUMNS) or
+            observed != _ITEM_REFERENCE_COLUMNS):
+        raise HTTPException(status_code=409, detail="restart_references_changed")
+    cur.execute(
+        """SELECT (
+            EXISTS(SELECT 1 FROM semantic_index WHERE vault_item_id=ANY(%s)) OR
+            EXISTS(SELECT 1 FROM vault_asset_tags WHERE vault_item_id=ANY(%s)) OR
+            EXISTS(SELECT 1 FROM vault_password_audit WHERE vault_item_id=ANY(%s)) OR
+            EXISTS(SELECT 1 FROM vault_relationships
+                    WHERE source_item_id=ANY(%s) OR target_item_id=ANY(%s)) OR
+            EXISTS(SELECT 1 FROM vault_expiry_alerts WHERE source_item_id=ANY(%s)) OR
+            EXISTS(SELECT 1 FROM legacy_item_edit_candidates WHERE item_id=ANY(%s)) OR
+            EXISTS(SELECT 1 FROM legacy_item_edit_history WHERE item_id=ANY(%s)) OR
+            EXISTS(SELECT 1 FROM wallet_v2_records WHERE legacy_item_id=ANY(%s))
+          ) AS has_dependents""",
+        (destination_ids,) * 9,
+    )
+    result = cur.fetchone()
+    if result is None or result["has_dependents"]:
+        raise HTTPException(status_code=409, detail="restart_copy_has_dependents")
+
+
 @router.get("/inheritance/old-link-v2/{link_id}/vault-items")
 def export_linked_v2_items(
     link_id: int,
@@ -298,21 +485,36 @@ def copy_linked_v2_item(
                   item_type_ciphertext,service_ciphertext,
                   payload_ciphertext,title_lookup_hash)
                 VALUES (%s,NULL,NULL,NULL,%s,%s,%s,%s)
-                RETURNING id""",
+                RETURNING id,title_revision,legacy_item_rename_active""",
             (principal["vault_id"],
              *(destination[field] for field in _ITEM_FIELDS),
              destination["title_lookup_hash"]),
         )
-        item_id = int(cur.fetchone()["id"])
+        inserted = cur.fetchone()
+        item_id = int(inserted["id"])
+        original_hash = _destination_hash(
+            link_id=payload.beneficiary_link_id,
+            source_item_id=payload.source_item_id,
+            beneficiary_vault_id=str(principal["vault_id"]),
+            beneficiary_item_id=item_id,
+            row={
+                **destination,
+                "item_type": None, "service": None, "encrypted_data": None,
+                "title_revision": inserted["title_revision"],
+                "legacy_item_rename_active":
+                    inserted["legacy_item_rename_active"],
+            },
+        )
         cur.execute(
             """INSERT INTO linked_inheritance_v2_item_copies (
                   old_link_id,source_item_id,beneficiary_vault_id,
                   beneficiary_item_id,stage_revision,
-                  source_inventory_sha256,source_row_sha256)
-                VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                  source_inventory_sha256,source_row_sha256,
+                  destination_ciphertext_sha256)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
             (payload.beneficiary_link_id, payload.source_item_id,
              principal["vault_id"], item_id, payload.stage_revision,
-             digest, source["source_row_sha256"]),
+             digest, source["source_row_sha256"], original_hash),
         )
         conn.commit()
         return {
@@ -425,5 +627,177 @@ def readback_linked_v2_item_copies(
             "all_items_copied": len(rendered) == len(rows),
             "legacy_package_preserved": True,
         }
+    finally:
+        conn.close()
+
+
+@router.post("/inheritance/old-link-v2/{link_id}/item-copy-restart/prepare")
+def prepare_linked_v2_item_restart(
+    link_id: int,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    """Prepare a short-lived review token; no saved item is removed here."""
+    _restart_enabled()
+    if link_id <= 0:
+        raise HTTPException(status_code=404, detail="not_found")
+    enforce_export_rate_limit(vault_id=str(principal["vault_id"]))
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        link, stage = _context(
+            cur, link_id=link_id,
+            beneficiary_vault_id=str(principal["vault_id"]),
+        )
+        _lock_restart_vaults(cur, link)
+        _, current_digest, _ = _inventory(
+            cur, link_id=link_id, link=link, stage=stage,
+        )
+        copy_state = _restart_copy_state(
+            cur, link_id=link_id,
+            beneficiary_vault_id=str(principal["vault_id"]),
+            stage_revision=int(stage["stage_revision"]),
+            current_inventory=current_digest,
+        )
+        dest_ids = [int(c["beneficiary_item_id"])
+                    for c in copy_state["copies"]]
+        _assert_no_restart_dependents(cur, dest_ids)
+        token = secrets.token_bytes(32)
+        expires_at = datetime.now(timezone.utc) + _RESTART_TTL
+        commitment = _offer_commitment(link_id, stage)
+        cur.execute(
+            """INSERT INTO linked_inheritance_v2_item_restart_previews (
+                  token_hash,old_link_id,beneficiary_vault_id,
+                  stage_revision,offer_commitment,
+                  old_source_inventory_sha256,current_source_inventory_sha256,
+                  copies_sha256,copy_count,expires_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (hashlib.sha256(token).digest(), link_id, principal["vault_id"],
+             int(stage["stage_revision"]), commitment,
+             copy_state["old_inventory"], current_digest,
+             copy_state["copies_digest"], len(dest_ids), expires_at),
+        )
+        conn.commit()
+        return {
+            "beneficiary_link_id": link_id,
+            "stage_revision": int(stage["stage_revision"]),
+            "offer_commitment": commitment,
+            "old_source_inventory_sha256": copy_state["old_inventory"],
+            "current_source_inventory_sha256": current_digest,
+            "copies_sha256": _b64(copy_state["copies_digest"]),
+            "copy_count": len(dest_ids),
+            "copied_items": [
+                {"source_item_id": int(c["source_item_id"]),
+                 "beneficiary_item_id": int(c["beneficiary_item_id"])}
+                for c in copy_state["copies"]
+            ],
+            "restart_token": _b64(token),
+            "expires_at": expires_at.isoformat(),
+            "confirmation_required": _RESTART_CONFIRMATION,
+            "effect": "delete only these unchanged beneficiary copies and mappings",
+            "owner_items_preserved": True,
+            "legacy_package_preserved": True,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@router.post("/inheritance/old-link-v2/item-copy-restart/confirm")
+def confirm_linked_v2_item_restart(
+    payload: ConfirmLinkedV2ItemRestart,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    """Explicitly remove only untouched importer copies in one transaction."""
+    _restart_enabled()
+    require_content_write(principal)
+    token = _decode(payload.restart_token, low=32, high=32)
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        link, stage = _context(
+            cur, link_id=payload.beneficiary_link_id,
+            beneficiary_vault_id=str(principal["vault_id"]),
+        )
+        _lock_restart_vaults(cur, link)
+        _, current_digest, _ = _inventory(
+            cur, link_id=payload.beneficiary_link_id, link=link, stage=stage,
+        )
+        cur.execute(
+            """SELECT old_link_id,beneficiary_vault_id,stage_revision,
+                      offer_commitment,old_source_inventory_sha256,
+                      current_source_inventory_sha256,copies_sha256,
+                      copy_count,expires_at,consumed_at
+                 FROM linked_inheritance_v2_item_restart_previews
+                WHERE token_hash=%s AND old_link_id=%s
+                  AND beneficiary_vault_id=%s
+                  AND expires_at>NOW() AND consumed_at IS NULL
+                FOR UPDATE""",
+            (hashlib.sha256(token).digest(), payload.beneficiary_link_id,
+             principal["vault_id"]),
+        )
+        preview = cur.fetchone()
+        commitment = _offer_commitment(payload.beneficiary_link_id, stage)
+        if (preview is None or
+                int(stage["stage_revision"]) != payload.stage_revision or
+                int(preview["stage_revision"]) != payload.stage_revision or
+                preview["offer_commitment"] != commitment or
+                payload.offer_commitment != commitment or
+                preview["old_source_inventory_sha256"] !=
+                payload.old_source_inventory_sha256 or
+                preview["current_source_inventory_sha256"] != current_digest or
+                payload.current_source_inventory_sha256 != current_digest or
+                int(preview["copy_count"]) != payload.copy_count or
+                not hmac.compare_digest(
+                    bytes(preview["copies_sha256"]),
+                    _decode(payload.copies_sha256, low=32, high=32),
+                )):
+            raise HTTPException(status_code=409, detail="restart_preview_changed")
+        copy_state = _restart_copy_state(
+            cur, link_id=payload.beneficiary_link_id,
+            beneficiary_vault_id=str(principal["vault_id"]),
+            stage_revision=payload.stage_revision,
+            current_inventory=current_digest,
+        )
+        dest_ids = [int(c["beneficiary_item_id"])
+                    for c in copy_state["copies"]]
+        if (copy_state["old_inventory"] !=
+                payload.old_source_inventory_sha256 or
+                len(dest_ids) != payload.copy_count or
+                not hmac.compare_digest(
+                    copy_state["copies_digest"],
+                    bytes(preview["copies_sha256"]),
+                )):
+            raise HTTPException(status_code=409, detail="restart_copies_changed")
+        _assert_no_restart_dependents(cur, dest_ids)
+        consume_recent_zk_proof_on_cursor(
+            payload.zk_proof_token, principal, cur,
+        )
+        cur.execute(
+            """DELETE FROM vault_items
+                WHERE id=ANY(%s) AND vault_id=%s RETURNING id""",
+            (dest_ids, principal["vault_id"]),
+        )
+        removed = {int(row["id"]) for row in (cur.fetchall() or [])}
+        if removed != set(dest_ids):
+            raise HTTPException(status_code=409, detail="restart_delete_mismatch")
+        cur.execute(
+            """UPDATE linked_inheritance_v2_item_restart_previews
+                  SET consumed_at=NOW() WHERE token_hash=%s""",
+            (hashlib.sha256(token).digest(),),
+        )
+        conn.commit()
+        return {
+            "beneficiary_link_id": payload.beneficiary_link_id,
+            "removed_unchanged_beneficiary_items": len(dest_ids),
+            "source_inventory_sha256": current_digest,
+            "owner_items_preserved": True,
+            "legacy_package_preserved": True,
+            "ready_to_restart_saved_item_import": True,
+        }
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()

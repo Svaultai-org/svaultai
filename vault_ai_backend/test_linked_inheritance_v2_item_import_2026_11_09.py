@@ -38,6 +38,12 @@ class ItemDb(FakeDb):
         }]
         self.destination = {}
         self.copies = []
+        self.previews = {}
+        self.dependents = False
+        self.references = [
+            {"table_name": table, "column_names": [column]}
+            for table, column in sorted(items._ITEM_REFERENCE_COLUMNS)
+        ]
         self.next_item_id = 100
         self.unindexed_destination = False
         self.stage = {
@@ -67,12 +73,78 @@ class ItemDb(FakeDb):
         )
 
     def cursor(self, **_kwargs):
+        self._before = (
+            deepcopy(self.destination), deepcopy(self.copies),
+            deepcopy(self.previews), self.next_item_id,
+        )
         return ItemCursor(self)
+
+    def commit(self):
+        super().commit()
+        self._before = None
+
+    def rollback(self):
+        if self._before is not None:
+            (self.destination, self.copies, self.previews,
+             self.next_item_id) = self._before
+        self._before = None
 
 
 class ItemCursor(FakeCursor):
     def execute(self, sql, params):
         normalized = " ".join(sql.split()).upper()
+        if "FROM VAULTS" in normalized and "ORDER BY VAULT_ID FOR UPDATE" in normalized:
+            self.value = [{"vault_id": OWNER["vault_id"]},
+                          {"vault_id": BENEFICIARY_ID}]
+            return
+        if "FROM PG_CONSTRAINT" in normalized:
+            self.value = deepcopy(self.db.references)
+            return
+        if "AS HAS_DEPENDENTS" in normalized:
+            self.value = {"has_dependents": self.db.dependents}
+            return
+        if normalized.startswith("INSERT INTO LINKED_INHERITANCE_V2_ITEM_RESTART_PREVIEWS"):
+            (token_hash, link_id, beneficiary_id, revision, offer,
+             old_inventory, current_inventory, copies_hash, count, expiry) = params
+            self.db.previews[token_hash] = {
+                "old_link_id": link_id,
+                "beneficiary_vault_id": beneficiary_id,
+                "stage_revision": revision,
+                "offer_commitment": offer,
+                "old_source_inventory_sha256": old_inventory,
+                "current_source_inventory_sha256": current_inventory,
+                "copies_sha256": copies_hash,
+                "copy_count": count,
+                "expires_at": expiry,
+                "consumed_at": None,
+            }
+            self.value = None
+            return
+        if "FROM LINKED_INHERITANCE_V2_ITEM_RESTART_PREVIEWS" in normalized:
+            token_hash, link_id, beneficiary_id = params
+            preview = self.db.previews.get(token_hash)
+            self.value = deepcopy(preview) if (
+                preview and preview["old_link_id"] == link_id and
+                preview["beneficiary_vault_id"] == beneficiary_id and
+                preview["consumed_at"] is None and
+                preview["expires_at"] > datetime.now(timezone.utc)
+            ) else None
+            return
+        if normalized.startswith("UPDATE LINKED_INHERITANCE_V2_ITEM_RESTART_PREVIEWS"):
+            self.db.previews[params[0]]["consumed_at"] = datetime.now(timezone.utc)
+            self.value = None
+            return
+        if normalized.startswith("DELETE FROM VAULT_ITEMS"):
+            ids, vault_id = params
+            removed = []
+            for item_id in ids:
+                if self.db.destination.get(item_id, {}).get("vault_id") == vault_id:
+                    del self.db.destination[item_id]
+                    self.db.copies = [c for c in self.db.copies
+                                      if c["beneficiary_item_id"] != item_id]
+                    removed.append({"id": item_id})
+            self.value = removed
+            return
         if ("FROM VAULT_ITEMS WHERE VAULT_ID=%S" in normalized and
                 "ORDER BY ID ASC" in normalized):
             assert params == (OWNER["vault_id"], items._MAX_ITEMS + 1)
@@ -95,9 +167,7 @@ class ItemCursor(FakeCursor):
                 **copy,
                 "destination_vault_id":
                     self.db.destination[copy["beneficiary_item_id"]]["vault_id"],
-                **{field: self.db.destination[
-                    copy["beneficiary_item_id"]][field]
-                   for field in (*items._ITEM_FIELDS, "title_lookup_hash")},
+                **self.db.destination[copy["beneficiary_item_id"]],
             } for copy in self.db.copies]
             return
         if normalized.startswith("INSERT INTO VAULT_ITEMS"):
@@ -110,12 +180,18 @@ class ItemCursor(FakeCursor):
                 "service_ciphertext": service_ct,
                 "payload_ciphertext": payload_ct,
                 "title_lookup_hash": title_hash,
+                "item_type": None,
+                "service": None,
+                "encrypted_data": None,
+                "title_revision": 0,
+                "legacy_item_rename_active": False,
             }
-            self.value = {"id": item_id}
+            self.value = {"id": item_id, "title_revision": 0,
+                          "legacy_item_rename_active": False}
             return
         if normalized.startswith("INSERT INTO LINKED_INHERITANCE_V2_ITEM_COPIES"):
             (link_id, source_id, beneficiary_id, beneficiary_item_id,
-             revision, inventory, row_hash) = params
+             revision, inventory, row_hash, destination_hash) = params
             assert link_id == 41
             self.db.copies.append({
                 "source_item_id": source_id,
@@ -124,6 +200,7 @@ class ItemCursor(FakeCursor):
                 "stage_revision": revision,
                 "source_inventory_sha256": inventory,
                 "source_row_sha256": row_hash,
+                "destination_ciphertext_sha256": destination_hash,
             })
             self.value = None
             return
@@ -140,6 +217,7 @@ def ready(monkeypatch):
         upgrade.RELEASE_READBACK_FLAG_NAME, upgrade.READBACK_PROOF_FLAG_NAME,
         "VAULTAI_ZK_BENEFICIARY_PROOF_ENABLED",
         items.FLAG_NAME,
+        "VAULTAI_ZK_LINKED_BENEFICIARY_ITEM_RESTART_ENABLED",
     ):
         monkeypatch.setenv(name, "true")
     monkeypatch.setattr(upgrade, "zk_beneficiary_v2_enabled", lambda: True)
@@ -147,6 +225,7 @@ def ready(monkeypatch):
     monkeypatch.setattr(items, "get_db", lambda: db)
     monkeypatch.setattr(items, "enforce_export_rate_limit", mock.Mock())
     monkeypatch.setattr(items, "require_content_write", mock.Mock())
+    monkeypatch.setattr(items, "consume_recent_zk_proof_on_cursor", mock.Mock())
     return db
 
 
@@ -299,3 +378,170 @@ def test_unindexed_destination_or_oversized_copy_rejects_before_insert(ready):
         items.copy_linked_v2_item(too_large, BENEFICIARY)
     assert oversized.value.status_code == 409
     assert db.destination == {}
+
+
+def _prepared_restart(db: ItemDb) -> dict:
+    exported = items.export_linked_v2_items(41, BENEFICIARY)
+    items.copy_linked_v2_item(_copy_payload(db, exported), BENEFICIARY)
+    db.source[0]["payload_ciphertext"] = _ct(9)
+    return items.prepare_linked_v2_item_restart(41, BENEFICIARY)
+
+
+def _confirm_restart(preview: dict) -> items.ConfirmLinkedV2ItemRestart:
+    return items.ConfirmLinkedV2ItemRestart(
+        beneficiary_link_id=preview["beneficiary_link_id"],
+        restart_token=preview["restart_token"],
+        stage_revision=preview["stage_revision"],
+        offer_commitment=preview["offer_commitment"],
+        old_source_inventory_sha256=preview["old_source_inventory_sha256"],
+        current_source_inventory_sha256=preview["current_source_inventory_sha256"],
+        copies_sha256=preview["copies_sha256"],
+        copy_count=preview["copy_count"],
+        confirmation="DELETE_UNCHANGED_INHERITED_COPIES",
+        zk_proof_token="synthetic-fresh-proof",
+    )
+
+
+def test_restart_requires_separate_flag_explicit_confirmation_and_fresh_proof(
+        ready, monkeypatch):
+    db = ready
+    preview = _prepared_restart(db)
+    payload = _confirm_restart(preview)
+    with pytest.raises(ValidationError):
+        items.ConfirmLinkedV2ItemRestart(**{
+            **payload.model_dump(), "confirmation": "yes",
+        })
+    with pytest.raises(ValidationError):
+        items.ConfirmLinkedV2ItemRestart(**{
+            **payload.model_dump(), "pin": "123456",
+        })
+    monkeypatch.delenv("VAULTAI_ZK_LINKED_BENEFICIARY_ITEM_RESTART_ENABLED")
+    with pytest.raises(HTTPException) as off:
+        items.confirm_linked_v2_item_restart(payload, BENEFICIARY)
+    assert off.value.status_code == 404
+    assert len(db.destination) == len(db.copies) == 1
+
+
+def test_explicit_restart_removes_only_unchanged_beneficiary_copy(ready):
+    db = ready
+    old_link = deepcopy(db.link)
+    old_credential = deepcopy(db.credential)
+    preview = _prepared_restart(db)
+    new_source = deepcopy(db.source)
+    assert preview["copy_count"] == 1
+    assert preview["owner_items_preserved"] is True
+    assert preview["legacy_package_preserved"] is True
+    assert len(db.destination) == len(db.copies) == 1
+    result = items.confirm_linked_v2_item_restart(
+        _confirm_restart(preview), BENEFICIARY,
+    )
+    assert result["removed_unchanged_beneficiary_items"] == 1
+    assert db.destination == {}
+    assert db.copies == []
+    assert db.source == new_source
+    assert db.link == old_link
+    assert db.credential == old_credential
+    items.consume_recent_zk_proof_on_cursor.assert_called_once()
+    with pytest.raises(HTTPException) as replay:
+        items.confirm_linked_v2_item_restart(
+            _confirm_restart(preview), BENEFICIARY,
+        )
+    assert replay.value.status_code == 409
+    fresh = items.export_linked_v2_items(41, BENEFICIARY)
+    assert items.copy_linked_v2_item(
+        _copy_payload(db, fresh), BENEFICIARY,
+    )["created"] is True
+
+
+@pytest.mark.parametrize("tamper", [
+    "edited_ciphertext", "edited_title", "dependent_record",
+    "old_copy_without_digest", "new_unknown_fk",
+])
+def test_restart_refuses_edited_or_referenced_copy_before_preview(ready, tamper):
+    db = ready
+    exported = items.export_linked_v2_items(41, BENEFICIARY)
+    items.copy_linked_v2_item(_copy_payload(db, exported), BENEFICIARY)
+    db.source[0]["payload_ciphertext"] = _ct(9)
+    if tamper == "edited_ciphertext":
+        db.destination[100]["payload_ciphertext"] = _ct(8)
+    elif tamper == "edited_title":
+        db.destination[100]["title_lookup_hash"] = b"z" * 32
+    elif tamper == "dependent_record":
+        db.dependents = True
+    elif tamper == "old_copy_without_digest":
+        db.copies[0]["destination_ciphertext_sha256"] = None
+    else:
+        db.references.append({
+            "table_name": "future_user_content", "column_names": ["item_id"],
+        })
+    with pytest.raises(HTTPException) as blocked:
+        items.prepare_linked_v2_item_restart(41, BENEFICIARY)
+    assert blocked.value.status_code == 409
+    assert len(db.destination) == len(db.copies) == 1
+    assert db.previews == {}
+
+
+@pytest.mark.parametrize("tamper", [
+    "source_changed", "destination_edited", "dependent_added",
+    "stage_changed", "link_revoked", "preview_expired",
+])
+def test_restart_confirm_rechecks_all_state_before_deletion(ready, tamper):
+    db = ready
+    preview = _prepared_restart(db)
+    if tamper == "source_changed":
+        db.source[0]["payload_ciphertext"] = _ct(10)
+    elif tamper == "destination_edited":
+        db.destination[100]["payload_ciphertext"] = _ct(8)
+    elif tamper == "dependent_added":
+        db.dependents = True
+    elif tamper == "stage_changed":
+        db.stage["stage_revision"] = 2
+    elif tamper == "link_revoked":
+        db.link["status"] = "revoked"
+    else:
+        for value in db.previews.values():
+            value["expires_at"] = datetime(2000, 1, 1, tzinfo=timezone.utc)
+    with pytest.raises(HTTPException):
+        items.confirm_linked_v2_item_restart(
+            _confirm_restart(preview), BENEFICIARY,
+        )
+    assert len(db.destination) == len(db.copies) == 1
+    items.consume_recent_zk_proof_on_cursor.assert_not_called()
+
+
+def test_restart_rollback_restores_beneficiary_copy_on_late_error(
+        ready, monkeypatch):
+    db = ready
+    preview = _prepared_restart(db)
+    original_execute = ItemCursor.execute
+
+    def fail_after_delete(self, sql, params):
+        if "UPDATE linked_inheritance_v2_item_restart_previews" in sql:
+            raise RuntimeError("synthetic late transaction failure")
+        return original_execute(self, sql, params)
+
+    monkeypatch.setattr(ItemCursor, "execute", fail_after_delete)
+    with pytest.raises(RuntimeError):
+        items.confirm_linked_v2_item_restart(
+            _confirm_restart(preview), BENEFICIARY,
+        )
+    assert len(db.destination) == len(db.copies) == 1
+    assert next(iter(db.previews.values()))["consumed_at"] is None
+
+
+def test_restart_rejects_wrong_actor_token_and_copy_digest(ready):
+    db = ready
+    preview = _prepared_restart(db)
+    with pytest.raises(HTTPException) as wrong_actor:
+        items.prepare_linked_v2_item_restart(41, OWNER)
+    assert wrong_actor.value.status_code == 404
+    payload = _confirm_restart(preview)
+    for altered in (
+        payload.model_copy(update={"restart_token": items._b64(b"x" * 32)}),
+        payload.model_copy(update={"copies_sha256": items._b64(b"x" * 32)}),
+    ):
+        with pytest.raises(HTTPException) as denied:
+            items.confirm_linked_v2_item_restart(altered, BENEFICIARY)
+        assert denied.value.status_code == 409
+    assert len(db.destination) == len(db.copies) == 1
+    items.consume_recent_zk_proof_on_cursor.assert_not_called()
