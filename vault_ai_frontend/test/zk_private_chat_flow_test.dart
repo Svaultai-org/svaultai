@@ -1,6 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vault_ai_frontend/main.dart'
-    show kEnableZkPrivateChat, kEnableZkChatSavedItemView;
+    show
+        kEnableZkPrivateChat,
+        kEnableZkChatSavedItemView,
+        kEnableZkAudioTranscriptIndex;
 import 'package:vault_ai_frontend/services/zk_private_chat.dart';
 import 'package:vault_ai_frontend/services/zk_private_chat_flow.dart';
 import 'package:vault_ai_frontend/services/zk_private_chat_index.dart';
@@ -48,6 +51,7 @@ void main() {
   test('private chat UI dispatch stays off in an ordinary build', () {
     expect(kEnableZkPrivateChat, isFalse);
     expect(kEnableZkChatSavedItemView, isFalse);
+    expect(kEnableZkAudioTranscriptIndex, isFalse);
   });
 
   test('private media search and follow-up never call general AI', () async {

@@ -991,6 +991,12 @@ const bool kEnableZkEmbeddedPhotoDescriptionIndex = bool.fromEnvironment(
   'VAULTAI_ENABLE_ZK_EMBEDDED_PHOTO_DESCRIPTION_INDEX',
   defaultValue: false,
 );
+// Search only client-decrypted transcript metadata or an exact VTT/SRT
+// sidecar for a saved recording. This does not transcribe audio.
+const bool kEnableZkAudioTranscriptIndex = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_AUDIO_TRANSCRIPT_INDEX',
+  defaultValue: false,
+);
 // Transitional opt-in for PIN-free OPAQUE chat. General questions use the
 // retrieval-free AI route; every other question stays on the local vault path.
 const bool kEnableZkGeneralChatBridge = bool.fromEnvironment(
@@ -21699,6 +21705,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           accessIsCurrent: currentAccess,
           indexPhotoColors: kEnableZkLocalPhotoColorIndex,
           indexPhotoDescriptions: kEnableZkEmbeddedPhotoDescriptionIndex,
+          indexAudioTranscripts: kEnableZkAudioTranscriptIndex,
           legacyItemInventory:
               ZkPinFreeItemReadSession.instance.activeForToken(token) &&
                       (signedSavedItemMutationOfferedForToken(token) ||
@@ -21859,9 +21866,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           answer = _Msg(
             'assistant',
             'I could not find that media from its saved name or searchable text. ' +
-                (kEnableZkLocalPhotoColorIndex
-                    ? 'Object, scene, and spoken-content search is not available yet.'
-                    : 'Visual and spoken-content search is not available yet.'),
+                (kEnableZkAudioTranscriptIndex &&
+                        RegExp(r'\b(recording|audio|voice|sound)\b',
+                                caseSensitive: false)
+                            .hasMatch(text)
+                    ? 'Automatic speech recognition is not available. To search a recording by its words, add a VTT or SRT caption file with the same name before the extension in the same folder.'
+                    : kEnableZkLocalPhotoColorIndex
+                        ? 'Object, scene, and spoken-content search is not available yet.'
+                        : 'Visual and spoken-content search is not available yet.'),
           );
         case zk_private_chat.ZkLocalChatDisposition.notFound:
           answer = _Msg(

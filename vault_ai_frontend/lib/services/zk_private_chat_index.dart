@@ -53,6 +53,10 @@ class ZkPrivateChatIndexLoader {
   final bool Function() accessIsCurrent;
   final bool includeSavedItems;
   final bool indexTextContent;
+
+  /// Opt-in search of a recording's encrypted transcript metadata or a
+  /// same-folder VTT/SRT sidecar. No audio decoding or speech recognition.
+  final bool indexAudioTranscripts;
   final bool indexPhotoColors;
   final bool indexPhotoDescriptions;
   final bool includeLegacyDocumentsForRelations;
@@ -77,6 +81,7 @@ class ZkPrivateChatIndexLoader {
     required this.accessIsCurrent,
     this.includeSavedItems = true,
     this.indexTextContent = true,
+    this.indexAudioTranscripts = false,
     this.indexPhotoColors = false,
     this.indexPhotoDescriptions = false,
     this.includeLegacyDocumentsForRelations = false,
@@ -298,6 +303,10 @@ class ZkPrivateChatIndexLoader {
       try {
         final manifest = await reader.readManifest(row['file_id'] as String);
         _checkAccess();
+        final mediaKind = _mediaKind(
+          manifest.contentType,
+          manifest.displayName,
+        );
         var content = '';
         var fullTextRead = false;
         final isText = _isTextFile(manifest.contentType, manifest.displayName);
@@ -321,6 +330,7 @@ class ZkPrivateChatIndexLoader {
         final extracted = manifest.extractedText;
         if (indexTextContent &&
             !fullTextRead &&
+            (mediaKind != ZkLocalMediaKind.audio || indexAudioTranscripts) &&
             extracted != null &&
             extracted.isNotEmpty) {
           final extractedBytes = utf8.encode(extracted).length;
@@ -336,10 +346,6 @@ class ZkPrivateChatIndexLoader {
           }
         }
         if (fullTextRead) contentIndexedFiles++;
-        final mediaKind = _mediaKind(
-          manifest.contentType,
-          manifest.displayName,
-        );
         var visualColors = const <String>{};
         String? photoDescription;
         if ((indexPhotoColors || indexPhotoDescriptions) &&
@@ -531,6 +537,10 @@ class ZkPrivateChatIndexLoader {
       }
       final at = positions.single;
       final media = files[at];
+      if (media.mediaKind == ZkLocalMediaKind.audio &&
+          !indexAudioTranscripts) {
+        continue;
+      }
       final caption = entry.value.single;
       files[at] = ZkLocalChatRecord(
         kind: media.kind,

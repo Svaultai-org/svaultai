@@ -109,7 +109,181 @@ Future<Map<String, Object?>> _fixture() async {
   };
 }
 
+Future<ZkPrivateChatIndex> _audioCaptionIndex({
+  required bool enabled,
+  bool sameWords = false,
+  bool conflictingVideo = false,
+  bool Function()? accessIsCurrent,
+  void Function(String path)? onGet,
+  List<String>? requests,
+}) async {
+  const firstCaption =
+      'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nBeacon alpha is confirmed.\n';
+  final secondCaption = sameWords
+      ? '1\n00:00:03,000 --> 00:00:04,000\nBeacon alpha is confirmed.\n'
+      : '1\n00:00:03,000 --> 00:00:04,000\nBeacon beta is confirmed.\n';
+  final chunks = <String, List<int>>{
+    'first-caption': utf8.encode(firstCaption),
+    'second-caption': utf8.encode(secondCaption),
+  };
+  final manifests = <String, Map<String, dynamic>>{
+    'first-audio': await _fileManifest(
+      id: 'first-audio',
+      name: 'memo-one.m4a',
+      mime: 'audio/mp4',
+      size: 0,
+    ),
+    'second-audio': await _fileManifest(
+      id: 'second-audio',
+      name: 'memo-two.m4a',
+      mime: 'audio/mp4',
+      size: 0,
+    ),
+    if (conflictingVideo)
+      'conflicting-video': await _fileManifest(
+        id: 'conflicting-video',
+        name: 'memo-one.mp4',
+        mime: 'video/mp4',
+        size: 0,
+      ),
+    'first-caption': await _fileManifest(
+      id: 'first-caption',
+      name: 'memo-one.vtt',
+      mime: 'text/vtt',
+      size: chunks['first-caption']!.length,
+    ),
+    'second-caption': await _fileManifest(
+      id: 'second-caption',
+      name: 'memo-two.srt',
+      mime: 'application/x-subrip',
+      size: chunks['second-caption']!.length,
+    ),
+  };
+  final contentKey = await VaultKeyHierarchy(_mvk).fileContentKey();
+  return ZkPrivateChatIndexLoader(
+    mvk: _mvk,
+    includeSavedItems: false,
+    indexAudioTranscripts: enabled,
+    accessIsCurrent: accessIsCurrent ?? () => true,
+    get: (path) async {
+      requests?.add(path);
+      onGet?.call(path);
+      if (path == '/vault/file-v2') {
+        return {
+          'files': [
+            for (final id in manifests.keys)
+              {
+                'file_id': id,
+                'verification_state': 'client_verified',
+                'lifecycle_state': 'client_v2_ready',
+              },
+          ],
+        };
+      }
+      final parts = path.split('/');
+      if (parts.length == 5 && parts[4] == 'manifest') {
+        return manifests[parts[3]];
+      }
+      if (parts.length == 6 && parts[4] == 'chunk' && parts[5] == '0') {
+        final bytes = chunks[parts[3]];
+        if (bytes == null) fail('Audio bytes must not be downloaded');
+        return {
+          'file_id': parts[3],
+          'chunk_index': 0,
+          'ciphertext': b64urlEncode(await aesGcmWrap(contentKey, bytes)),
+        };
+      }
+      fail('Unexpected private GET: $path');
+    },
+  ).load();
+}
+
 void main() {
+  test('audio VTT/SRT sidecar search is off by default and stays local when on',
+      () async {
+    final requests = <String>[];
+    final off = await _audioCaptionIndex(enabled: false, requests: requests);
+    expect(
+        off.files
+            .where((file) => file.mediaKind == ZkLocalMediaKind.audio)
+            .every((file) => file.searchText.isEmpty),
+        isTrue);
+    final offResult = ZkLocalChatRouter.resolve(
+      prompt: 'Find my recording saying beacon alpha',
+      savedItems: off.savedItems,
+      files: off.files,
+    );
+    expect(offResult.selection, isNull);
+    final conflicting =
+        await _audioCaptionIndex(enabled: false, conflictingVideo: true);
+    expect(conflicting.incomplete, isTrue);
+    expect(
+        conflicting.files
+            .singleWhere((file) => file.id == 'conflicting-video')
+            .searchText,
+        isEmpty);
+    requests.clear();
+    var generalCalls = 0;
+    final flow = ZkPrivateChatFlow(
+      accessIsCurrent: () => true,
+      loadIndex: () => _audioCaptionIndex(enabled: true, requests: requests),
+      sendGeneral: (_, __) async {
+        generalCalls++;
+        return 'unexpected general reply';
+      },
+    );
+    final first = await flow.run('Find my recording saying beacon alpha');
+    expect(first.local.selection?.id, 'first-audio');
+    expect(first.local.maySendToGeneralAi, isFalse);
+    expect(first.local.selection?.searchText, contains('Beacon alpha'));
+    expect(first.local.selection?.searchText, isNot(contains('00:00:01')));
+    final second = await flow.run('Find my recording saying beacon beta');
+    expect(second.local.selection?.id, 'second-audio');
+    expect(generalCalls, 0);
+    expect(requests.where((path) => path.contains('/chunk/')),
+        everyElement(contains('caption')));
+    expect(requests.join(' '), isNot(contains('beacon')));
+    expect(requests.join(' '), isNot(contains('pin')));
+  });
+
+  test('same spoken words are ambiguous; a lock aborts local caption search',
+      () async {
+    final index = await _audioCaptionIndex(enabled: true, sameWords: true);
+    final result = ZkLocalChatRouter.resolve(
+      prompt: 'Find my recording saying beacon alpha',
+      savedItems: index.savedItems,
+      files: index.files,
+    );
+    expect(result.disposition, ZkLocalChatDisposition.ambiguous);
+    expect(result.matches.map((file) => file.id),
+        containsAll(['first-audio', 'second-audio']));
+    expect(result.maySendToGeneralAi, isFalse);
+
+    var current = true;
+    var generalCalls = 0;
+    final flow = ZkPrivateChatFlow(
+      accessIsCurrent: () => current,
+      loadIndex: () => _audioCaptionIndex(
+        enabled: true,
+        accessIsCurrent: () => current,
+        onGet: (path) {
+          if (path == '/vault/file-v2/first-caption/chunk/0') {
+            current = false;
+          }
+        },
+      ),
+      sendGeneral: (_, __) async {
+        generalCalls++;
+        return 'unexpected general reply';
+      },
+    );
+    await expectLater(
+      flow.run('Find my recording saying beacon alpha'),
+      throwsStateError,
+    );
+    expect(generalCalls, 0);
+  });
+
   test('embedded JPEG description finds a photo only in local opt-in index',
       () async {
     final photo = img.Image(width: 8, height: 8);
@@ -837,6 +1011,7 @@ void main() {
     final requested = <String>[];
     final loader = ZkPrivateChatIndexLoader(
       mvk: _mvk,
+      indexAudioTranscripts: true,
       accessIsCurrent: () => true,
       get: (path) async {
         requested.add(path);
