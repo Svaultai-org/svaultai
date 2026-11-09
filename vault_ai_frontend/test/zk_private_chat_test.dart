@@ -105,6 +105,39 @@ void main() {
     expect(result.maySendToGeneralAi, isFalse);
   });
 
+  test('media lookup does not show a file matching only part of the scene', () {
+    const redOnly = ZkLocalChatRecord(
+      kind: ZkLocalChatKind.file,
+      id: 'red-only',
+      title: 'red-coat.jpg',
+      mediaKind: ZkLocalMediaKind.photo,
+      searchText: 'red coat at a party',
+    );
+    const fullScene = ZkLocalChatRecord(
+      kind: ZkLocalChatKind.file,
+      id: 'full-scene',
+      title: 'holiday.jpg',
+      mediaKind: ZkLocalMediaKind.photo,
+      searchText: 'red coat with black shoes',
+    );
+    const prompt = 'Find my photo wearing a red coat with black shoes';
+    final partial = ZkLocalChatRouter.resolve(
+      prompt: prompt,
+      savedItems: const [],
+      files: const [redOnly],
+    );
+    expect(partial.disposition, ZkLocalChatDisposition.needsPrivateIndex);
+    expect(partial.maySendToGeneralAi, isFalse);
+
+    final exact = ZkLocalChatRouter.resolve(
+      prompt: prompt,
+      savedItems: const [],
+      files: const [redOnly, fullScene],
+    );
+    expect(exact.selection?.id, 'full-scene');
+    expect(exact.maySendToGeneralAi, isFalse);
+  });
+
   test('two equally matching local records stay ambiguous', () {
     const other = ZkLocalChatRecord(
       kind: ZkLocalChatKind.savedItem,

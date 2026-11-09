@@ -203,6 +203,7 @@ class ZkLocalChatRouter {
     'open',
     'or',
     'please',
+    'putting',
     'recording',
     'retrieve',
     'search',
@@ -215,9 +216,12 @@ class ZkLocalChatRouter {
     'voice',
     'audio',
     'clip',
+    'saying',
+    'standing',
     'what',
     'where',
     'with',
+    'wearing',
   };
 
   static String _normalizeTerm(String term) {
@@ -336,10 +340,18 @@ class ZkLocalChatRouter {
     final scored = <(ZkLocalChatRecord, int)>[];
     for (final record in [...savedItems, ...files]) {
       if (mediaKind != null && record.mediaKind != mediaKind) continue;
-      final titleScore = _terms(record.title).intersection(queryTerms).length;
-      final contentScore = _terms(
-        record.searchText,
-      ).intersection(queryTerms).length;
+      final titleTerms = _terms(record.title);
+      final contentTerms = _terms(record.searchText);
+      // A photo/video/audio request can describe several attributes. One
+      // matching color or place is not evidence that this is the requested
+      // media. Require every indexed attribute before showing an exact card.
+      if (mediaKind != null &&
+          queryTerms.isNotEmpty &&
+          !(titleTerms.union(contentTerms).containsAll(queryTerms))) {
+        continue;
+      }
+      final titleScore = titleTerms.intersection(queryTerms).length;
+      final contentScore = contentTerms.intersection(queryTerms).length;
       final score = titleScore * 4 + contentScore * 2;
       if (score > 0 || (queryTerms.isEmpty && mediaKind != null)) {
         scored.add((record, score));
