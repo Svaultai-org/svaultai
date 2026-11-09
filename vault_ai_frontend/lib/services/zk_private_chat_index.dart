@@ -166,6 +166,7 @@ class ZkPrivateChatIndexLoader {
               kind: ZkLocalChatKind.savedItem,
               id: id.toString(),
               title: service.trim().isEmpty ? type : service,
+              itemType: type,
               searchText: searchText.length > 8192
                   ? searchText.substring(0, 8192)
                   : searchText,
@@ -224,6 +225,7 @@ class ZkPrivateChatIndexLoader {
               kind: ZkLocalChatKind.savedItem,
               id: '$id',
               title: service,
+              itemType: type,
               searchText: type,
               legacyProofRequired: true,
             ));

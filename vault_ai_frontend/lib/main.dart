@@ -70,6 +70,7 @@ import 'services/zk_private_chat.dart' as zk_private_chat;
 import 'services/zk_general_chat_bridge.dart' as zk_general_bridge;
 import 'services/zk_private_chat_flow.dart' as zk_chat_flow;
 import 'services/zk_private_chat_index.dart' as zk_chat_index;
+import 'services/zk_private_chat_saved_item_view.dart' as zk_chat_item_view;
 import 'services/local_image_inspection.dart' as local_image;
 import 'services/zk_private_credential_scan.dart' as zk_credential_scan;
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
@@ -997,6 +998,13 @@ const bool kZkChatFileCardsEnabled = bool.fromEnvironment(
   'VAULTAI_ENABLE_FILE_V2_UI_READ',
   defaultValue: false,
 );
+// Explicit local reveal of an exact private-chat saved-item selection. The
+// older path uses owner proof and ciphertext export, never a PIN detail route.
+// The metadata-index flag is required so an older selection can be verified.
+const bool kEnableZkChatSavedItemView = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_CHAT_SAVED_ITEM_VIEW',
+  defaultValue: false,
+) && kEnableKeylessSavedItemRead && kEnableZkPinFreeSavedItemIndex;
 
 const bool kEnableZkBeneficiaryProof = bool.fromEnvironment(
   'VAULTAI_ENABLE_ZK_BENEFICIARY_PROOF',
@@ -21329,6 +21337,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (!currentAccess()) return;
       final local = turn.local;
       final selected = local.selection;
+      final openSavedItem = zk_chat_item_view.ZkPrivateChatSavedItemView
+          .shouldOpen(local, enabled: kEnableZkChatSavedItemView);
       _Msg answer;
       switch (local.disposition) {
         case zk_private_chat.ZkLocalChatDisposition.general:
@@ -21386,6 +21396,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 else 'zk_private_chat_v2': true,
                 if (pendingAction != null) 'pending_action': pendingAction,
               },
+            );
+          } else if (openSavedItem) {
+            answer = _Msg(
+              'assistant',
+              'Opening “${selected.title}” privately.',
             );
           } else {
             answer = _Msg(
@@ -21446,6 +21461,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       setState(() => msgs.add(answer));
       _scrollToBottom();
       _maybeTriggerPendingFileAction(answer, accessIsCurrent: currentAccess);
+      if (openSavedItem && selected != null) {
+        unawaited(_openZkChatSelectedSavedItem(
+          app: app,
+          client: client,
+          token: token,
+          selection: selected,
+          accessIsCurrent: currentAccess,
+        ));
+      }
     } catch (_) {
       if (currentAccess()) {
         _appendAssistantMessage(
@@ -21459,6 +21483,64 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           thinking = false;
         });
       }
+    }
+  }
+
+  Future<void> _openZkChatSelectedSavedItem({
+    required AppState app,
+    required VaultAIClient client,
+    required String token,
+    required zk_private_chat.ZkLocalChatRecord selection,
+    required bool Function() accessIsCurrent,
+  }) async {
+    if (!accessIsCurrent()) return;
+    try {
+      final selected = await zk_chat_item_view.ZkPrivateChatSavedItemView.read(
+        selection: selection,
+        legacyProofOffered:
+            ZkPinFreeItemReadSession.instance.activeForToken(token),
+        accessIsCurrent: accessIsCurrent,
+        readV2: (id, title, itemType) => client.getZkVaultSecureItemOnly(
+          authToken: token,
+          service: title,
+          itemType: itemType,
+          itemId: '$id',
+        ),
+        readLegacy: (id) => _readLegacyZkSavedItem(app, id),
+      );
+      if (!mounted || !accessIsCurrent()) return;
+      final value = secureItemViewTextFor(
+        selected.itemType, selected.fields,
+      );
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => AnimatedBuilder(
+          animation: app,
+          builder: (_, __) => accessIsCurrent()
+              ? SecureItemDetailSheet(
+                  title: selected.title,
+                  itemType: selected.itemType,
+                  username: selected.fields['username'],
+                  revealedValue: value.isEmpty ? null : value,
+                  onCopyUsername: (username) {
+                    if (!accessIsCurrent()) return;
+                    Clipboard.setData(ClipboardData(text: username));
+                    _showSnack('Username copied');
+                  },
+                  onCopyValue: (text) {
+                    if (!accessIsCurrent()) return;
+                    Clipboard.setData(ClipboardData(text: text));
+                    _showSnack('Value copied');
+                  },
+                )
+              : const SizedBox.shrink(),
+        ),
+      );
+    } catch (e) {
+      if (!accessIsCurrent() || app.handleApiException(e)) return;
+      _showSnack('Could not open this saved item privately.');
     }
   }
 

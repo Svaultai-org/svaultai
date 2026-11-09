@@ -866,6 +866,7 @@ void main() {
     final index = await loader.load();
     expect(index.savedItems, hasLength(1));
     final item = index.savedItems.single;
+    expect(item.itemType, 'login');
     expect(item.title, 'Archive account');
     expect(item.searchText, 'login');
     expect(item.legacyProofRequired, isTrue);

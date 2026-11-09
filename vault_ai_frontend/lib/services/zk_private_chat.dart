@@ -29,6 +29,8 @@ class ZkLocalChatRecord {
   final ZkLocalChatKind kind;
   final String id;
   final String title;
+  /// Exact locally decrypted saved-item type, never sent to general AI.
+  final String? itemType;
   final String searchText;
   final String? mimeType;
   final ZkLocalMediaKind mediaKind;
@@ -44,6 +46,7 @@ class ZkLocalChatRecord {
     required this.kind,
     required this.id,
     required this.title,
+    this.itemType,
     this.searchText = '',
     this.mimeType,
     this.mediaKind = ZkLocalMediaKind.other,
