@@ -5536,7 +5536,8 @@ Future<Map<String, dynamic>> _zkHttpPost(
     }
     headers['X-SVaultAI-Pin-Free-Memory'] = '1';
   }
-  if (path == '/auth/zk-login-finalize') {
+  if (path == '/auth/zk-login-finalize' ||
+      path == '/auth/zk-register-finalize') {
     headers.addAll(strictPinFreeClientHeaders(
       privateOnlyBuild: kPrivateOnlyUnlockEnabled,
       clientReady:
@@ -5557,8 +5558,8 @@ Future<Map<String, dynamic>> _zkHttpPost(
     requestBody.putIfAbsent('device_id', () => deviceId);
   }
   assertPrivateOnlyPinFreeBody(requestBody);
-  final response = await http
-      .post(
+  final response = await sendPinCheckedHttp(
+        'POST',
         uri,
         headers: headers,
         body: jsonEncode(requestBody),
@@ -5600,7 +5601,7 @@ Future<Map<String, dynamic>> _zkHttpGet(
   if (deviceId != null && deviceId.isNotEmpty) {
     headers['X-Device-Id'] = deviceId;
   }
-  final response = await http.get(uri, headers: headers);
+  final response = await sendPinCheckedHttp('GET', uri, headers: headers);
   throwIfClientUpgradeRequired(response.statusCode, response.body);
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw Exception(
