@@ -48,8 +48,12 @@ void main() {
       prompt: 'Find my red photo', savedItems: const [], files: [file],
     );
     expect(colorMatch.selection?.id, 'synthetic-photo');
-    expect(colorMatch.colorOnlyEvidence, true);
+    expect(colorMatch.visualColorEvidence, true);
     expect(colorMatch.maySendToGeneralAi, false);
+    final genericColorMatch = ZkLocalChatRouter.resolve(
+      prompt: 'Find my red file', savedItems: const [], files: [file],
+    );
+    expect(genericColorMatch.visualColorEvidence, true);
     final objectClaim = ZkLocalChatRouter.resolve(
       prompt: 'Find my photo wearing red clothes and black shoes',
       savedItems: const [], files: [file],

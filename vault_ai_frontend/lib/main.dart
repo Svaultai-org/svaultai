@@ -21352,9 +21352,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       ? 'Downloading “${selected.title}” from your vault.'
                       : pendingAction == 'open'
                           ? 'Opening “${selected.title}” from your vault.'
-                          : local.colorOnlyEvidence
+                          : local.visualColorEvidence
                               ? 'Possible color match: “${selected.title}”. '
-                                  'I matched photo colors only; I did not '
+                                  'This match uses photo colors. I did not '
                                   'identify people, clothing, or objects.'
                               : 'Found “${selected.title}” in your vault.'),
               kind: ChatMessage.kVaultFile,
