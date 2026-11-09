@@ -965,6 +965,13 @@ const bool kEnableZkGeneralChatBridge = bool.fromEnvironment(
   'VAULTAI_ENABLE_ZK_GENERAL_CHAT_BRIDGE',
   defaultValue: false,
 );
+// Transitional general-only routing. Clearly general turns use the PIN-free
+// endpoint; private turns and attachments keep their existing working path.
+// This does not claim that the legacy /chat path is retired.
+const bool kEnableZkGeneralOnlyChatBridge = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_GENERAL_ONLY_CHAT_BRIDGE',
+  defaultValue: false,
+);
 const bool kZkChatFileCardsEnabled = bool.fromEnvironment(
   'VAULTAI_ENABLE_FILE_V2_UI_READ',
   defaultValue: false,
@@ -21151,7 +21158,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     final zkChatMvk = zk_mvk_store.ZkActiveMvk.current();
     final bridgeRoute = zk_general_bridge.resolveZkGeneralBridgeRoute(
-      enabled: kEnableZkGeneralChatBridge,
+      enabled: kEnableZkGeneralChatBridge || kEnableZkGeneralOnlyChatBridge,
       hasZkHandle: app.vaultHandle?.isNotEmpty == true,
       hasMvk: zkChatMvk != null,
       mvkMatchesVault: activeVaultId != null &&
@@ -21159,6 +21166,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       hasAttachments: attachments.isNotEmpty,
       prompt: text,
       vaultName: vaultName,
+      preserveLegacyPrivateChat:
+          kEnableZkGeneralOnlyChatBridge && !kEnableZkGeneralChatBridge,
     );
     if (bridgeRoute == zk_general_bridge.ZkGeneralBridgeRoute.unavailable) {
       _appendAssistantMessage(

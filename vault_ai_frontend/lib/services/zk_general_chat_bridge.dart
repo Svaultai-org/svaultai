@@ -11,8 +11,9 @@ typedef SendGeneralTurn = Future<String> Function(
 
 enum ZkGeneralBridgeRoute { legacy, unavailable, general, privateLocal }
 
-/// A confirmed OPAQUE session never falls into the legacy chat path while
-/// this bridge is enabled. Ambiguous and vault-content prompts stay local.
+/// The full private bridge keeps an OPAQUE session off legacy chat. The
+/// general-only rollout uses legacy chat for private/ambiguous turns until
+/// local readers cover them; only clearly general turns change transport.
 ZkGeneralBridgeRoute resolveZkGeneralBridgeRoute({
   required bool enabled,
   required bool hasZkHandle,
@@ -21,16 +22,27 @@ ZkGeneralBridgeRoute resolveZkGeneralBridgeRoute({
   required bool hasAttachments,
   required String prompt,
   String? vaultName,
+  bool preserveLegacyPrivateChat = false,
 }) {
+  // A general-only rollout changes only clearly general turns. A session
+  // without its current OPAQUE key and every private/ambiguous turn continue
+  // through the already supported chat path, including attachments.
+  if (preserveLegacyPrivateChat &&
+      (!hasZkHandle || !hasMvk || !mvkMatchesVault)) {
+    return ZkGeneralBridgeRoute.legacy;
+  }
   if (!enabled || (!hasZkHandle && !hasMvk)) {
     return ZkGeneralBridgeRoute.legacy;
   }
   if (!hasMvk || !mvkMatchesVault) {
     return ZkGeneralBridgeRoute.unavailable;
   }
-  return !hasAttachments &&
-          isClearlyGeneralChatPrompt(prompt, vaultName: vaultName)
-      ? ZkGeneralBridgeRoute.general
+  if (!hasAttachments &&
+      isClearlyGeneralChatPrompt(prompt, vaultName: vaultName)) {
+    return ZkGeneralBridgeRoute.general;
+  }
+  return preserveLegacyPrivateChat
+      ? ZkGeneralBridgeRoute.legacy
       : ZkGeneralBridgeRoute.privateLocal;
 }
 

@@ -4,14 +4,46 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:vault_ai_frontend/api_client.dart';
-import 'package:vault_ai_frontend/main.dart' show kEnableZkGeneralChatBridge;
+import 'package:vault_ai_frontend/main.dart' show
+    kEnableZkGeneralChatBridge, kEnableZkGeneralOnlyChatBridge;
 import 'package:vault_ai_frontend/services/zk_general_chat_bridge.dart';
 import 'package:vault_ai_frontend/services/zk_private_chat.dart';
 
 void main() {
   test('transitional route is off in an ordinary build', () {
     expect(kEnableZkGeneralChatBridge, isFalse);
-  }, skip: const bool.fromEnvironment('VAULTAI_ENABLE_ZK_GENERAL_CHAT_BRIDGE'));
+    expect(kEnableZkGeneralOnlyChatBridge, isFalse);
+  }, skip: const bool.fromEnvironment('VAULTAI_ENABLE_ZK_GENERAL_CHAT_BRIDGE') ||
+      const bool.fromEnvironment('VAULTAI_ENABLE_ZK_GENERAL_ONLY_CHAT_BRIDGE'));
+
+  test('general-only rollout leaves every private and unavailable turn on the working path', () {
+    ZkGeneralBridgeRoute route(String prompt, {
+      bool handle = true,
+      bool mvk = true,
+      bool matches = true,
+      bool attachment = false,
+    }) => resolveZkGeneralBridgeRoute(
+      enabled: true,
+      hasZkHandle: handle,
+      hasMvk: mvk,
+      mvkMatchesVault: matches,
+      hasAttachments: attachment,
+      prompt: prompt,
+      vaultName: 'Synthetic vault',
+      preserveLegacyPrivateChat: true,
+    );
+    expect(route('What is encryption?'), ZkGeneralBridgeRoute.general);
+    expect(route('What is encryption?', handle: false),
+        ZkGeneralBridgeRoute.legacy);
+    expect(route('What is encryption?', mvk: false),
+        ZkGeneralBridgeRoute.legacy);
+    expect(route('What is encryption?', matches: false),
+        ZkGeneralBridgeRoute.legacy);
+    expect(route('Find my red photo'), ZkGeneralBridgeRoute.legacy);
+    expect(route('What about that file?'), ZkGeneralBridgeRoute.legacy);
+    expect(route('What is encryption?', attachment: true),
+        ZkGeneralBridgeRoute.legacy);
+  });
 
   test('only explicit general questions qualify', () {
     for (final prompt in [
