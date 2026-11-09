@@ -36,6 +36,8 @@ import 'services/linked_inheritance_v2_release_readback.dart'
     as linked_inh_release;
 import 'services/linked_inheritance_v2_readback_proof.dart'
     as linked_inh_proof;
+import 'services/linked_inheritance_v2_item_import.dart'
+    as linked_inh_items;
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/private_content_pin_guard.dart' as private_content_guard;
 
@@ -3387,6 +3389,89 @@ class VaultAIClient {
       ),
       submitProof: (body) => post(
         '/inheritance/old-link-v2/readback-proof', body,
+      ),
+      accessIsCurrent: () {
+        try {
+          checkAccess();
+          return true;
+        } catch (_) {
+          return false;
+        }
+      },
+    );
+  }
+
+  /// Copy only encrypted saved items after a verified old-link V2 readback.
+  /// The server checks the release, receipt, and source inventory on every
+  /// destination write; the client re-reads and decrypts every copied item.
+  Future<linked_inh_items.LinkedV2SavedItemImport>
+      importLinkedOldInheritanceV2SavedItems({
+    required String authToken,
+    required String beneficiaryVaultId,
+    required SecretKey beneficiaryMvk,
+    required linked_inh_release.ReleasedLinkedInheritanceV2 released,
+    required linked_inh_proof.LinkedReadbackReceipt readbackReceipt,
+    bool Function()? responseIsCurrent,
+  }) async {
+    const enabled = bool.fromEnvironment(
+      'VAULTAI_ENABLE_LINKED_INHERITANCE_ITEM_IMPORT',
+      defaultValue: false,
+    );
+    if (!enabled) {
+      throw StateError('Linked inheritance item import is unavailable');
+    }
+    void checkAccess() {
+      _requireSavedItemKey(beneficiaryMvk);
+      if (zk_mvk_store.ZkActiveMvk.currentVaultId() !=
+              beneficiaryVaultId ||
+          !identical(zk_mvk_store.ZkActiveMvk.current(), beneficiaryMvk) ||
+          responseIsCurrent?.call() == false) {
+        throw StateError('Beneficiary vault access changed');
+      }
+    }
+
+    Future<Map<String, dynamic>> request(
+      String method, Uri uri, [Map<String, dynamic>? body]
+    ) async {
+      checkAccess();
+      final transport = _sessionHttpWithGuard(checkAccess);
+      final response = method == 'POST'
+          ? await transport.post(
+              uri,
+              headers: _defaultHeaders(authToken: authToken, json: true),
+              body: jsonEncode(body ?? <String, dynamic>{}),
+            )
+          : await transport.get(
+              uri, headers: _defaultHeaders(authToken: authToken),
+            );
+      checkAccess();
+      if (response.statusCode != 200) {
+        _throwIfAuthExpired(response.statusCode, response.body);
+        _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        throw StateError('Inherited saved-item copy unavailable');
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Invalid inherited item response');
+      }
+      return decoded;
+    }
+
+    checkAccess();
+    return linked_inh_items.importLinkedV2SavedItems(
+      released: released,
+      readbackReceipt: readbackReceipt,
+      beneficiaryVaultId: beneficiaryVaultId,
+      beneficiaryMvk: beneficiaryMvk,
+      fetchExport: (id) => request(
+        'GET', Uri.parse('$baseUrl/inheritance/old-link-v2/$id/vault-items'),
+      ),
+      copyItem: (body) => request(
+        'POST', Uri.parse('$baseUrl/inheritance/old-link-v2/item-copy'), body,
+      ),
+      readbackCopies: (id, digest) => request(
+        'GET', Uri.parse('$baseUrl/inheritance/old-link-v2/$id/item-copies')
+            .replace(queryParameters: {'source_inventory_sha256': digest}),
       ),
       accessIsCurrent: () {
         try {
