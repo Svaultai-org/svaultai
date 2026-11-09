@@ -15,7 +15,7 @@ void main() {
     <int>[3, 0, ...List<int>.filled(48, 7)],
     <int>[4, 1, 0, ...List<int>.filled(48, 7)],
   ]) {
-    test('signed OPAQUE session cannot use legacy stats or security paths',
+    test('signed OPAQUE session uses PIN-free stats and blocks old security paths',
         () async {
       final sent = <http.Request>[];
       final authToken = token(wire);
@@ -28,11 +28,11 @@ void main() {
         }),
       );
 
-      await expectLater(
-        client.getVaultStats(
-            vaultName: 'Synthetic vault', pin: pin, authToken: authToken),
-        throwsStateError,
-      );
+      await client.getSessionVaultStats(authToken: authToken);
+      expect(sent, hasLength(1));
+      expect(sent.single.method, 'GET');
+      expect(sent.single.url.path, '/vault-stats/session');
+      expect(sent.single.body, isEmpty);
       await expectLater(
         client.analyzePasswords(
             authToken: authToken, vaultName: 'Synthetic vault', pin: pin),
@@ -43,11 +43,11 @@ void main() {
             vaultName: 'Synthetic vault', pin: pin, authToken: authToken),
         throwsStateError,
       );
-      expect(sent, isEmpty);
+      expect(sent, hasLength(1));
     });
   }
 
-  test('old session keeps its existing stats route during migration', () async {
+  test('old session reads stats without sending a PIN during migration', () async {
     final authToken = token(List<int>.filled(48, 7));
     st.SessionTermination.instance.bindSession(authToken);
     final sent = <http.Request>[];
@@ -59,9 +59,10 @@ void main() {
       }),
     );
 
-    await client.getVaultStats(
-        vaultName: 'Synthetic vault', pin: pin, authToken: authToken);
+    await client.getSessionVaultStats(authToken: authToken);
     expect(sent, hasLength(1));
-    expect(sent.single.url.path, '/vault-stats');
+    expect(sent.single.method, 'GET');
+    expect(sent.single.url.path, '/vault-stats/session');
+    expect(sent.single.body, isEmpty);
   });
 }

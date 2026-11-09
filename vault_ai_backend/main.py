@@ -11906,6 +11906,16 @@ async def zk_vault_stats_endpoint(
     return _collect_vault_stats(principal["vault_id"], require_zk=True)
 
 
+@app.get("/vault-stats/session")
+async def session_vault_stats_endpoint(
+    principal=Depends(verify_trusted_device),
+):
+    # Existing trusted legacy sessions need storage counts while they upgrade.
+    # The bearer and trusted-device check already authorize this aggregate
+    # read; asking for the vault PIN here only exposes it to the server.
+    return _collect_vault_stats(principal["vault_id"])
+
+
 @app.post("/vault-name-available")
 @limiter.limit("10/minute")
 async def check_vault_name_available(

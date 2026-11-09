@@ -141,11 +141,6 @@ void main() {
             pin: pin,
             authToken: token,
           ),
-      'vault stats': () async => client.getVaultStats(
-            vaultName: 'Private name',
-            pin: pin,
-            authToken: token,
-          ),
       'file download': () async => client.downloadVaultFile(
             vaultName: 'Private name',
             fileId: 'file',

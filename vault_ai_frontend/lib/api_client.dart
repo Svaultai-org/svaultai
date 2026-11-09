@@ -5616,26 +5616,13 @@ class VaultAIClient {
     }
   }
 
-  Future<Map<String, dynamic>> getVaultStats({
-    required String vaultName,
-    required String pin,
+  Future<Map<String, dynamic>> getSessionVaultStats({
     required String authToken,
   }) async {
-    if (kPrivateOnlyTransportRejectPin ||
-        _hasSignedOpaqueSessionShape(authToken)) {
-      throw StateError('Use private vault stats for this vault.');
-    }
-    final uri = Uri.parse('$baseUrl/vault-stats');
-
-    final response = await _sessionHttp.post(
-      uri,
-      headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode({
-        'vault_name': '',
-        'pin': pin,
-      }),
+    final response = await _sessionHttp.get(
+      Uri.parse('$baseUrl/vault-stats/session'),
+      headers: _defaultHeaders(authToken: authToken),
     );
-
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -5646,12 +5633,10 @@ class VaultAIClient {
         responseBody: response.body,
       ));
     }
-
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) {
       throw Exception('Invalid vault stats response format');
     }
-
     return decoded;
   }
 

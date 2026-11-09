@@ -3470,12 +3470,7 @@ class AppState extends ChangeNotifier {
       if (vaultHandle != null && vaultHandle!.isNotEmpty) {
         stats = await _API.getZkVaultStats(authToken: token);
       } else {
-        final pin = await _VaultCrypto.currentPinOrThrow();
-        stats = await _API.getVaultStats(
-          vaultName: currentVaultName,
-          pin: pin,
-          authToken: token,
-        );
+        stats = await _API.getSessionVaultStats(authToken: token);
       }
       applyBackendStats(stats);
     } catch (_) {}
@@ -3799,17 +3794,9 @@ class _API {
     required String authToken,
   }) => _client.getZkVaultStats(authToken: authToken);
 
-  static Future<Map<String, dynamic>> getVaultStats({
-    required String vaultName,
-    required String pin,
+  static Future<Map<String, dynamic>> getSessionVaultStats({
     required String authToken,
-  }) async {
-    return _client.getVaultStats(
-      vaultName: vaultName,
-      pin: pin,
-      authToken: authToken,
-    );
-  }
+  }) => _client.getSessionVaultStats(authToken: authToken);
 
   static Future<Map<String, dynamic>> getVaultMeta({
     required String vaultName,
