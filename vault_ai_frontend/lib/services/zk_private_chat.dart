@@ -33,6 +33,9 @@ class ZkLocalChatRecord {
   final String? mimeType;
   final ZkLocalMediaKind mediaKind;
   final int? sizeBytes;
+  /// Coarse colors observed from locally decrypted photo pixels. This is
+  /// never evidence of a person, garment, object, or scene.
+  final Set<String> visualColors;
 
   /// The file card must use the owner-proof legacy reader, never V2 download.
   final bool legacyProofRequired;
@@ -45,6 +48,7 @@ class ZkLocalChatRecord {
     this.mimeType,
     this.mediaKind = ZkLocalMediaKind.other,
     this.sizeBytes,
+    this.visualColors = const <String>{},
     this.legacyProofRequired = false,
   });
 }
@@ -54,12 +58,14 @@ class ZkLocalChatResult {
   final List<ZkLocalChatRecord> matches;
   final ZkLocalChatRecord? selection;
   final ZkLocalChatAction action;
+  final bool colorOnlyEvidence;
 
   const ZkLocalChatResult(
     this.disposition, {
     this.matches = const [],
     this.selection,
     this.action = ZkLocalChatAction.none,
+    this.colorOnlyEvidence = false,
   });
 
   bool get maySendToGeneralAi => disposition == ZkLocalChatDisposition.general;
@@ -342,17 +348,20 @@ class ZkLocalChatRouter {
       if (mediaKind != null && record.mediaKind != mediaKind) continue;
       final titleTerms = _terms(record.title);
       final contentTerms = _terms(record.searchText);
+      final visualTerms = record.visualColors;
       // A photo/video/audio request can describe several attributes. One
       // matching color or place is not evidence that this is the requested
       // media. Require every indexed attribute before showing an exact card.
       if (mediaKind != null &&
           queryTerms.isNotEmpty &&
-          !(titleTerms.union(contentTerms).containsAll(queryTerms))) {
+          !(titleTerms.union(contentTerms).union(visualTerms)
+              .containsAll(queryTerms))) {
         continue;
       }
       final titleScore = titleTerms.intersection(queryTerms).length;
       final contentScore = contentTerms.intersection(queryTerms).length;
-      final score = titleScore * 4 + contentScore * 2;
+      final visualScore = visualTerms.intersection(queryTerms).length;
+      final score = titleScore * 4 + contentScore * 2 + visualScore;
       if (score > 0 || (queryTerms.isEmpty && mediaKind != null)) {
         scored.add((record, score));
       }
@@ -377,6 +386,10 @@ class ZkLocalChatRouter {
       ZkLocalChatDisposition.found,
       matches: top,
       selection: top.single,
+      colorOnlyEvidence: mediaKind == ZkLocalMediaKind.photo &&
+          top.single.visualColors.intersection(queryTerms).isNotEmpty &&
+          _terms(top.single.title).intersection(queryTerms).isEmpty &&
+          _terms(top.single.searchText).intersection(queryTerms).isEmpty,
     );
   }
 
