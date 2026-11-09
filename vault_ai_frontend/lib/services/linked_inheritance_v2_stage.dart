@@ -38,6 +38,7 @@ Future<StagedLinkedInheritanceV2> stageLinkedOldInheritanceV2({
   required int linkId,
   required String ownerVaultId,
   required SecretKey ownerMvk,
+  SecretKey? ownerLegacyKey,
   required String confirmedBeneficiaryFingerprint,
   required String zkProofToken,
   int? expectedStageRevision,
@@ -79,6 +80,7 @@ Future<StagedLinkedInheritanceV2> stageLinkedOldInheritanceV2({
     beneficiaryLinkId: linkId,
     ownerVaultId: ownerVaultId,
     ownerMvk: ownerMvk,
+    ownerLegacyKey: ownerLegacyKey,
     beneficiaryPublicKey: publicKey,
   );
   checkAccess();

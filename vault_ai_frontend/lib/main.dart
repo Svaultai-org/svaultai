@@ -12433,11 +12433,31 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         await _zkActionProof(app, token, firstPin),
       );
       if (!current()) throw StateError('Owner vault access changed');
+      // Keep the older content key entirely on the owner device. The V2
+      // inheritance envelope encrypts it to the beneficiary's public key
+      // beside the MVK; neither the PIN nor either key enters the request.
+      final meta = await client.getVaultMeta(
+        vaultName: app.vaultName ?? '', authToken: token,
+      );
+      if (!current() || meta['vault_id'] != vaultId ||
+          meta['pin_salt'] is! String ||
+          meta['kdf_iterations'] is! int ||
+          (meta['kdf_iterations'] as int) < 100000 ||
+          (meta['kdf_iterations'] as int) > 2000000) {
+        throw StateError('Owner legacy key metadata changed');
+      }
+      final ownerLegacyKey = await _deriveVaultPbkdf2Key(
+        pin: firstPin,
+        pinSaltBase64: meta['pin_salt'] as String,
+        iterations: meta['kdf_iterations'] as int,
+      );
+      if (!current()) throw StateError('Owner vault access changed');
       final staged = await client.stageLinkedOldInheritanceV2(
         authToken: token,
         linkId: linkId,
         ownerVaultId: vaultId,
         ownerMvk: mvk,
+        ownerLegacyKey: ownerLegacyKey,
         confirmedBeneficiaryFingerprint: fingerprint,
         zkProofToken: stageProof,
         responseIsCurrent: current,

@@ -31,6 +31,48 @@ void main() {
     expect(recovered.ownerVaultId, 'synthetic-owner-vault');
     expect(
         await recovered.ownerMvk.extractBytes(), await ownerMvk.extractBytes());
+    expect(recovered.ownerLegacyKey, isNull);
+  });
+
+  test('old-link envelope carries a separate source key only inside ciphertext',
+      () async {
+    final beneficiary = await X25519().newKeyPair();
+    final publicKey = await beneficiary.extractPublicKey();
+    final ownerMvk = SecretKey(List<int>.filled(32, 27));
+    final ownerLegacyKey = SecretKey(List<int>.filled(32, 61));
+    final envelope = await encryptInheritanceMvk(
+      beneficiaryLinkId: 93,
+      ownerVaultId: 'synthetic-old-owner',
+      ownerMvk: ownerMvk,
+      ownerLegacyKey: ownerLegacyKey,
+      beneficiaryPublicKey: Uint8List.fromList(publicKey.bytes),
+    );
+    final body = envelope.toRequestBody(93);
+    final wire = jsonEncode(body);
+    expect(body.keys, isNot(contains('pin')));
+    expect(body.keys, isNot(contains('owner_legacy_key')));
+    expect(wire, isNot(contains(base64Url.encode(
+      await ownerLegacyKey.extractBytes(),
+    ).replaceAll('=', ''))));
+    final recovered = await decryptInheritanceMvk(
+      expectedLinkId: 93,
+      beneficiaryPrivateKey: SecretKey(
+        await beneficiary.extractPrivateKeyBytes(),
+      ),
+      rawPackage: body,
+    );
+    expect(await recovered.ownerLegacyKey!.extractBytes(),
+        await ownerLegacyKey.extractBytes());
+    await expectLater(
+      encryptInheritanceMvk(
+        beneficiaryLinkId: 93,
+        ownerVaultId: 'synthetic-old-owner',
+        ownerMvk: ownerMvk,
+        ownerLegacyKey: SecretKey([1, 2, 3]),
+        beneficiaryPublicKey: Uint8List.fromList(publicKey.bytes),
+      ),
+      throwsStateError,
+    );
   });
 
   test('wrong beneficiary, changed link and tampered envelope fail closed',

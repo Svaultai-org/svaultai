@@ -10,6 +10,7 @@ void main() {
   test('owner stages exact MVK package without changing the old link',
       () async {
     final ownerMvk = SecretKey(List<int>.filled(32, 29));
+    final ownerLegacyKey = SecretKey(List<int>.filled(32, 53));
     final beneficiaryPair = await X25519().newKeyPair();
     final beneficiaryPublic = await beneficiaryPair.extractPublicKey();
     final beneficiaryPrivate =
@@ -24,6 +25,7 @@ void main() {
       linkId: 57,
       ownerVaultId: 'synthetic-owner',
       ownerMvk: ownerMvk,
+      ownerLegacyKey: ownerLegacyKey,
       confirmedBeneficiaryFingerprint: fingerprint,
       zkProofToken: 'synthetic-one-use-proof',
       fetchPubkey: (_) async {
@@ -72,6 +74,8 @@ void main() {
     expect(decrypted.ownerVaultId, 'synthetic-owner');
     expect(
         await decrypted.ownerMvk.extractBytes(), await ownerMvk.extractBytes());
+    expect(await decrypted.ownerLegacyKey!.extractBytes(),
+        await ownerLegacyKey.extractBytes());
   });
 
   test('wrong fingerprint aborts before any staging request', () async {

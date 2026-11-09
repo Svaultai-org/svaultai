@@ -85,11 +85,13 @@ class DecryptedInheritanceMvk {
   final int beneficiaryLinkId;
   final String ownerVaultId;
   final SecretKey ownerMvk;
+  final SecretKey? ownerLegacyKey;
 
   const DecryptedInheritanceMvk({
     required this.beneficiaryLinkId,
     required this.ownerVaultId,
     required this.ownerMvk,
+    this.ownerLegacyKey,
   });
 }
 
@@ -97,6 +99,7 @@ Future<InheritanceMvkEnvelope> encryptInheritanceMvk({
   required int beneficiaryLinkId,
   required String ownerVaultId,
   required SecretKey ownerMvk,
+  SecretKey? ownerLegacyKey,
   required Uint8List beneficiaryPublicKey,
   Random? randomForTest,
 }) async {
@@ -109,6 +112,10 @@ Future<InheritanceMvkEnvelope> encryptInheritanceMvk({
   if (mvkBytes.length != 32) {
     throw StateError('Owner private vault key is unavailable');
   }
+  final legacyBytes = await ownerLegacyKey?.extractBytes();
+  if (legacyBytes != null && legacyBytes.length != 32) {
+    throw StateError('Owner legacy content key is unavailable');
+  }
   final random = randomForTest ?? Random.secure();
   final cek = _randomBytes(random, 32);
   final payloadNonce = _randomBytes(random, 12);
@@ -117,6 +124,7 @@ Future<InheritanceMvkEnvelope> encryptInheritanceMvk({
     'beneficiary_link_id': beneficiaryLinkId,
     'owner_vault_id': ownerVaultId,
     'mvk': _b64(mvkBytes),
+    if (legacyBytes != null) 'owner_legacy_key': _b64(legacyBytes),
   }));
   final payloadBox = await _aes.encrypt(
     plain,
@@ -210,10 +218,17 @@ Future<DecryptedInheritanceMvk> decryptInheritanceMvk({
   if (mvk.length != 32) {
     throw const FormatException('Invalid inherited vault key');
   }
+  final legacy = decoded['owner_legacy_key'] == null
+      ? null
+      : _decode(decoded['owner_legacy_key']);
+  if (legacy != null && legacy.length != 32) {
+    throw const FormatException('Invalid inherited legacy content key');
+  }
   return DecryptedInheritanceMvk(
     beneficiaryLinkId: expectedLinkId,
     ownerVaultId: decoded['owner_vault_id'] as String,
     ownerMvk: SecretKey(mvk),
+    ownerLegacyKey: legacy == null ? null : SecretKey(legacy),
   );
 }
 
