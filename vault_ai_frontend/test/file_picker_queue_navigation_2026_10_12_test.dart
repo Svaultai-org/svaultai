@@ -617,9 +617,13 @@ void main() {
           kEnableNewFileV2Upload),
       variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
-  testWidgets('unoffered file-create bearer retains the older single upload',
+  testWidgets('signed client without create offer or private chat uses legacy upload',
       (tester) async {
     await _withDashboard(tester, (app, picker, requests) async {
+      expect(kSignedFileCreateClientEnabled, isTrue);
+      expect(kEnableZkPrivateChat, isFalse);
+      expect(signedFileCreateOfferedForToken(app.sessionToken!), isFalse);
+      expect(signedPrivateChatOfferedForToken(app.sessionToken!), isFalse);
       picker.action = () async => _selected();
       await _createFile(tester);
       expect(
@@ -637,6 +641,8 @@ void main() {
       expect(requests, contains('POST /upload-file'));
       expect(requests, isNot(contains('POST /vault/file-v2/manifest')));
       expect(requests, isNot(contains('POST /chat')));
+      expect(find.textContaining('Private file upload is unavailable'),
+          findsNothing);
     }, respond: (request) async {
       final path = request.url.path;
       if (path == '/upload-file') {
@@ -663,6 +669,33 @@ void main() {
     });
   },
       skip: !(kSignedFileCreateClientEnabled &&
+          !kEnableZkPrivateChat &&
+          kEnableFileV2UiRead &&
+          kEnableNewFileV2Upload),
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('unoffered create remains local when private chat is enabled',
+      (tester) async {
+    await _withDashboard(tester, (app, picker, requests) async {
+      expect(signedFileCreateOfferedForToken(app.sessionToken!), isFalse);
+      picker.action = () async => _selected();
+      await _createFile(tester);
+      final beforeSend = List<String>.of(requests);
+      final send = tester.widget<InkWell>(find.descendant(
+        of: find.byKey(const Key('composer_send_button')),
+        matching: find.byType(InkWell),
+      ));
+      send.onTap!();
+      await tester.pumpAndSettle();
+      expect(find.text('synthetic-file.txt'), findsOneWidget);
+      expect(find.textContaining('Private file upload is unavailable'),
+          findsWidgets);
+      expect(requests, beforeSend,
+          reason: 'private chat must not fall through to a PIN or AI route');
+    });
+  },
+      skip: !(kSignedFileCreateClientEnabled &&
+          kEnableZkPrivateChat &&
           kEnableFileV2UiRead &&
           kEnableNewFileV2Upload),
       variant: TargetPlatformVariant.only(TargetPlatform.iOS));

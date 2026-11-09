@@ -22196,6 +22196,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     if (kSignedFileCreateClientEnabled &&
         !signedFileCreateOfferedForToken(token)) {
+      // This method is reached only through private chat. With private chat
+      // disabled, an unoffered bearer takes the normal legacy upload path in
+      // _sendOnce. Do not redirect a private-chat attachment into general AI.
       _appendAssistantMessage(
         'Private file upload is unavailable in this session.',
       );
