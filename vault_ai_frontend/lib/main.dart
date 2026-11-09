@@ -5677,16 +5677,26 @@ WalletV2ActiveClient? _walletV2ClientFor(AppState app) {
   final vaultId = app.vaultId;
   final handle = app.vaultHandle;
   final epoch = app._sessionEpoch;
+  final foregroundEpoch = app._sessionProbeEpoch;
+  final terminationGeneration = st.SessionTermination.instance.generation;
   final mvk = zk_mvk_store.ZkActiveMvk.current();
   final deviceId = apiClientDeviceId();
-  if (!app.unlocked || token == null || vaultId == null ||
+  if (!app.authed || !app.unlocked || !app._sessionForeground ||
+      app.sessionVerificationBlocked ||
+      st.SessionTermination.instance.isTerminated ||
+      token == null || vaultId == null ||
       handle == null || handle.isEmpty || mvk == null ||
       deviceId == null || deviceId.isEmpty ||
       zk_mvk_store.ZkActiveMvk.currentVaultId() != vaultId ||
       zk_mvk_store.ZkActiveMvk.currentVaultHandle() != handle) {
     return null;
   }
-  bool current() => app.unlocked && app._isCurrentSession(token, epoch) &&
+  bool current() => app.authed && app.unlocked &&
+      app._sessionForeground && !app.sessionVerificationBlocked &&
+      app._sessionProbeEpoch == foregroundEpoch &&
+      st.SessionTermination.instance.generation == terminationGeneration &&
+      !st.SessionTermination.instance.isTerminated &&
+      app._isCurrentSession(token, epoch) &&
       app.vaultId == vaultId && app.vaultHandle == handle &&
       apiClientDeviceId() == deviceId &&
       identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&

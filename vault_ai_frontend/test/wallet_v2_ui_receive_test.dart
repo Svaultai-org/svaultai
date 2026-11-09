@@ -33,6 +33,32 @@ class _ReceiveOnlyClient extends VaultAIClient {
   }
 }
 
+class _StaleAfterReadWallet extends WalletV2ActiveClient {
+  _StaleAfterReadWallet({
+    required this.identity,
+    required this.expire,
+    required bool Function() current,
+  }) : super(
+          codec: WalletV2EnvelopeCodec(SecretKey(List<int>.filled(32, 6))),
+          accessIsCurrent: current,
+          get: (_) async => throw StateError('Unexpected wallet GET'),
+          post: (_, __) async => throw StateError('Unexpected wallet POST'),
+        );
+
+  final WalletV2Identity identity;
+  final void Function() expire;
+
+  @override
+  Future<WalletV2Identity?> findVerified(WalletV2AccountSlot slot) async =>
+      identity;
+
+  @override
+  Future<String> readSigningSecret(WalletV2Identity identity) async {
+    expire(); // The vault locks after the last awaited verification.
+    return 'synthetic-local-secret';
+  }
+}
+
 void main() {
   const recordId = 'synthetic-wallet-ui-record-1';
   const address = '0x0000000000000000000000000000000000000001';
@@ -180,6 +206,35 @@ void main() {
     )));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('eth_receive_panel_error')), findsOneWidget);
+    expect(find.byKey(const Key('eth_receive_panel_ready_state')),
+        findsNothing);
+  });
+
+  testWidgets('a vault lock after V2 readback cannot publish receive address',
+      (tester) async {
+    var current = true;
+    final identity = WalletV2Identity(
+      recordId: recordId, chain: 'evm', network: 'ethereum_sepolia',
+      asset: 'ETH', publicAddress: address, label: label,
+    );
+    final wallet = _StaleAfterReadWallet(
+      identity: identity,
+      current: () => current,
+      expire: () => current = false,
+    );
+    final api = _ReceiveOnlyClient({'wallet_engine': 'no_account'});
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body:
+      CryptoWalletEngineReceivePanel(
+        authToken: 'synthetic-token', client: api,
+        walletV2: wallet,
+        encryptForVault: (_) async => throw StateError('Legacy encryption'),
+        isVaultKeyAvailable: () => current,
+      ),
+    )));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(current, isFalse);
+    expect(find.text(address), findsNothing);
     expect(find.byKey(const Key('eth_receive_panel_ready_state')),
         findsNothing);
   });

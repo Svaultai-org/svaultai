@@ -208,7 +208,8 @@ class _CryptoWalletEngineReceivePanelState
           };
         }
       }
-      if (!mounted) return;
+      if (!mounted ||
+          (walletV2 != null && !walletV2.accessIsCurrent())) return;
       setState(() {
         _state = resolved;
         _loading = false;
