@@ -205,6 +205,54 @@ void main() {
   );
 
   test(
+    'direct API requests use the checked transport',
+    () async {
+      final sent = <http.Request>[];
+      final client = MockClient((request) async {
+        sent.add(request);
+        return http.Response('{}', 200);
+      });
+      final uri = origin.resolve('/vault/ciphertext/beneficiary-links');
+      final headers = <String, String>{'Content-Type': 'application/json'};
+      await sendPinCheckedHttp('GET', uri, headers: headers, client: client);
+      await sendPinCheckedHttp('POST', uri,
+          headers: headers,
+          body: jsonEncode({'ciphertext': 'synthetic'}),
+          client: client);
+      await sendPinCheckedHttp('PUT', uri,
+          headers: headers,
+          body: jsonEncode({'ciphertext': 'synthetic'}),
+          client: client);
+      expect(sent.map((request) => request.method), ['GET', 'POST', 'PUT']);
+      expect(
+          sent.every((request) => !request.body.contains(sentinelPin)), isTrue);
+    },
+  );
+
+  test(
+    'strict direct API request rejects a PIN before transport',
+    () async {
+      final sent = <http.Request>[];
+      final client = MockClient((request) async {
+        sent.add(request);
+        return http.Response('{}', 200);
+      });
+      expect(
+        () => sendPinCheckedHttp(
+          'POST',
+          origin.resolve('/vault/ciphertext/beneficiary-links'),
+          headers: <String, String>{'Content-Type': 'application/json'},
+          body: jsonEncode({'pin': sentinelPin}),
+          client: client,
+        ),
+        throwsStateError,
+      );
+      expect(sent, isEmpty);
+    },
+    skip: !kEnableZkPrivateOnlyUnlock,
+  );
+
+  test(
     'unbound legacy session retains its existing route',
     () {
       PrivateZkPinTransportSession.clear();
