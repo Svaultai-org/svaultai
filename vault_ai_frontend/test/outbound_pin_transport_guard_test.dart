@@ -185,6 +185,14 @@ void main() {
         throwsStateError,
       );
       expect(
+        () => assertOutboundPinFreeRequest(
+          origin,
+          const {},
+          body: jsonEncode({'prompt': '{"pin":"example JSON field"}'}),
+        ),
+        returnsNormally,
+      );
+      expect(
         () => assertOutboundPinFreeBaseRequest(
           http.StreamedRequest('POST', origin),
         ),

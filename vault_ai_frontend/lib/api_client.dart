@@ -186,6 +186,19 @@ bool _isRawPinFieldName(Object? name) {
 bool _containsRawPinField(Object? value) {
   if (value is Map) {
     for (final entry in value.entries) {
+      // A multipart protocol metadata field may itself contain JSON. Other
+      // string values can be user content (for example a chat prompt about a
+      // JSON document) and must not be mistaken for a request PIN field.
+      if (entry.key.toString().toLowerCase() == 'metadata' &&
+          entry.value is String) {
+        try {
+          if (_containsRawPinField(jsonDecode(entry.value as String))) {
+            return true;
+          }
+        } on FormatException {
+          // Treat a non-JSON metadata value as ordinary text.
+        }
+      }
       if (_isRawPinFieldName(entry.key) ||
           _containsRawPinField(entry.value)) {
         return true;
@@ -194,18 +207,6 @@ bool _containsRawPinField(Object? value) {
   } else if (value is Iterable) {
     for (final entry in value) {
       if (_containsRawPinField(entry)) return true;
-    }
-  } else if (value is String) {
-    // Multipart metadata can contain serialized JSON in an innocent-looking
-    // field such as `metadata`. Inspect that structure too, while leaving
-    // the actual uploaded file bytes outside this protocol-field check.
-    final trimmed = value.trimLeft();
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-      try {
-        return _containsRawPinField(jsonDecode(value));
-      } on FormatException {
-        return false;
-      }
     }
   }
   return false;
