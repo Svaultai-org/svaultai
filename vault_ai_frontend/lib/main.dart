@@ -13001,7 +13001,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required String pairingState,
   }) async {
     if (!kEnableLinkedOldInheritanceBeneficiaryUi ||
-        pairingState != 'released') return;
+        pairingState != 'released') {
+      return;
+    }
     final app = context.read<AppState>();
     final token = app.sessionToken;
     final vaultId = app.vaultId;
