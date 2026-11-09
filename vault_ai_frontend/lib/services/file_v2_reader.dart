@@ -325,6 +325,31 @@ class FileV2Reader {
     }
   }
 
+  /// Decrypt one validated chunk without allocating a whole-file buffer.
+  /// The caller must keep [manifest] from a successful [readManifest] call.
+  Future<Uint8List> readChunk(FileV2Manifest manifest, int index) async {
+    if (index < 0 ||
+        index >= manifest.chunkCount ||
+        manifest.chunkSize <= 0 ||
+        manifest.totalBytes < 0 ||
+        manifest.totalBytes > maxDownloadBytes ||
+        manifest.chunkCount !=
+            (manifest.totalBytes + manifest.chunkSize - 1) ~/
+                manifest.chunkSize) {
+      throw const FormatException('Invalid V2 file chunk request');
+    }
+    final key = await VaultKeyHierarchy(mvk).fileContentKey();
+    final plain = await _readChunk(manifest.fileId, index, key);
+    final expectedLength = index == manifest.chunkCount - 1
+        ? manifest.totalBytes - index * manifest.chunkSize
+        : manifest.chunkSize;
+    if (plain.length != expectedLength) {
+      plain.fillRange(0, plain.length, 0);
+      throw const FormatException('V2 file chunk length mismatch');
+    }
+    return plain;
+  }
+
   /// Recheck a staged upload without allocating a second full-file buffer.
   /// This is especially important for large files that are already resident
   /// in the upload queue's source buffer.

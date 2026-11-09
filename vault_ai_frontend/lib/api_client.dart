@@ -28,6 +28,7 @@ import 'services/zk_private_chat.dart' as zk_private_chat;
 import 'services/file_v2_reader.dart';
 import 'services/file_v2_renamer.dart';
 import 'services/file_v2_writer.dart';
+import 'services/inheritance_v2_file_stream_transfer.dart';
 import 'services/private_content_pin_guard.dart' as private_content_guard;
 
 // Only builds with the MVK V2 file reader advertise this capability. The
@@ -4901,6 +4902,105 @@ class VaultAIClient {
         }
         return decoded;
       },
+    );
+  }
+
+  /// Transfer a released owner's V2 file one chunk at a time. The owner key
+  /// and clear bytes stay on this device; only beneficiary-MVK ciphertext is
+  /// sent to the existing V2 upload routes. The server's inheritance export
+  /// gate is separately default-off, so this is not a user-visible flow yet.
+  Future<Map<String, dynamic>> transferInheritedV2File({
+    required String authToken,
+    required int linkId,
+    required String sourceFileId,
+    required SecretKey beneficiaryPrivateKey,
+    required SecretKey beneficiaryMvk,
+    required Map<String, dynamic> releasedPackage,
+    bool Function()? responseIsCurrent,
+    void Function(double progress)? onProgress,
+  }) async {
+    void checkAccess() {
+      _requireSavedItemKey(beneficiaryMvk);
+      if (responseIsCurrent?.call() == false) {
+        throw StateError('Private inheritance access changed');
+      }
+    }
+
+    Future<Map<String, dynamic>?> request(
+      String method,
+      String path,
+      Map<String, Object>? body, {
+      required bool allowMissing,
+    }) async {
+      checkAccess();
+      final uri = Uri.parse('$baseUrl$path');
+      final headers = _defaultHeaders(
+        authToken: authToken,
+        json: method != 'GET',
+      );
+      final transport = _sessionHttpWithGuard(checkAccess);
+      final response = switch (method) {
+        'GET' => await transport.get(uri, headers: headers),
+        'POST' => await transport.post(
+            uri,
+            headers: headers,
+            body: jsonEncode(body),
+          ),
+        'PUT' => await transport.put(
+            uri,
+            headers: headers,
+            body: jsonEncode(body),
+          ),
+        _ => throw const FormatException('Invalid private transfer request'),
+      };
+      checkAccess();
+      if (allowMissing && response.statusCode == 404) return null;
+      if (response.statusCode == 413) {
+        throw _parseStorageLimitException(response.body);
+      }
+      if (response.statusCode == 429) {
+        throw _rateLimitedFromBody(response.body);
+      }
+      if (response.statusCode != 200) {
+        _throwIfAuthExpired(response.statusCode, response.body);
+        _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        throw FileV2ReadException(response.statusCode);
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Invalid private transfer response');
+      }
+      return decoded;
+    }
+
+    checkAccess();
+    return transferReleasedV2FileStreamed(
+      linkId: linkId,
+      sourceFileId: sourceFileId,
+      beneficiaryPrivateKey: beneficiaryPrivateKey,
+      beneficiaryMvk: beneficiaryMvk,
+      releasedPackage: releasedPackage,
+      fetchSource: (path) async => (await request(
+        'GET',
+        path,
+        null,
+        allowMissing: false,
+      ))!,
+      requestTarget: (method, path, body) => request(
+        method,
+        path,
+        body,
+        allowMissing: method == 'GET',
+      ),
+      accessIsCurrent: () {
+        try {
+          checkAccess();
+          return true;
+        } catch (_) {
+          return false;
+        }
+      },
+      onProgress: onProgress,
     );
   }
 

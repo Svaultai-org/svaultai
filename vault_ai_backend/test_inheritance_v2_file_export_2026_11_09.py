@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from inheritance_protocol import ZK_BENEFICIARY_V2_MARKER
 from routes import inheritance_v2_file_export_routes as export
+from routes import file_v2_new_upload_routes as new_upload
 from security_headers import SecurityHeadersMiddleware
 
 
@@ -179,6 +180,45 @@ def test_revoked_link_blocks_following_chunk_request(ready):
     assert revoked.value.status_code == 404
     assert len(ready.queries) == 1
     assert "FOR SHARE OF BL, IC" in ready.queries[0][0]
+
+
+def test_inherited_publish_checks_release_and_source_in_same_transaction(ready):
+    payload = new_upload.PublishNewFile(
+        confirm=True,
+        inheritance_link_id=17,
+        inheritance_source_file_id=FILE_ID,
+    )
+    new_upload._require_inheritance_release_for_publish(
+        ready.cursor(), payload=payload,
+        beneficiary_vault_id=BENEFICIARY["vault_id"],
+    )
+    assert len(ready.queries) == 3
+    assert "FOR SHARE OF BL, IC" in ready.queries[0][0]
+    ready.queries.clear()
+    ready.link["pairing_state"] = "paired_no_credentials"
+    with pytest.raises(HTTPException) as revoked:
+        new_upload._require_inheritance_release_for_publish(
+            ready.cursor(), payload=payload,
+            beneficiary_vault_id=BENEFICIARY["vault_id"],
+        )
+    assert revoked.value.status_code == 404
+    assert len(ready.queries) == 1
+
+
+def test_inherited_publish_is_default_off(ready, monkeypatch):
+    monkeypatch.delenv(export.FLAG_NAME, raising=False)
+    with pytest.raises(HTTPException) as disabled:
+        new_upload._require_inheritance_release_for_publish(
+            ready.cursor(),
+            payload=new_upload.PublishNewFile(
+                confirm=True,
+                inheritance_link_id=17,
+                inheritance_source_file_id=FILE_ID,
+            ),
+            beneficiary_vault_id=BENEFICIARY["vault_id"],
+        )
+    assert disabled.value.status_code == 404
+    assert ready.queries == []
 
 
 def test_corrupt_or_missing_chunk_fails_closed(ready):

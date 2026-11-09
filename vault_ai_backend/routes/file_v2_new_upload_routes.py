@@ -31,6 +31,7 @@ from routes.file_v2_routes import (
 from subscription_entitlement import require_content_write
 from vault_core import MAX_VAULT_BYTES, get_db, is_vault_zk_adopted
 from routes.auth_zk_routes import consume_recent_zk_proof
+from routes import inheritance_v2_file_export_routes as inheritance_files
 
 
 router = APIRouter()
@@ -44,6 +45,10 @@ AES_GCM_FRAME_OVERHEAD = STAGING_GCM_OVERHEAD
 class PublishNewFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
     confirm: bool
+    inheritance_link_id: int | None = Field(default=None, ge=1)
+    inheritance_source_file_id: str | None = Field(
+        default=None, min_length=1, max_length=128,
+    )
 
 
 class DeleteNewFile(BaseModel):
@@ -119,6 +124,31 @@ def _account_quota(cur, account_id: str | None, vault_used: int) -> tuple[int, i
     return int(entitlement.effective_limit_bytes), used
 
 
+def _require_inheritance_release_for_publish(
+    cur, *, payload: PublishNewFile, beneficiary_vault_id: str,
+) -> None:
+    if payload.inheritance_link_id is None:
+        return
+    # This SELECT holds a share lock until the publish transaction commits.
+    # Owner revocation cannot slip between the final release check and making
+    # the beneficiary's encrypted copy visible.
+    inheritance_files._enabled()
+    if payload.inheritance_source_file_id is None:
+        raise HTTPException(400, detail="inheritance_source_required")
+    source_id = inheritance_files._file_id(
+        payload.inheritance_source_file_id,
+    )
+    owner = inheritance_files._released_owner(
+        cur,
+        link_id=payload.inheritance_link_id,
+        beneficiary_vault_id=beneficiary_vault_id,
+    )
+    inheritance_files._require_all_owner_files_ready(cur, owner)
+    inheritance_files._ready_file(
+        cur, owner_vault_id=owner, file_id=source_id,
+    )
+
+
 @router.post("/vault/file-v2/{file_id}/publish-new")
 def publish_new_file(
     file_id: str,
@@ -135,6 +165,11 @@ def publish_new_file(
     _file_id(file_id)
     if not payload.confirm:
         raise HTTPException(400, detail="file_v2_readback_confirmation_required")
+    if ((payload.inheritance_link_id is None) !=
+            (payload.inheritance_source_file_id is None)):
+        raise HTTPException(400, detail="inheritance_source_required")
+    if payload.inheritance_link_id is not None:
+        inheritance_files._enabled()
     vault_id = principal["vault_id"]
     if not is_vault_zk_adopted(vault_id):
         raise HTTPException(409, detail="zk_vault_required")
@@ -144,6 +179,9 @@ def publish_new_file(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
                     (vault_id, file_id))
+        _require_inheritance_release_for_publish(
+            cur, payload=payload, beneficiary_vault_id=vault_id,
+        )
         # Login takes the vault row lock before it revokes the current
         # session. Take that same lock before making a file visible, then
         # recheck the session: a login may have superseded it since the
