@@ -204,64 +204,119 @@ Future<DecryptedInheritanceMvk> decryptInheritanceMvk({
       rawPackage['beneficiary_link_id'] != expectedLinkId) {
     throw const FormatException('Inheritance package context mismatch');
   }
-  final sk = await beneficiaryPrivateKey.extractBytes();
-  if (sk.length != 32) {
-    throw const FormatException('Invalid beneficiary private key');
+  // Never mutate the caller's long-lived private key. The local seed copy,
+  // decrypted CEK/plaintext, and decoded source keys are wiped on all exits.
+  final sk = Uint8List.fromList(await beneficiaryPrivateKey.extractBytes());
+  SimpleKeyPair? keyPair;
+  SecretKey? shared;
+  SecretKey? wrapKey;
+  SecretKeyData? cekKey;
+  SecretKeyData? returnedMvk;
+  SecretKeyData? returnedLegacy;
+  Uint8List? cek;
+  Uint8List? clear;
+  Uint8List? mvk;
+  Uint8List? legacy;
+  var returned = false;
+  try {
+    if (sk.length != 32) {
+      throw const FormatException('Invalid beneficiary private key');
+    }
+    final eph = _decodeField(rawPackage, 'wrapping_ephemeral_pk', 32);
+    final wrappingNonce = _decodeField(rawPackage, 'wrapping_nonce', 12);
+    final wrapped = _decodeField(rawPackage, 'wrapped_key', 48);
+    final payloadNonce = _decodeField(rawPackage, 'payload_nonce', 12);
+    final encrypted = _decodeField(rawPackage, 'encrypted_payload', null);
+    if (encrypted.length < 32 || encrypted.length > 65536) {
+      throw const FormatException('Invalid encrypted inheritance payload');
+    }
+    final x25519 = X25519();
+    keyPair = await x25519.newKeyPairFromSeed(sk);
+    shared = await x25519.sharedSecretKey(
+      keyPair: keyPair,
+      remotePublicKey: SimplePublicKey(eph, type: KeyPairType.x25519),
+    );
+    wrapKey = await _hkdf.deriveKey(
+      secretKey: shared,
+      nonce: eph,
+      info: utf8.encode(_info),
+    );
+    final rawCek = await _aes.decrypt(
+      _box(wrapped, wrappingNonce),
+      secretKey: wrapKey,
+    );
+    cek = Uint8List.fromList(rawCek);
+    _wipeIfMutable(rawCek);
+    if (cek.length != 32) throw const FormatException('Invalid wrapped key');
+    cekKey = SecretKeyData(cek, overwriteWhenDestroyed: true);
+    final rawClear = await _aes.decrypt(
+      _box(encrypted, payloadNonce),
+      secretKey: cekKey,
+    );
+    clear = Uint8List.fromList(rawClear);
+    _wipeIfMutable(rawClear);
+    // JSON decoding creates immutable Dart strings that cannot be wiped.
+    // Their source byte buffers are cleared before this method returns.
+    final decoded = jsonDecode(utf8.decode(clear));
+    if (decoded is! Map ||
+        decoded['version'] != inheritanceMvkCryptoVersion ||
+        decoded['beneficiary_link_id'] != expectedLinkId ||
+        decoded['owner_vault_id'] is! String ||
+        (decoded['owner_vault_id'] as String).isEmpty ||
+        decoded.containsKey('pin') ||
+        decoded.containsKey('username')) {
+      throw const FormatException('Invalid inheritance key payload');
+    }
+    mvk = _decode(decoded['mvk']);
+    if (mvk.length != 32) {
+      throw const FormatException('Invalid inherited vault key');
+    }
+    if (decoded['owner_legacy_key'] != null) {
+      legacy = _decode(decoded['owner_legacy_key']);
+      if (legacy.length != 32) {
+        throw const FormatException('Invalid inherited legacy content key');
+      }
+    }
+    // Returned keys own distinct buffers; the decoded copies can be wiped.
+    returnedMvk = SecretKeyData(
+      Uint8List.fromList(mvk), overwriteWhenDestroyed: true,
+    );
+    if (legacy != null) {
+      returnedLegacy = SecretKeyData(
+        Uint8List.fromList(legacy), overwriteWhenDestroyed: true,
+      );
+    }
+    final result = DecryptedInheritanceMvk(
+      beneficiaryLinkId: expectedLinkId,
+      ownerVaultId: decoded['owner_vault_id'] as String,
+      ownerMvk: returnedMvk,
+      ownerLegacyKey: returnedLegacy,
+    );
+    returned = true;
+    return result;
+  } finally {
+    if (!returned) {
+      returnedMvk?.destroy();
+      returnedLegacy?.destroy();
+    }
+    sk.fillRange(0, sk.length, 0);
+    clear?.fillRange(0, clear.length, 0);
+    mvk?.fillRange(0, mvk.length, 0);
+    legacy?.fillRange(0, legacy.length, 0);
+    cekKey?.destroy();
+    cek?.fillRange(0, cek.length, 0);
+    wrapKey?.destroy();
+    shared?.destroy();
+    keyPair?.destroy();
   }
-  final eph = _decodeField(rawPackage, 'wrapping_ephemeral_pk', 32);
-  final wrappingNonce = _decodeField(rawPackage, 'wrapping_nonce', 12);
-  final wrapped = _decodeField(rawPackage, 'wrapped_key', 48);
-  final payloadNonce = _decodeField(rawPackage, 'payload_nonce', 12);
-  final encrypted = _decodeField(rawPackage, 'encrypted_payload', null);
-  if (encrypted.length < 32 || encrypted.length > 65536) {
-    throw const FormatException('Invalid encrypted inheritance payload');
+}
+
+void _wipeIfMutable(List<int> bytes) {
+  try {
+    bytes.fillRange(0, bytes.length, 0);
+  } on UnsupportedError {
+    // Some platform ciphers return immutable views. The owned copy is wiped.
   }
-  final x25519 = X25519();
-  final keyPair = await x25519.newKeyPairFromSeed(sk);
-  final shared = await x25519.sharedSecretKey(
-    keyPair: keyPair,
-    remotePublicKey: SimplePublicKey(eph, type: KeyPairType.x25519),
-  );
-  final wrapKey = await _hkdf.deriveKey(
-    secretKey: shared,
-    nonce: eph,
-    info: utf8.encode(_info),
-  );
-  final cek = await _aes.decrypt(
-    _box(wrapped, wrappingNonce),
-    secretKey: wrapKey,
-  );
-  if (cek.length != 32) throw const FormatException('Invalid wrapped key');
-  final clear = await _aes.decrypt(
-    _box(encrypted, payloadNonce),
-    secretKey: SecretKey(cek),
-  );
-  final decoded = jsonDecode(utf8.decode(clear));
-  if (decoded is! Map ||
-      decoded['version'] != inheritanceMvkCryptoVersion ||
-      decoded['beneficiary_link_id'] != expectedLinkId ||
-      decoded['owner_vault_id'] is! String ||
-      (decoded['owner_vault_id'] as String).isEmpty ||
-      decoded.containsKey('pin') ||
-      decoded.containsKey('username')) {
-    throw const FormatException('Invalid inheritance key payload');
-  }
-  final mvk = _decode(decoded['mvk']);
-  if (mvk.length != 32) {
-    throw const FormatException('Invalid inherited vault key');
-  }
-  final legacy = decoded['owner_legacy_key'] == null
-      ? null
-      : _decode(decoded['owner_legacy_key']);
-  if (legacy != null && legacy.length != 32) {
-    throw const FormatException('Invalid inherited legacy content key');
-  }
-  return DecryptedInheritanceMvk(
-    beneficiaryLinkId: expectedLinkId,
-    ownerVaultId: decoded['owner_vault_id'] as String,
-    ownerMvk: SecretKey(mvk),
-    ownerLegacyKey: legacy == null ? null : SecretKey(legacy),
-  );
 }
 
 Uint8List _randomBytes(Random rng, int length) =>
@@ -276,15 +331,20 @@ Uint8List _decode(Object? value) {
     throw const FormatException('Invalid inheritance package field');
   }
   final decoded = base64Url.decode(value + '=' * ((4 - value.length % 4) % 4));
-  if (_b64(decoded) != value) {
-    throw const FormatException('Noncanonical inheritance package field');
+  try {
+    if (_b64(decoded) != value) {
+      throw const FormatException('Noncanonical inheritance package field');
+    }
+    return Uint8List.fromList(decoded);
+  } finally {
+    _wipeIfMutable(decoded);
   }
-  return Uint8List.fromList(decoded);
 }
 
 Uint8List _decodeField(Map<String, dynamic> package, String key, int? length) {
   final value = _decode(package[key]);
   if (length != null && value.length != length) {
+    value.fillRange(0, value.length, 0);
     throw const FormatException('Invalid inheritance package length');
   }
   return value;

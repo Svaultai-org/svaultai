@@ -10,6 +10,7 @@ void main() {
     final beneficiary = await X25519().newKeyPair();
     final publicKey = await beneficiary.extractPublicKey();
     final privateKey = await beneficiary.extractPrivateKeyBytes();
+    final beneficiaryPrivateKey = SecretKey(privateKey);
     final ownerMvk = SecretKey(List<int>.generate(32, (i) => i + 1));
     final envelope = await encryptInheritanceMvk(
       beneficiaryLinkId: 17,
@@ -25,19 +26,22 @@ void main() {
         isFalse);
     final recovered = await decryptInheritanceMvk(
       expectedLinkId: 17,
-      beneficiaryPrivateKey: SecretKey(privateKey),
+      beneficiaryPrivateKey: beneficiaryPrivateKey,
       rawPackage: body,
     );
     expect(recovered.ownerVaultId, 'synthetic-owner-vault');
     expect(
         await recovered.ownerMvk.extractBytes(), await ownerMvk.extractBytes());
     expect(recovered.ownerLegacyKey, isNull);
+    expect(await beneficiaryPrivateKey.extractBytes(), privateKey);
   });
 
   test('old-link envelope carries a separate source key only inside ciphertext',
       () async {
     final beneficiary = await X25519().newKeyPair();
     final publicKey = await beneficiary.extractPublicKey();
+    final privateBytes = await beneficiary.extractPrivateKeyBytes();
+    final beneficiaryPrivateKey = SecretKey(privateBytes);
     final ownerMvk = SecretKey(List<int>.filled(32, 27));
     final ownerLegacyKey = SecretKey([
       ...utf8.encode('123456'), ...List<int>.filled(26, 61),
@@ -59,13 +63,14 @@ void main() {
     ).replaceAll('=', ''))));
     final recovered = await decryptInheritanceMvk(
       expectedLinkId: 93,
-      beneficiaryPrivateKey: SecretKey(
-        await beneficiary.extractPrivateKeyBytes(),
-      ),
+      beneficiaryPrivateKey: beneficiaryPrivateKey,
       rawPackage: body,
     );
     expect(await recovered.ownerLegacyKey!.extractBytes(),
         await ownerLegacyKey.extractBytes());
+    expect(await recovered.ownerMvk.extractBytes(),
+        await ownerMvk.extractBytes());
+    expect(await beneficiaryPrivateKey.extractBytes(), privateBytes);
     await expectLater(
       encryptInheritanceMvk(
         beneficiaryLinkId: 93,
@@ -83,6 +88,7 @@ void main() {
     final beneficiary = await X25519().newKeyPair();
     final publicKey = await beneficiary.extractPublicKey();
     final privateKey = await beneficiary.extractPrivateKeyBytes();
+    final beneficiaryPrivateKey = SecretKey(privateKey);
     final wrongKey = await X25519().newKeyPair();
     final envelope = await encryptInheritanceMvk(
       beneficiaryLinkId: 17,
@@ -94,7 +100,7 @@ void main() {
     await expectLater(
       decryptInheritanceMvk(
         expectedLinkId: 18,
-        beneficiaryPrivateKey: SecretKey(privateKey),
+        beneficiaryPrivateKey: beneficiaryPrivateKey,
         rawPackage: body,
       ),
       throwsFormatException,
@@ -115,11 +121,12 @@ void main() {
     await expectLater(
       decryptInheritanceMvk(
         expectedLinkId: 17,
-        beneficiaryPrivateKey: SecretKey(privateKey),
+        beneficiaryPrivateKey: beneficiaryPrivateKey,
         rawPackage: tampered,
       ),
       throwsA(anything),
     );
+    expect(await beneficiaryPrivateKey.extractBytes(), privateKey);
   });
 
   test('independent beneficiary key fingerprint matches only full local key',
