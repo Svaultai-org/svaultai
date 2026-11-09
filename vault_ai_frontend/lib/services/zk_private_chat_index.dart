@@ -15,6 +15,7 @@ import 'vault_key_hierarchy.dart';
 import 'zk_private_chat.dart';
 
 typedef ZkPrivateChatGet = Future<Object?> Function(String path);
+typedef ZkPrivateLegacyFileInventory = Future<Map<String, dynamic>> Function();
 
 class ZkPrivateChatIndex {
   final List<ZkLocalChatRecord> savedItems;
@@ -34,6 +35,7 @@ class ZkPrivateChatIndex {
 
 class ZkPrivateChatIndexLoader {
   static const int maxSavedItems = 500;
+  static const int maxLegacyFileRows = 500;
   static const int maxFiles = 100;
   static const int maxTextFiles = 16;
   static const int maxTextFileBytes = 128 * 1024;
@@ -49,6 +51,9 @@ class ZkPrivateChatIndexLoader {
   final int extractedTextByteLimit;
   final int totalTextByteLimit;
   final bool allowPartialFileListing;
+  /// Optional session-only metadata inventory. The caller must supply it only
+  /// when this bearer can open older files through the proof-only reader.
+  final ZkPrivateLegacyFileInventory? legacyFileInventory;
 
   const ZkPrivateChatIndexLoader({
     required this.mvk,
@@ -61,6 +66,7 @@ class ZkPrivateChatIndexLoader {
     this.extractedTextByteLimit = maxTotalTextBytes,
     this.totalTextByteLimit = maxTotalTextBytes,
     this.allowPartialFileListing = false,
+    this.legacyFileInventory,
   });
 
   void _checkAccess() {
@@ -249,6 +255,64 @@ class ZkPrivateChatIndexLoader {
         );
       } catch (_) {
         incomplete = true;
+      }
+    }
+    if (legacyFileInventory != null) {
+      _checkAccess();
+      final inventory = await legacyFileInventory!();
+      _checkAccess();
+      final rows = inventory['files'];
+      if (rows is! List) {
+        throw const FormatException('Older private file index is unavailable');
+      }
+      if (inventory['truncated'] == true) incomplete = true;
+      if (rows.length > maxLegacyFileRows) incomplete = true;
+      final seenIds = files.map((file) => file.id).toSet();
+      for (final raw in rows.take(maxLegacyFileRows)) {
+        _checkAccess();
+        if (raw is! Map<String, dynamic>) {
+          incomplete = true;
+          continue;
+        }
+        final id = raw['id'];
+        if (id is! String || id.isEmpty || id.length > 128 ||
+            raw['upload_status'] != 'complete') {
+          incomplete = true;
+          continue;
+        }
+        if (seenIds.contains(id) || raw['v2_ready'] == true ||
+            raw['v2_retired'] == true) continue;
+        final name = raw['saved_name'] is String &&
+                (raw['saved_name'] as String).trim().isNotEmpty
+            ? (raw['saved_name'] as String).trim()
+            : raw['file_name'] is String
+                ? (raw['file_name'] as String).trim()
+                : '';
+        final mime = raw['content_type'];
+        final mode = raw['storage_mode'];
+        if (name.isEmpty || name.length > 255 ||
+            (mime != null && (mime is! String || mime.length > 255)) ||
+            (mode != 'inline' && mode != 'chunked' && mode != 'chunks')) {
+          incomplete = true;
+          continue;
+        }
+        final kind = _mediaKind(mime as String?, name);
+        if (kind != ZkLocalMediaKind.photo &&
+            kind != ZkLocalMediaKind.video &&
+            kind != ZkLocalMediaKind.audio) continue;
+        if (files.length >= fileLimit) {
+          incomplete = true;
+          break;
+        }
+        files.add(ZkLocalChatRecord(
+          kind: ZkLocalChatKind.file,
+          id: id,
+          title: name,
+          mimeType: mime,
+          mediaKind: kind,
+          legacyProofRequired: true,
+        ));
+        seenIds.add(id);
       }
     }
     _checkAccess();

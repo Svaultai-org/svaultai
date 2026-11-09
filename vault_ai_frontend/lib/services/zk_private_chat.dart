@@ -28,6 +28,8 @@ class ZkLocalChatRecord {
   final String searchText;
   final String? mimeType;
   final ZkLocalMediaKind mediaKind;
+  /// The file card must use the owner-proof legacy reader, never V2 download.
+  final bool legacyProofRequired;
 
   const ZkLocalChatRecord({
     required this.kind,
@@ -36,6 +38,7 @@ class ZkLocalChatRecord {
     this.searchText = '',
     this.mimeType,
     this.mediaKind = ZkLocalMediaKind.other,
+    this.legacyProofRequired = false,
   });
 }
 
