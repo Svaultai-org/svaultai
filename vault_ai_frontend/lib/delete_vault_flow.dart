@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'api_client.dart';
 import 'l10n/app_localizations.dart';
 import 'main.dart' show kPrivateOnlyUnlockEnabled;
+import 'services/zk_active_mvk.dart' as zk_mvk_store;
 
 
 
@@ -65,7 +66,9 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
       final status = await widget.client.getDeleteStatus(
         authToken: widget.authToken,
       );
-      final requiresOpaque = kPrivateOnlyUnlockEnabled ||
+      var requiresOpaque = kPrivateOnlyUnlockEnabled ||
+          signedAuthDeviceOfferedForToken(widget.authToken) ||
+          zk_mvk_store.ZkActiveMvk.current() != null ||
           status['requires_opaque_verification'] == true;
       if (requiresOpaque && widget.zkProofForPin == null) {
         throw StateError('OPAQUE verification is unavailable.');
@@ -76,6 +79,13 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
       final token = (req['request_token'] ?? '').toString();
       if (token.isEmpty) {
         throw Exception('Missing delete request token');
+      }
+      // An unlock can change while the delete request is in flight. Once the
+      // private proof path is selected it must never fall back to a raw PIN.
+      requiresOpaque = requiresOpaque ||
+          zk_mvk_store.ZkActiveMvk.current() != null;
+      if (requiresOpaque && widget.zkProofForPin == null) {
+        throw StateError('OPAQUE verification is unavailable.');
       }
       final proofToken = requiresOpaque ? await widget.zkProofForPin!(pin) : null;
       await widget.client.confirmDeleteVault(

@@ -289,6 +289,14 @@ void assertOutboundPinFreeRequest(
   Map<String, String>? headers, {
   Object? body,
 }) {
+  // A vault can acquire its private unlock key while the delete dialog is
+  // open. Recheck at the outbound boundary, after the request was selected.
+  if (uri.path == '/vault/delete/confirm' &&
+      zk_mvk_store.ZkActiveMvk.current() != null &&
+      (_requestMetadataContainsPin(uri, headers) ||
+          _requestBodyContainsPin(body, headers: headers))) {
+    throw StateError('Private vault deletion requires an OPAQUE proof.');
+  }
   if (kPrivateOnlyTransportRejectPin &&
       (_requestMetadataContainsPin(uri, headers) ||
           _requestBodyContainsPin(body, headers: headers))) {
@@ -1620,11 +1628,13 @@ class VaultAIClient {
           'Exactly one delete verification method is required.');
     }
     final proofOnly = zkProofToken != null || kEnableZkPrivateOnlyUnlock ||
-        signedAuthDeviceOfferedForToken(authToken);
+        signedAuthDeviceOfferedForToken(authToken) ||
+        zk_mvk_store.ZkActiveMvk.current() != null;
     if (proofOnly &&
         (pin != null || zkProofToken == null || zkProofToken.isEmpty)) {
       throw StateError('Private vault deletion requires an OPAQUE proof.');
     }
+    if (zkProofToken != null) rejectPinShapedZkProof(zkProofToken);
     final uri = Uri.parse(proofOnly
         ? '$baseUrl/vault/delete/confirm-proof'
         : '$baseUrl/vault/delete/confirm');
