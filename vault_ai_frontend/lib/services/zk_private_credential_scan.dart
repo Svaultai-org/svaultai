@@ -72,8 +72,10 @@ class ZkPrivateCredentialScan {
     String text, {
     required bool privateChatEnabled,
     required bool signedPrivateChatOffer,
+    bool localDeepScanEnabled = false,
   }) =>
-      (privateChatEnabled || signedPrivateChatOffer) && isExplicitRequest(text);
+      (privateChatEnabled || signedPrivateChatOffer || localDeepScanEnabled) &&
+      isExplicitRequest(text);
 
   // Filenames are normalized first so underscores and dashes are word breaks.
   static final RegExp _nameCue = RegExp(

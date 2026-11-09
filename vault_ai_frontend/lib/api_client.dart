@@ -2398,7 +2398,7 @@ class VaultAIClient {
   }) async {
     if (kPrivateOnlyTransportRejectPin ||
         signedPrivateChatOfferedForToken(authToken) ||
-        private_content_guard.blocksZkLegacyContentRoute(
+        private_content_guard.blocksZkDeepAnswerPinRoute(
         vaultHandle: vaultHandle)) {
       throw const private_content_guard.PrivateContentSearchUnavailable(
         private_content_guard.deepScanPrivateMessage,
@@ -2438,7 +2438,7 @@ class VaultAIClient {
   }) async {
     if (kPrivateOnlyTransportRejectPin ||
         signedPrivateChatOfferedForToken(authToken) ||
-        private_content_guard.blocksZkLegacyContentRoute(
+        private_content_guard.blocksZkDeepAnswerPinRoute(
         vaultHandle: vaultHandle)) {
       throw const private_content_guard.PrivateContentSearchUnavailable(
         private_content_guard.deepScanPrivateMessage,

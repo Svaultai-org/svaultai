@@ -60,7 +60,8 @@ void main() {
       throwsA(isA<PrivateContentSearchUnavailable>()),
     );
     expect(requests, isEmpty);
-    expect(blocksZkLegacyContentRoute(vaultHandle: 'synthetic-zk-handle'), true);
+    expect(
+        blocksZkLegacyContentRoute(vaultHandle: 'synthetic-zk-handle'), true);
     // A key-loss race must still be blocked when the authenticated UI says
     // this session belongs to a ZK vault.
     ZkActiveMvk.clear();
@@ -83,7 +84,8 @@ void main() {
       httpClient: MockClient((request) async {
         requests.add(request);
         expect(request.headers['authorization'], 'Bearer synthetic-session');
-        expect(request.headers['x-device-id'], 'synthetic-private-guard-device');
+        expect(
+            request.headers['x-device-id'], 'synthetic-private-guard-device');
         expect((jsonDecode(request.body) as Map)['pin'], syntheticPin);
         return http.Response('{}', 200);
       }),
@@ -119,7 +121,79 @@ void main() {
     );
     expect(blocksZkLegacyContentRoute(), false);
     expect(blocksZkRelatedFilesPinRoute(), false);
-  }, skip: kGuardZkPrivateContentPinRoutes || kEnableZkLocalRelatedFiles);
+    expect(blocksZkDeepAnswerPinRoute(), false);
+  },
+      skip: kGuardZkPrivateContentPinRoutes ||
+          kEnableZkLocalRelatedFiles ||
+          kEnableZkLocalDeepScan);
+
+  test('local deep scan blocks only OPAQUE start and poll before network',
+      () async {
+    ZkActiveMvk.set(
+      mvk: SecretKey(List<int>.filled(32, 11)),
+      vaultId: 'synthetic-vault-id',
+      vaultHandle: '',
+    );
+    final requests = <http.Request>[];
+    final client = VaultAIClient(
+      baseUrl: 'https://synthetic.example',
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+    expect(blocksZkDeepAnswerPinRoute(), true);
+    expect(blocksZkRelatedFilesPinRoute(), false);
+    expect(blocksZkLegacyContentRoute(), false);
+    await expectLater(
+      client.startDeepAnswer(
+        pin: syntheticPin,
+        authToken: 'synthetic-session',
+        query: 'synthetic private prompt',
+      ),
+      throwsA(isA<PrivateContentSearchUnavailable>()),
+    );
+    await expectLater(
+      client.pollDeepAnswerJob(
+        pin: syntheticPin,
+        authToken: 'synthetic-session',
+        jobId: 'synthetic-job',
+      ),
+      throwsA(isA<PrivateContentSearchUnavailable>()),
+    );
+    expect(requests, isEmpty);
+
+    // Clearing the key must not open a PIN path while the authenticated
+    // session still identifies this as an OPAQUE vault.
+    ZkActiveMvk.clear();
+    await expectLater(
+      client.startDeepAnswer(
+        pin: syntheticPin,
+        authToken: 'synthetic-session',
+        vaultHandle: 'synthetic-zk-handle',
+      ),
+      throwsA(isA<PrivateContentSearchUnavailable>()),
+    );
+    await expectLater(
+      client.pollDeepAnswerJob(
+        pin: syntheticPin,
+        authToken: 'synthetic-session',
+        jobId: 'synthetic-job',
+        vaultHandle: 'synthetic-zk-handle',
+      ),
+      throwsA(isA<PrivateContentSearchUnavailable>()),
+    );
+    expect(requests, isEmpty);
+    await client.fetchRelatedFiles(
+      fileId: 'synthetic-file',
+      pin: syntheticPin,
+      authToken: 'synthetic-session',
+    );
+    expect(requests.single.url.path, '/files/synthetic-file/related');
+  },
+      skip: !kEnableZkLocalDeepScan ||
+          kGuardZkPrivateContentPinRoutes ||
+          kEnableZkLocalRelatedFiles);
 
   test('an active private key blocks old content even if its handle is missing',
       () {

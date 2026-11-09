@@ -99,6 +99,24 @@ void main() {
       ),
       isTrue,
     );
+    expect(
+      ZkPrivateCredentialScan.shouldRouteLocally(
+        request,
+        privateChatEnabled: false,
+        signedPrivateChatOffer: false,
+        localDeepScanEnabled: true,
+      ),
+      isTrue,
+    );
+    expect(
+      ZkPrivateCredentialScan.shouldRouteLocally(
+        'How do password managers work?',
+        privateChatEnabled: false,
+        signedPrivateChatOffer: false,
+        localDeepScanEnabled: true,
+      ),
+      isFalse,
+    );
   });
 
   test('private scan uses ready V2 names and local text without a PIN route',

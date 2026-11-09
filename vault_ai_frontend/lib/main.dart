@@ -18626,7 +18626,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _showSnack('Session expired. Sign in again to run a deep scan.');
       return;
     }
-    if (private_content_guard.blocksZkLegacyContentRoute(
+    if (private_content_guard.blocksZkDeepAnswerPinRoute(
             vaultHandle: app.vaultHandle) ||
         signedPrivateChatOfferedForToken(token)) {
       await _scanPrivateCredentialFiles(app, token);
@@ -18708,7 +18708,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _showSnack('Private file scan is already running.');
       return;
     }
-    if (!kEnableZkPrivateChat && !signedPrivateChatOfferedForToken(token)) {
+    if (!kEnableZkPrivateChat &&
+        !private_content_guard.kEnableZkLocalDeepScan &&
+        !signedPrivateChatOfferedForToken(token)) {
       _appendAssistantMessage(private_content_guard.deepScanPrivateMessage);
       return;
     }
@@ -18838,7 +18840,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final app = context.read<AppState>();
     final token = app.sessionToken;
     if (token == null || app.vaultId == null) return null;
-    if (private_content_guard.blocksZkLegacyContentRoute(
+    if (private_content_guard.blocksZkDeepAnswerPinRoute(
             vaultHandle: app.vaultHandle) ||
         signedPrivateChatOfferedForToken(token)) {
       return null;
@@ -21157,6 +21159,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       text,
       privateChatEnabled: kEnableZkPrivateChat,
       signedPrivateChatOffer: signedPrivateChatOfferedForToken(token),
+      localDeepScanEnabled: private_content_guard.kEnableZkLocalDeepScan,
     )) {
       _zkPrivateChatFlow?.clear();
       setState(() {
@@ -21589,6 +21592,36 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
 
     final zkChatMvk = zk_mvk_store.ZkActiveMvk.current();
+    // This narrow scan opt-in also covers a typed credential-scan request.
+    // Do not let that prompt fall through to legacy chat or a server-side job.
+    if (private_content_guard.kEnableZkLocalDeepScan &&
+        ((app.vaultHandle?.isNotEmpty ?? false) || zkChatMvk != null) &&
+        zk_credential_scan.ZkPrivateCredentialScan.isExplicitRequest(text)) {
+      if (attachments.isNotEmpty) {
+        _appendAssistantMessage(
+          'Private credential scan cannot analyze attachments. '
+          'Remove the attachment and retry the scan.',
+        );
+        return;
+      }
+      if (activeVaultId == null ||
+          zkChatMvk == null ||
+          zk_mvk_store.ZkActiveMvk.currentVaultId() != activeVaultId) {
+        _appendAssistantMessage(
+          'Your vault encryption key is unavailable. '
+          'Please lock and unlock your vault again.',
+        );
+        return;
+      }
+      setState(() {
+        selectedSection = _DashboardSection.chat;
+        input.clear();
+        msgs.add(_Msg('user', text));
+      });
+      _scrollToBottom();
+      await _scanPrivateCredentialFiles(app, authToken);
+      return;
+    }
     final bridgeRoute = zk_general_bridge.resolveZkGeneralBridgeRoute(
       enabled: kEnableZkGeneralChatBridge || kEnableZkGeneralOnlyChatBridge,
       hasZkHandle: app.vaultHandle?.isNotEmpty == true,

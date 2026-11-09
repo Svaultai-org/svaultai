@@ -20,17 +20,28 @@ const bool kEnableZkLocalRelatedFiles = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// Narrow opt-in: the credential deep scan reads a bounded private V2 index
+// locally. Its server-side start/poll requests must not receive a ZK PIN.
+const bool kEnableZkLocalDeepScan = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_LOCAL_DEEP_SCAN',
+  defaultValue: false,
+);
+
+bool _hasZkVault({String? vaultHandle}) =>
+    (vaultHandle?.isNotEmpty ?? false) ||
+    ZkActiveMvk.current() != null ||
+    (ZkActiveMvk.currentVaultHandle()?.isNotEmpty ?? false);
+
 bool blocksZkLegacyContentRoute({String? vaultHandle}) =>
-    kGuardZkPrivateContentPinRoutes &&
-    ((vaultHandle?.isNotEmpty ?? false) ||
-        ZkActiveMvk.current() != null ||
-        (ZkActiveMvk.currentVaultHandle()?.isNotEmpty ?? false));
+    kGuardZkPrivateContentPinRoutes && _hasZkVault(vaultHandle: vaultHandle);
 
 bool blocksZkRelatedFilesPinRoute({String? vaultHandle}) =>
     (kGuardZkPrivateContentPinRoutes || kEnableZkLocalRelatedFiles) &&
-    ((vaultHandle?.isNotEmpty ?? false) ||
-        ZkActiveMvk.current() != null ||
-        (ZkActiveMvk.currentVaultHandle()?.isNotEmpty ?? false));
+    _hasZkVault(vaultHandle: vaultHandle);
+
+bool blocksZkDeepAnswerPinRoute({String? vaultHandle}) =>
+    (kGuardZkPrivateContentPinRoutes || kEnableZkLocalDeepScan) &&
+    _hasZkVault(vaultHandle: vaultHandle);
 
 class PrivateContentSearchUnavailable implements Exception {
   final String message;
