@@ -44,7 +44,7 @@ class FakeCursor:
         self.db = db
         self.row = None
 
-    def execute(self, sql, params):
+    def execute(self, sql, params=None):
         normalized = " ".join(sql.split()).upper()
         if "FROM VAULTS" in normalized:
             self.row = {"vault_handle": b"synthetic", "opaque_registration_record": b"synthetic",
@@ -58,6 +58,8 @@ class FakeCursor:
             self.row = {"id": 9}
         elif "FROM BENEFICIARY_LINKS" in normalized:
             self.row = self.db.link
+        elif "SELECT (NOW() AT TIME ZONE" in normalized:
+            self.row = {"now": datetime.now(timezone.utc)}
         elif "UPDATE BENEFICIARY_LINKS" in normalized:
             self.db.link["status"] = "linked"
             self.row = None
@@ -181,3 +183,38 @@ def test_legacy_link_and_claim_reject_v2_before_pin_verification(monkeypatch):
              ), BENEFICIARY)
     assert legacy_claim.value.status_code == 409
     verify.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "linked_vault,status,cooldown_elapsed,expected_status",
+    [
+        (OWNER["vault_id"], "transfer_pending", True, 403),
+        (BENEFICIARY["vault_id"], "linked", True, 400),
+        (BENEFICIARY["vault_id"], "transfer_pending", False, 400),
+    ],
+)
+def test_legacy_claim_checks_link_before_using_pin(
+    monkeypatch, linked_vault, status, cooldown_elapsed, expected_status,
+):
+    db = FakeDb()
+    db.link = {
+        "id": 9,
+        "passer_vault_id": OWNER["vault_id"],
+        "beneficiary_vault_id": linked_vault,
+        "status": status,
+        "transfer_executes_at": datetime.now(timezone.utc) + timedelta(
+            days=-1 if cooldown_elapsed else 1,
+        ),
+        "wrapped_vault_key": "synthetic-old-envelope",
+    }
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    verify = mock.Mock(side_effect=AssertionError("PIN used before link check"))
+    monkeypatch.setattr(main, "verify_vault_pin", verify)
+    with pytest.raises(HTTPException) as denied:
+        _run(main.beneficiary_claim_transfer_endpoint,
+             main.ClaimTransferRequest(
+                 link_id=9, pin="synthetic", inherited_username_lookup="synthetic",
+             ), BENEFICIARY)
+    assert denied.value.status_code == expected_status
+    verify.assert_not_called()
+    assert db.commits == 0

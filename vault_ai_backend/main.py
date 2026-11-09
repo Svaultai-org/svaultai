@@ -11162,7 +11162,6 @@ async def beneficiary_claim_transfer_endpoint(
         if (str(link["beneficiary_vault_id"]) == vault_id and
                 link["wrapped_vault_key"] == _ZK_BENEFICIARY_V2_MARKER):
             raise HTTPException(status_code=409, detail="zk_inheritance_clone_unavailable")
-        beneficiary_vault_key = verify_vault_pin(vault_id, payload.pin)
         if str(link["beneficiary_vault_id"]) != vault_id:
             raise HTTPException(status_code=403, detail="This inheritance does not belong to you.")
         if link["status"] != "transfer_pending":
@@ -11176,6 +11175,11 @@ async def beneficiary_claim_transfer_endpoint(
                 status_code=400,
                 detail="Cooldown not elapsed yet — transfer not ready to claim.",
             )
+
+        # A foreign, cancelled, or not-yet-due link cannot claim anything.
+        # Check its authorization and state before using a submitted PIN to
+        # derive any key or touch encrypted vault contents.
+        beneficiary_vault_key = verify_vault_pin(vault_id, payload.pin)
 
                                                                                           
         try:
