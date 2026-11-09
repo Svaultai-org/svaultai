@@ -5629,36 +5629,71 @@ class VaultAIClient {
     required String authToken,
     bool requireLegacyComplete = false,
   }) async {
-    final inventory = await listZkFileMetadata(
-      authToken: authToken,
-      requireLegacyComplete: requireLegacyComplete,
-    );
-    final files = (inventory['files'] as List)
-        .map((row) => Map<String, dynamic>.from(row as Map))
-        .toList();
-    // Older vaults can receive a signed list offer before any V2 copy exists.
-    // Their metadata inventory is complete already; do not require the V2
-    // route just to display those files.
-    if (!files.any((row) =>
-        row['v2_retired'] == true || row['v2_ready'] == true)) {
-      return <String, dynamic>{'files': files};
-    }
-    final retired = await listReadyV2Files(authToken: authToken);
-    final byId = <String, Map<String, dynamic>>{
-      for (final row in retired) row['id'] as String: row,
-    };
-    final merged = <Map<String, dynamic>>[];
-    for (final row in files) {
-      final id = row['id'] as String;
-      final v2 = byId.remove(id);
-      if ((row['v2_retired'] == true || row['v2_ready'] == true) &&
-          v2 == null) {
-        throw const FormatException('Retired file copy is unavailable');
+    // Metadata and V2 manifests are separate reads. A concurrent publish or
+    // delete can make the first pair disagree; take one fresh pair before
+    // reporting an unavailable copy. Never drop a still-marked ready file.
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final inventory = await listZkFileMetadata(
+        authToken: authToken,
+        requireLegacyComplete: requireLegacyComplete,
+      );
+      final files = (inventory['files'] as List)
+          .map((row) => Map<String, dynamic>.from(row as Map))
+          .toList();
+      // Older vaults can receive a signed list offer before any V2 copy
+      // exists. Their metadata inventory is complete already.
+      if (!files.any((row) =>
+          row['v2_retired'] == true || row['v2_ready'] == true)) {
+        return <String, dynamic>{'files': files};
       }
-      merged.add(v2 == null ? row : <String, dynamic>{...row, ...v2});
+      final List<Map<String, dynamic>> ready;
+      try {
+        ready = await listReadyV2Files(authToken: authToken);
+      } on FileV2ReadException catch (error) {
+        // A listed manifest can disappear during a concurrent deletion.
+        if (attempt == 0 && error.statusCode == 404) continue;
+        rethrow;
+      } on FormatException catch (error) {
+        // The list can say ready just before the manifest changes state.
+        // Other malformed or undecryptable manifests must fail immediately.
+        if (attempt == 0 && error.message == 'V2 file is not ready for use') {
+          continue;
+        }
+        rethrow;
+      }
+      final byId = <String, Map<String, dynamic>>{};
+      for (final row in ready) {
+        final id = row['id'] as String;
+        if (byId.containsKey(id)) {
+          throw const FormatException('Duplicate ready V2 file');
+        }
+        byId[id] = row;
+      }
+      final merged = <Map<String, dynamic>>[];
+      var changed = false;
+      for (final row in files) {
+        final id = row['id'] as String;
+        final v2 = byId.remove(id);
+        final expectedV2 =
+            row['v2_retired'] == true || row['v2_ready'] == true;
+        if (expectedV2 &&
+            (v2 == null ||
+                row['v2_retired'] != v2['v2_retired'] ||
+                row['v2_ready'] != v2['v2_ready'] ||
+                row['file_size'] != v2['file_size'])) {
+          changed = true;
+          break;
+        }
+        merged.add(v2 == null ? row : <String, dynamic>{...row, ...v2});
+      }
+      if (changed) {
+        if (attempt == 0) continue;
+        throw const FormatException('Private file inventory changed');
+      }
+      merged.addAll(byId.values);
+      return <String, dynamic>{'files': merged};
     }
-    merged.addAll(byId.values);
-    return <String, dynamic>{'files': merged};
+    throw StateError('Private file inventory retry exhausted');
   }
 
   Future<bool> isRetiredV2File({
