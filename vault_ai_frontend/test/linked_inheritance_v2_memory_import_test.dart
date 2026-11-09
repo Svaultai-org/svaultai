@@ -27,11 +27,14 @@ Future<String> _digest(BytesBuilder builder) async =>
 Future<Map<String, dynamic>> _export(SecretKey ownerMvk) async {
   final key = await VaultKeyHierarchy(ownerMvk).memoryKey();
   final ct = await aesGcmWrap(
-      key,
-      utf8.encode(jsonEncode({
+    key,
+    utf8.encode(
+      jsonEncode({
         'memory_key': 'Beach trip',
         'memory_value': 'Synthetic note only',
-      })));
+      }),
+    ),
+  );
   final rowBuilder = BytesBuilder()
     ..add(utf8.encode('linked-old-v2-memory-source/v1\u0000'));
   for (final value in <Object>[7, 'note', 'memory-synthetic', 'S' * 43, ct]) {
@@ -60,10 +63,10 @@ Future<Map<String, dynamic>> _export(SecretKey ownerMvk) async {
         'memory_id': 7,
         'memory_type': 'note',
         'memory_record_id': 'memory-synthetic',
-      'source_snapshot': 'S' * 43,
+        'source_snapshot': 'S' * 43,
         'source_row_sha256': rowDigest,
         'payload_ciphertext': _b64(ct),
-      }
+      },
     ],
   };
 }
@@ -71,21 +74,20 @@ Future<Map<String, dynamic>> _export(SecretKey ownerMvk) async {
 Map<String, dynamic> _copies(
   Map<String, dynamic> exported,
   List<Map<String, dynamic>> copied,
-) =>
-    {
-      'beneficiary_link_id': 41,
-      'owner_vault_id': _owner,
-      'beneficiary_vault_id': _beneficiary,
-      'stage_revision': 2,
-      'offer_commitment': _commitment,
-      'content_scope': 'memory_only',
-      'owner_content_complete': false,
-      'source_inventory_sha256': exported['source_inventory_sha256'],
-      'memory_count': 1,
-      'legacy_package_preserved': true,
-      'all_memories_copied': copied.length == 1,
-      'copies': copied,
-    };
+) => {
+  'beneficiary_link_id': 41,
+  'owner_vault_id': _owner,
+  'beneficiary_vault_id': _beneficiary,
+  'stage_revision': 2,
+  'offer_commitment': _commitment,
+  'content_scope': 'memory_only',
+  'owner_content_complete': false,
+  'source_inventory_sha256': exported['source_inventory_sha256'],
+  'memory_count': 1,
+  'legacy_package_preserved': true,
+  'all_memories_copied': copied.length == 1,
+  'copies': copied,
+};
 
 void main() {
   late SecretKey ownerMvk;
@@ -113,63 +115,76 @@ void main() {
     exported = await _export(ownerMvk);
   });
 
-  test('copies with fresh proof and verifies recipient ciphertext on retry',
-      () async {
-    final copied = <Map<String, dynamic>>[];
-    var writes = 0;
-    var proofs = 0;
-    Future<LinkedV2MemoryImport> run() => importLinkedV2Memories(
-          released: released,
-          readbackReceipt: receipt,
-          beneficiaryVaultId: _beneficiary,
-          beneficiaryMvk: beneficiaryMvk,
-          fetchExport: (_) async => exported,
-          copyMemory: (body) async {
-            writes++;
-            expect(body.keys, isNot(contains('pin')));
-            expect(body.keys, isNot(contains('memory_value')));
-            expect(body['zk_proof_token'], 'opaque-proof-$proofs');
-            expect(body['content_scope'], 'memory_only');
-            final key = await VaultKeyHierarchy(beneficiaryMvk).memoryKey();
-            final clear = utf8.decode(await aesGcmUnwrap(
+  test(
+    'copies with fresh proof and verifies recipient ciphertext on retry',
+    () async {
+      final copied = <Map<String, dynamic>>[];
+      var writes = 0;
+      var proofs = 0;
+      Future<LinkedV2MemoryImport> run() => importLinkedV2Memories(
+        released: released,
+        readbackReceipt: receipt,
+        beneficiaryVaultId: _beneficiary,
+        beneficiaryMvk: beneficiaryMvk,
+        fetchExport: (_) async => exported,
+        copyMemory: (body) async {
+          writes++;
+          expect(body.keys, isNot(contains('pin')));
+          expect(body.keys, isNot(contains('memory_value')));
+          expect(body['zk_proof_token'], 'opaque-proof-$proofs');
+          expect(body['content_scope'], 'memory_only');
+          final key = await VaultKeyHierarchy(beneficiaryMvk).memoryKey();
+          final clear = utf8.decode(
+            await aesGcmUnwrap(
               key,
               b64urlDecode(body['payload_ciphertext'] as String),
-            ));
-            expect(clear, contains('Synthetic note only'));
-            copied.add({
-              'source_memory_id': 7,
-              'beneficiary_memory_id': 100,
-              'beneficiary_memory_record_id':
-                  body['beneficiary_memory_record_id'],
-              'memory_type': body['memory_type'],
-              'source_row_sha256': body['source_row_sha256'],
-              'memory_lookup_hash': body['memory_lookup_hash'],
-              'payload_ciphertext': body['payload_ciphertext'],
-            });
-            return {
-              'beneficiary_link_id': 41,
-              'source_memory_id': 7,
-              'beneficiary_memory_id': 100,
-              'source_inventory_sha256': exported['source_inventory_sha256'],
-              'created': true,
-              'legacy_package_preserved': true,
-            };
-          },
-          readbackCopies: (_, digest) async {
-            expect(digest, exported['source_inventory_sha256']);
-            return _copies(exported, copied);
-          },
-          freshZkProof: () async => 'opaque-proof-${++proofs}',
-          accessIsCurrent: () => true,
-        );
-    final first = await run();
-    expect(first.memoryCount, 1);
-    expect(first.newMemories, 1);
-    final second = await run();
-    expect(second.newMemories, 0);
-    expect(writes, 1);
-    expect(proofs, 1);
-  });
+            ),
+          );
+          expect(clear, contains('Synthetic note only'));
+          copied.add({
+            'source_memory_id': 7,
+            'beneficiary_memory_id': 100,
+            'beneficiary_memory_record_id':
+                body['beneficiary_memory_record_id'],
+            'memory_type': body['memory_type'],
+            'source_row_sha256': body['source_row_sha256'],
+            'memory_lookup_hash': body['memory_lookup_hash'],
+            'payload_ciphertext': body['payload_ciphertext'],
+          });
+          return {
+            'beneficiary_link_id': 41,
+            'source_memory_id': 7,
+            'beneficiary_memory_id': 100,
+            'source_inventory_sha256': exported['source_inventory_sha256'],
+            'created': true,
+            'legacy_package_preserved': true,
+          };
+        },
+        readbackCopies: (_, digest) async {
+          expect(digest, exported['source_inventory_sha256']);
+          return _copies(exported, copied);
+        },
+        fetchBeneficiaryInventory: () async => {
+          'generation': '$writes',
+          'unavailable_count': 0,
+          'items': copied.isEmpty
+              ? <Map<String, dynamic>>[]
+              : <Map<String, dynamic>>[
+                  {'id': 'inherited-41-7', 'memory_key': 'Beach trip'},
+                ],
+        },
+        freshZkProof: () async => 'opaque-proof-${++proofs}',
+        accessIsCurrent: () => true,
+      );
+      final first = await run();
+      expect(first.memoryCount, 1);
+      expect(first.newMemories, 1);
+      final second = await run();
+      expect(second.newMemories, 0);
+      expect(writes, 1);
+      expect(proofs, 1);
+    },
+  );
 
   test('PIN-shaped proof and changed inventory never write a copy', () async {
     var writes = 0;
@@ -185,6 +200,11 @@ void main() {
           return {};
         },
         readbackCopies: (_, __) async => _copies(inventory, []),
+        fetchBeneficiaryInventory: () async => {
+          'generation': '0',
+          'unavailable_count': 0,
+          'items': <Map<String, dynamic>>[],
+        },
         freshZkProof: () async => '123456',
         accessIsCurrent: () => true,
       );
@@ -213,6 +233,11 @@ void main() {
           return {};
         },
         readbackCopies: (_, __) async => _copies(exported, []),
+        fetchBeneficiaryInventory: () async => {
+          'generation': '0',
+          'unavailable_count': 0,
+          'items': <Map<String, dynamic>>[],
+        },
         freshZkProof: () async {
           active = false;
           return 'opaque-proof';
@@ -223,4 +248,58 @@ void main() {
     );
     expect(writes, 0);
   });
+
+  test(
+    'complete recipient scan allows unrelated Memory but catches title aliases',
+    () async {
+      Future<void> run(
+        Map<String, dynamic> inventory, {
+        required bool shouldWrite,
+      }) async {
+        var didWrite = false;
+        await expectLater(
+          importLinkedV2Memories(
+            released: released,
+            readbackReceipt: receipt,
+            beneficiaryVaultId: _beneficiary,
+            beneficiaryMvk: beneficiaryMvk,
+            fetchExport: (_) async => exported,
+            readbackCopies: (_, __) async => _copies(exported, []),
+            fetchBeneficiaryInventory: () async => inventory,
+            copyMemory: (body) async {
+              didWrite = true;
+              expect(body['expected_beneficiary_generation'], '17');
+              throw StateError('synthetic write reached');
+            },
+            freshZkProof: () async => 'opaque-proof',
+            accessIsCurrent: () => true,
+          ),
+          throwsStateError,
+        );
+        expect(didWrite, shouldWrite);
+      }
+
+      final unrelated = {
+        'generation': '17',
+        'unavailable_count': 0,
+        'items': [
+          {'id': 'native-1', 'memory_key': 'Work note'},
+        ],
+      };
+      await run(unrelated, shouldWrite: true);
+      final duplicate = {
+        ...unrelated,
+        'items': [
+          {'id': 'native-1', 'memory_key': ' beach  trip '},
+        ],
+      };
+      await run(duplicate, shouldWrite: false);
+      for (final inventory in [
+        {...unrelated, 'generation': null},
+        {...unrelated, 'unavailable_count': 1},
+      ]) {
+        await run(inventory, shouldWrite: false);
+      }
+    },
+  );
 }

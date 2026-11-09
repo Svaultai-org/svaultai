@@ -3546,7 +3546,7 @@ class VaultAIClient {
       'VAULTAI_ENABLE_LINKED_INHERITANCE_MEMORY_IMPORT',
       defaultValue: false,
     );
-    if (!enabled) {
+    if (!enabled || !kEnableLegacyMemoryV2ActiveRead) {
       throw StateError('Linked inheritance Memory import is unavailable');
     }
     void checkAccess() {
@@ -3600,6 +3600,12 @@ class VaultAIClient {
         'GET', Uri.parse('$baseUrl/inheritance/old-link-v2/$id/memory-copies')
             .replace(queryParameters: {'source_inventory_sha256': digest}),
       ),
+      fetchBeneficiaryInventory: () async {
+        checkAccess();
+        final inventory = await listZkMemories(authToken: authToken, limit: 0);
+        checkAccess();
+        return inventory;
+      },
       freshZkProof: () async {
         checkAccess();
         final proof = rejectPinShapedZkProof(await freshZkProof());
@@ -6947,6 +6953,8 @@ class VaultAIClient {
           uri,
           headers: <String, String>{
             ..._defaultHeaders(authToken: authToken),
+            'Cache-Control': 'no-cache, no-store',
+            'Pragma': 'no-cache',
             if (kEnableLegacyMemoryV2ActiveRead)
               'X-SVaultAI-Memory-Active-Copy': '1',
           },

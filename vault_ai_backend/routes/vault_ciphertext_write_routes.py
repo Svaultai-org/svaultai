@@ -47,7 +47,7 @@ import os
 import re
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from psycopg2.errors import UniqueViolation
 from psycopg2.extras import RealDictCursor
@@ -1055,6 +1055,7 @@ def ai_memory_ciphertext_upsert(
 )
 def ai_memory_ciphertext_list(
     request: Request,
+    http_response: Response,
     memory_lookup_hash: Optional[str] = None,
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> list[AiMemoryCiphertextReadResponse]:
@@ -1100,6 +1101,7 @@ def ai_memory_ciphertext_list(
         rows = cur.fetchall()
     finally:
         conn.close()
+    http_response.headers["Cache-Control"] = "no-store"
     return [
         AiMemoryCiphertextReadResponse(
             memory_id=str(row["memory_record_id"]),

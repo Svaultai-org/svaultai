@@ -51,6 +51,7 @@ class CopyLinkedV2Memory(BaseModel):
     memory_lookup_hash: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
     payload_ciphertext: str = Field(min_length=1, max_length=175000)
     content_scope: str = Field(pattern=r"^memory_only$")
+    expected_beneficiary_generation: str = Field(pattern=r"^(0|[1-9][0-9]{0,18})$")
     zk_proof_token: str = Field(min_length=1, max_length=128)
 
 
@@ -215,18 +216,21 @@ def _memory_vault_states(cur, *, owner_id: str, beneficiary_id: str,
     return states
 
 
-def _recipient_has_unmapped_memory(cur, *, link_id: int,
-                                   beneficiary_id: str) -> bool:
+def _recipient_has_unready_memory(cur, *, beneficiary_id: str) -> bool:
     cur.execute(
         """SELECT 1 FROM vault_ai_memory m
             WHERE m.vault_id=%s AND m.superseded_at IS NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM linked_inheritance_v2_memory_copies c
-                 WHERE c.old_link_id=%s AND
-                       c.beneficiary_vault_id=%s AND
-                       c.beneficiary_memory_id=m.id
-              ) LIMIT 1""",
-        (beneficiary_id, link_id, beneficiary_id),
+              AND (m.payload_ciphertext IS NULL OR
+                   OCTET_LENGTH(m.payload_ciphertext)<29 OR
+                   GET_BYTE(m.payload_ciphertext,0)<>1 OR
+                   m.memory_record_id IS NULL OR
+                   m.memory_lookup_hash IS NULL OR
+                   OCTET_LENGTH(m.memory_lookup_hash)<>32 OR
+                   m.memory_key IS NOT NULL OR
+                   m.memory_value IS NOT NULL OR
+                   m.memory_normalized_key IS NOT NULL)
+            LIMIT 1""",
+        (beneficiary_id,),
     )
     return cur.fetchone() is not None
 
@@ -337,15 +341,14 @@ def copy_linked_v2_memory(
                     row["source_inventory_sha256"] != digest):
                 raise HTTPException(status_code=409, detail="prior_copy_inventory_changed")
         # The 0073 fence must already be enabled explicitly for the recipient.
-        # Ciphertext prevents the server from comparing titles with a native
-        # row whose client used different whitespace. Until a complete,
-        # recipient-keyed title preflight exists, copy only into an otherwise
-        # empty Memory set (apart from exact prior copies of this same link).
+        # A complete client-side title scan is bound to the vault generation
+        # it saw. The server cannot read private titles, but will reject any
+        # concurrent recipient change or old/plaintext Memory row.
         if not locked[beneficiary_id]["memory_mixed_title_fence_enabled"]:
             raise HTTPException(status_code=409, detail="beneficiary_memory_fence_required")
-        if _recipient_has_unmapped_memory(
-                cur, link_id=payload.beneficiary_link_id,
-                beneficiary_id=beneficiary_id):
+        if (_recipient_has_unready_memory(cur, beneficiary_id=beneficiary_id) or
+                int(payload.expected_beneficiary_generation) !=
+                int(locked[beneficiary_id]["memory_inventory_generation"])):
             raise HTTPException(status_code=409, detail="beneficiary_memory_inventory_required")
         existing = next(
             (row for row in prior if row["source_memory_id"] ==
@@ -545,8 +548,7 @@ def readback_linked_v2_memory_copies(
                 before[beneficiary_id]["memory_inventory_generation"]):
             raise HTTPException(status_code=409, detail="memory_inventory_changed")
         if (not locked[beneficiary_id]["memory_mixed_title_fence_enabled"] or
-                _recipient_has_unmapped_memory(
-                    cur, link_id=link_id, beneficiary_id=beneficiary_id)):
+                _recipient_has_unready_memory(cur, beneficiary_id=beneficiary_id)):
             raise HTTPException(status_code=409, detail="beneficiary_memory_inventory_required")
         http_response.headers["Cache-Control"] = "no-store"
         return {

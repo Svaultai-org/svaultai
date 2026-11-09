@@ -44,6 +44,7 @@ def test_memory_import_is_off_and_rejects_plaintext_fields(monkeypatch):
         "memory_lookup_hash": "D" * 43,
         "payload_ciphertext": "E" * 40,
         "content_scope": "memory_only",
+        "expected_beneficiary_generation": "0",
         "zk_proof_token": "synthetic-proof",
     }
     for forbidden in ("pin", "memory_value", "owner_mvk"):
@@ -198,6 +199,7 @@ def test_source_bound_memory_copy_preserves_owner_and_requires_fence(monkeypatch
             memory_lookup_hash=_b64(secrets.token_bytes(32)),
             payload_ciphertext=_b64(destination),
             content_scope="memory_only",
+            expected_beneficiary_generation="0",
             zk_proof_token="synthetic-opaque-proof",
         )
         with pytest.raises(HTTPException) as unfenced:
@@ -230,9 +232,8 @@ def test_source_bound_memory_copy_preserves_owner_and_requires_fence(monkeypatch
             assert cur.fetchone()[0] == 0
             cur.execute("DELETE FROM vault_ai_memory WHERE id=%s",
                         (older_recipient_id,))
-            # A preexisting native Memory could have the same user-visible
-            # title with a different whitespace-derived blind index. Until a
-            # complete recipient title scan exists, even this V2 row blocks.
+            # A preexisting native Memory may have a different title or a
+            # whitespace alias. A stale client-side title scan cannot copy.
             cur.execute(
                 "INSERT INTO vault_ai_memory(vault_id,memory_type,memory_key,"
                 "memory_value,memory_record_id,memory_lookup_hash,"
@@ -300,6 +301,22 @@ def test_source_bound_memory_copy_preserves_owner_and_requires_fence(monkeypatch
             assert cur.fetchone()[0] == 0
             cur.execute("DELETE FROM vault_ai_memory WHERE id=%s",
                         (late_owner_id,))
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO vault_ai_memory(vault_id,memory_type,memory_key,"
+                "memory_value,memory_record_id,memory_lookup_hash,"
+                "payload_ciphertext) VALUES (%s,'note',NULL,NULL,%s,%s,%s)",
+                (beneficiary_id, "recipient-unrelated-native",
+                 secrets.token_bytes(32), b"\x01" + secrets.token_bytes(48)),
+            )
+            cur.execute(
+                "SELECT memory_inventory_generation FROM vaults WHERE vault_id=%s",
+                (beneficiary_id,),
+            )
+            recipient_generation = str(cur.fetchone()[0])
+        payload = payload.model_copy(update={
+            "expected_beneficiary_generation": recipient_generation,
+        })
         written = memories.copy_linked_v2_memory(payload, principal)
         assert written["created"] is True
         assert consumed == ["synthetic-opaque-proof"]

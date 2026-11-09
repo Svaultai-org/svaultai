@@ -20,6 +20,8 @@ typedef WriteLinkedMemoryCopy =
     Future<Map<String, dynamic>> Function(Map<String, dynamic> body);
 typedef ReadbackLinkedMemoryCopies =
     Future<Map<String, dynamic>> Function(int linkId, String inventoryDigest);
+typedef FetchBeneficiaryMemoryInventory =
+    Future<Map<String, dynamic>> Function();
 
 const _maxMemories = 100;
 const _maxSourceBytes = 1024 * 1024;
@@ -161,7 +163,8 @@ Future<({List<_SourceMemory> memories, String digest})> _sourceMemories({
         recordId is! String ||
         recordId.isEmpty ||
         recordId.length > 128 ||
-        snapshot is! String || !_digestPattern.hasMatch(snapshot) ||
+        snapshot is! String ||
+        !_digestPattern.hasMatch(snapshot) ||
         rowDigest is! String ||
         !_digestPattern.hasMatch(rowDigest)) {
       throw const FormatException('Invalid inherited Memory identity');
@@ -284,6 +287,7 @@ Future<LinkedV2MemoryImport> importLinkedV2Memories({
   required FetchLinkedMemoryExport fetchExport,
   required WriteLinkedMemoryCopy copyMemory,
   required ReadbackLinkedMemoryCopies readbackCopies,
+  required FetchBeneficiaryMemoryInventory fetchBeneficiaryInventory,
   required Future<String> Function() freshZkProof,
   required bool Function() accessIsCurrent,
 }) async {
@@ -319,6 +323,65 @@ Future<LinkedV2MemoryImport> importLinkedV2Memories({
     sources: source.memories,
     beneficiaryMvk: beneficiaryMvk,
   );
+  // The server sees only keyed title hashes. Different whitespace can give
+  // two hashes for the same visible title, so the beneficiary must inspect
+  // every locally decrypted title before any inherited row is written.
+  checkAccess();
+  final beneficiaryInventory = await fetchBeneficiaryInventory();
+  checkAccess();
+  final generation = beneficiaryInventory['generation'];
+  final recipientRows = beneficiaryInventory['items'];
+  if (generation is! String ||
+      !RegExp(r'^(0|[1-9][0-9]{0,18})$').hasMatch(generation) ||
+      beneficiaryInventory['unavailable_count'] != 0 ||
+      recipientRows is! List ||
+      recipientRows.length > 5000) {
+    throw StateError('Beneficiary Memory inventory is incomplete');
+  }
+  final expectedSources = {
+    for (final memory in source.memories) memory.id: memory,
+  };
+  final existingTitles = <String>{};
+  final seenCopied = <int>{};
+  for (final raw in recipientRows) {
+    if (raw is! Map) {
+      throw StateError('Invalid beneficiary Memory inventory');
+    }
+    final row = Map<String, dynamic>.from(raw);
+    final title = row['title'] ?? row['memory_key'];
+    if (title is! String || title.trim().isEmpty) {
+      throw StateError('Invalid beneficiary Memory title');
+    }
+    final normalized = _normalizedTitle(title);
+    final recordId = row['id'];
+    final match = recordId is String
+        ? RegExp(
+            '^inherited-${released.linkId}-([1-9][0-9]*)\$',
+          ).firstMatch(recordId)
+        : null;
+    final sourceId = match == null ? null : int.tryParse(match.group(1)!);
+    final previouslyCopied = sourceId != null && copied.contains(sourceId);
+    if (previouslyCopied) {
+      final sourceMemory = expectedSources[sourceId];
+      if (!seenCopied.add(sourceId) ||
+          sourceMemory == null ||
+          normalized != _normalizedTitle(sourceMemory.title)) {
+        throw StateError('Inherited Memory copy title differs');
+      }
+    } else {
+      existingTitles.add(normalized);
+    }
+  }
+  if (seenCopied.length != copied.length) {
+    throw StateError('Inherited Memory copy missing from inventory');
+  }
+  for (final memory in source.memories) {
+    if (!copied.contains(memory.id) &&
+        existingTitles.contains(_normalizedTitle(memory.title))) {
+      throw StateError('Inherited Memory title already exists');
+    }
+  }
+  var expectedGeneration = BigInt.parse(generation);
   final hierarchy = VaultKeyHierarchy(beneficiaryMvk);
   final memoryKey = await hierarchy.memoryKey();
   final lookupKey = await hierarchy.memoryLookupKey();
@@ -347,6 +410,7 @@ Future<LinkedV2MemoryImport> importLinkedV2Memories({
       'memory_lookup_hash': lookup,
       'payload_ciphertext': _b64(ciphertext),
       'content_scope': 'memory_only',
+      'expected_beneficiary_generation': expectedGeneration.toString(),
       'zk_proof_token': proof,
     });
     checkAccess();
@@ -358,7 +422,10 @@ Future<LinkedV2MemoryImport> importLinkedV2Memories({
         result['created'] is! bool) {
       throw StateError('Inherited Memory copy was not confirmed');
     }
-    if (result['created'] == true) newMemories++;
+    if (result['created'] == true) {
+      newMemories++;
+      expectedGeneration += BigInt.one;
+    }
     copied.add(memory.id);
   }
   checkAccess();
