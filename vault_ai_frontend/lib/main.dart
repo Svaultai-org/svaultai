@@ -68,6 +68,7 @@ import 'services/vault_handle.dart' as vh;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/private_content_pin_guard.dart' as private_content_guard;
 import 'services/zk_private_chat.dart' as zk_private_chat;
+import 'services/zk_local_text_follow_up.dart' as zk_local_text;
 import 'services/zk_private_file_selection.dart' as zk_file_selection;
 import 'services/zk_private_upload_guard.dart' as zk_upload_guard;
 import 'services/zk_general_chat_bridge.dart' as zk_general_bridge;
@@ -19042,6 +19043,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required String fileId,
     required String fallbackFileName,
     required String? fallbackMime,
+    int? maxBytes,
   }) async {
     final app = context.read<AppState>();
     final vaultId = app.vaultId;
@@ -19081,6 +19083,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       throw const FormatException('Older file is unavailable');
     }
     final listed = matches.single;
+    final listedSize = listed['file_size'];
+    if (maxBytes != null &&
+        (maxBytes < 0 || listedSize is! int || listedSize > maxBytes)) {
+      throw const FormatException('File exceeds local text read limit');
+    }
     final listedName = listed['saved_name'] is String &&
             (listed['saved_name'] as String).trim().isNotEmpty
         ? listed['saved_name'] as String
@@ -19126,6 +19133,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             manifest['chunk_count'] != listed['chunk_count']) {
           throw const FormatException('Older file changed before download');
         }
+        if (maxBytes != null && manifest['file_size'] > maxBytes) {
+          throw const FormatException('File exceeds local text read limit');
+        }
         final keyBytes = Uint8List.fromList(await legacyKey.extractBytes());
         late Uint8List bytes;
         try {
@@ -19144,19 +19154,24 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         } finally {
           keyBytes.fillRange(0, keyBytes.length, 0);
         }
-        final refreshed = await client.listZkFileMetadata(
-          authToken: authToken, requireLegacyComplete: true,
-        );
-        if (!currentAccess()) throw StateError('Vault session changed');
-        final currentRows = (refreshed['files'] as List)
-            .whereType<Map<String, dynamic>>()
-            .where((row) => row['id'] == fileId)
-            .toList();
-        if (currentRows.length != 1) {
-          throw const FormatException('Older file changed during download');
+        try {
+          final refreshed = await client.listZkFileMetadata(
+            authToken: authToken, requireLegacyComplete: true,
+          );
+          if (!currentAccess()) throw StateError('Vault session changed');
+          final currentRows = (refreshed['files'] as List)
+              .whereType<Map<String, dynamic>>()
+              .where((row) => row['id'] == fileId)
+              .toList();
+          if (currentRows.length != 1) {
+            throw const FormatException('Older file changed during download');
+          }
+          requireUnchangedLegacyFileMetadata(listed, currentRows.single);
+          return (bytes: bytes, contentType: listedMime, fileName: listedName);
+        } catch (_) {
+          bytes.fillRange(0, bytes.length, 0);
+          rethrow;
         }
-        requireUnchangedLegacyFileMetadata(listed, currentRows.single);
-        return (bytes: bytes, contentType: listedMime, fileName: listedName);
       }
 
       Future<Map<String, dynamic>> post(
@@ -19185,7 +19200,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             listed, opened.sourceMetadata, sourceIsExport: true,
           );
           return opened;
-        });
+        }, maxBytes: maxBytes);
         if (!currentAccess()) throw StateError('Vault session changed');
         return (bytes: opened.bytes, contentType: listedMime,
                 fileName: listedName);
@@ -21764,6 +21779,56 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             previousSelection: selectedRecord,
             forcePrivate: true,
           ).action;
+    if (action == zk_private_chat.ZkLocalChatAction.readText &&
+        zk_local_text.isLocallyReadableText(
+          file.fileName, file.contentType,
+        ) && file.fileSize <= zk_local_text.maxLocalTextFollowUpBytes) {
+      late final Uint8List textBytes;
+      late final String sourceName;
+      late final String? sourceMime;
+      if (file.v2Available) {
+        final opened = await client.downloadAvailableV2File(
+          authToken: token,
+          fileId: file.id,
+          maxBytes: zk_local_text.maxLocalTextFollowUpBytes,
+        );
+        textBytes = opened.bytes;
+        sourceName = opened.manifest.displayName;
+        sourceMime = opened.manifest.contentType;
+      } else {
+        final name = context.read<AppState>().vaultName;
+        if (name == null) throw StateError('Vault access changed');
+        final opened = await _fetchProofOnlyLegacyFile(
+          client: client,
+          vaultName: name,
+          authToken: token,
+          fileId: file.id,
+          fallbackFileName: file.fileName,
+          fallbackMime: file.contentType,
+          maxBytes: zk_local_text.maxLocalTextFollowUpBytes,
+        );
+        textBytes = opened.bytes;
+        sourceName = opened.fileName;
+        sourceMime = opened.contentType;
+      }
+      final excerpt = zk_local_text.localTextFollowUpExcerpt(
+        bytes: textBytes,
+        fileName: sourceName,
+        mimeType: sourceMime,
+        accessIsCurrent: accessIsCurrent,
+      );
+      if (!accessIsCurrent()) return true;
+      _zkPrivateChatFlow?.clear();
+      setState(() {
+        selectedSection = _DashboardSection.chat;
+        input.clear();
+        msgs.add(_Msg('user', text));
+        msgs.add(_Msg('assistant', excerpt ??
+            'This file has no locally readable text. Open it to view it.'));
+      });
+      _scrollToBottom();
+      return true;
+    }
     final pendingAction = switch (action) {
       zk_private_chat.ZkLocalChatAction.download => 'download',
       zk_private_chat.ZkLocalChatAction.open ||

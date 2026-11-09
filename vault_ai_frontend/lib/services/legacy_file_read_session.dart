@@ -30,11 +30,11 @@ final class LegacyFileReadSession {
 
   /// Keep the caller's final metadata check inside the page-sequence queue.
   Future<T> readFileWith<T>(
-    String fileId,
-    Future<T> Function(
-      ({Uint8List bytes, Map<String, dynamic> sourceMetadata}) opened,
-    ) inspect,
-  ) async {
+      String fileId,
+      Future<T> Function(
+        ({Uint8List bytes, Map<String, dynamic> sourceMetadata}) opened,
+      ) inspect,
+      {int? maxBytes}) async {
     if (fileId.isEmpty || fileId.length > 128) {
       throw const FormatException('Invalid file identity');
     }
@@ -60,6 +60,9 @@ final class LegacyFileReadSession {
           declaredSize < 0 ||
           declaredSize > LegacyCiphertextExportClient.maxTotalChars) {
         throw const FormatException('Older file needs another download path');
+      }
+      if (maxBytes != null && (maxBytes < 0 || declaredSize > maxBytes)) {
+        throw const FormatException('Older file exceeds local read limit');
       }
       final source = await _export.readFileSource(
         fileId: fileId,

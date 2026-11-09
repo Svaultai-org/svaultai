@@ -6103,9 +6103,11 @@ class VaultAIClient {
   Future<FileV2Download> downloadAvailableV2File({
     required String authToken,
     required String fileId,
+    int maxBytes = FileV2Reader.maxDownloadBytes,
   }) => _fileV2Reader(authToken: authToken).download(
         fileId,
         requireReady: true,
+        maxBytes: maxBytes,
       );
 
   Future<FileV2Manifest> renameAvailableV2File({
