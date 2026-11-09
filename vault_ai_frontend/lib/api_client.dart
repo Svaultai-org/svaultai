@@ -2645,8 +2645,10 @@ class VaultAIClient {
     required String passerLabelCiphertext,
     required String zkProofToken,
     required String authToken,
+    void Function()? accessGuard,
   }) async {
-    final response = await _sessionHttp.post(
+    accessGuard?.call();
+    final response = await _sessionHttpWithGuard(accessGuard).post(
       Uri.parse('$baseUrl/beneficiary/zk-create'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -2654,6 +2656,7 @@ class VaultAIClient {
         'zk_proof_token': zkProofToken,
       }),
     );
+    accessGuard?.call();
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -2666,12 +2669,43 @@ class VaultAIClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  /// Resolve only the pairing protocol of an unused code. This transitional,
+  /// authenticated lookup lets an OPAQUE vault with existing old links choose
+  /// the V2 proof-only linker for new invitations while preserving old codes.
+  Future<String> beneficiaryPairingProtocol({
+    required String pairingCode,
+    required String authToken,
+    void Function()? accessGuard,
+  }) async {
+    accessGuard?.call();
+    final response = await _sessionHttpWithGuard(accessGuard).post(
+      Uri.parse('$baseUrl/beneficiary/pairing-protocol'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({'pairing_code': pairingCode}),
+    );
+    accessGuard?.call();
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw StateError('Pairing code check is unavailable.');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic> ||
+        !const {'private', 'legacy', 'unknown'}
+            .contains(decoded['protocol'])) {
+      throw const FormatException('Invalid pairing code check');
+    }
+    return decoded['protocol'] as String;
+  }
+
   Future<Map<String, dynamic>> linkZkBeneficiary({
     required String pairingCode,
     required String zkProofToken,
     required String authToken,
+    void Function()? accessGuard,
   }) async {
-    final response = await _sessionHttp.post(
+    accessGuard?.call();
+    final response = await _sessionHttpWithGuard(accessGuard).post(
       Uri.parse('$baseUrl/beneficiary/zk-link'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -2679,6 +2713,7 @@ class VaultAIClient {
         'zk_proof_token': zkProofToken,
       }),
     );
+    accessGuard?.call();
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);

@@ -1219,6 +1219,11 @@ class ZkLinkBeneficiaryRequest(BaseModel):
     zk_proof_token: str = Field(..., min_length=1, max_length=128)
 
 
+class BeneficiaryPairingProtocolRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    pairing_code: str = Field(..., min_length=1, max_length=128)
+
+
 class BeneficiaryListRequest(BaseModel):
     vault_name: str = ""
     pin: Optional[str] = None
@@ -10693,6 +10698,50 @@ async def beneficiary_zk_link_endpoint(
         conn.close()
     return {"link_id": row["id"], "status": "linked",
             "pairing_protocol": "zk-beneficiary-v2"}
+
+
+@app.post("/beneficiary/pairing-protocol")
+@limiter.limit("10/hour")
+async def beneficiary_pairing_protocol_endpoint(
+    request: Request,
+    payload: BeneficiaryPairingProtocolRequest,
+    principal=Depends(verify_trusted_device),
+):
+    """Choose a PIN-free link for new codes without changing older codes.
+
+    This returns only the protocol for an unused, unexpired code. The code
+    itself is high entropy and the endpoint is authenticated and rate limited.
+    Both link endpoints independently recheck the row under their own lock.
+    """
+    if (not _env_bool("VAULTAI_ZK_MIXED_BENEFICIARY_LINK_LOOKUP_ENABLED") or
+            not _env_bool("VAULTAI_ZK_BENEFICIARY_V2_PAIRING_ENABLED")):
+        raise HTTPException(status_code=404, detail="Not found")
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """SELECT vault_handle, opaque_registration_record
+                 FROM vaults WHERE vault_id=%s""",
+            (principal["vault_id"],),
+        )
+        vault = cur.fetchone()
+        if (not vault or vault["vault_handle"] is None or
+                vault["opaque_registration_record"] is None):
+            raise HTTPException(status_code=409, detail="zk_vault_required")
+        cur.execute(
+            """SELECT status, pairing_expires_at, wrapped_vault_key
+                 FROM beneficiary_links WHERE pairing_code_hash=%s""",
+            (hash_pairing_code(payload.pairing_code.strip()),),
+        )
+        row = cur.fetchone()
+    finally:
+        conn.close()
+    if (not row or row["status"] != "pairing_pending" or
+            not row["pairing_expires_at"] or
+            row["pairing_expires_at"] <= datetime.now(timezone.utc)):
+        return {"protocol": "unknown"}
+    return {"protocol": "private" if row["wrapped_vault_key"] ==
+            _ZK_BENEFICIARY_V2_MARKER else "legacy"}
 
 
 @app.post("/beneficiary/create")

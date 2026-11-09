@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 import main
+import security_headers
 from routes import auth_zk_routes
 
 
@@ -91,6 +92,55 @@ def test_v2_pairing_off_by_default_and_rejects_pin_field(monkeypatch):
         main.ZkLinkBeneficiaryRequest(
             pairing_code="synthetic", zk_proof_token="proof", pin="123456",
         )
+
+
+def test_mixed_pairing_lookup_is_default_off_and_never_accepts_pin(monkeypatch):
+    assert security_headers._is_sensitive_path("/beneficiary/pairing-protocol")
+    monkeypatch.delenv("VAULTAI_ZK_MIXED_BENEFICIARY_LINK_LOOKUP_ENABLED", raising=False)
+    monkeypatch.setattr(main, "get_db", lambda: pytest.fail("DB reached while disabled"))
+    payload = main.BeneficiaryPairingProtocolRequest(pairing_code="synthetic")
+    with pytest.raises(HTTPException) as denied:
+        _run(main.beneficiary_pairing_protocol_endpoint, payload, BENEFICIARY)
+    assert denied.value.status_code == 404
+    with pytest.raises(ValidationError):
+        main.BeneficiaryPairingProtocolRequest(
+            pairing_code="synthetic", pin="synthetic-pin",
+        )
+
+
+def test_mixed_pairing_lookup_selects_protocol_without_using_pin(monkeypatch):
+    monkeypatch.setenv("VAULTAI_ZK_MIXED_BENEFICIARY_LINK_LOOKUP_ENABLED", "true")
+    monkeypatch.setenv("VAULTAI_ZK_BENEFICIARY_V2_PAIRING_ENABLED", "true")
+    db = FakeDb()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(main, "verify_vault_pin", lambda *_: pytest.fail("PIN used"))
+    db.link = {
+        "status": "pairing_pending",
+        "pairing_expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+        "wrapped_vault_key": main._ZK_BENEFICIARY_V2_MARKER,
+    }
+    payload = main.BeneficiaryPairingProtocolRequest(pairing_code="synthetic")
+    assert _run(main.beneficiary_pairing_protocol_endpoint, payload, BENEFICIARY) == {
+        "protocol": "private",
+    }
+    db.link["wrapped_vault_key"] = "synthetic-old-envelope"
+    assert _run(main.beneficiary_pairing_protocol_endpoint, payload, BENEFICIARY) == {
+        "protocol": "legacy",
+    }
+    db.link["pairing_expires_at"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+    assert _run(main.beneficiary_pairing_protocol_endpoint, payload, BENEFICIARY) == {
+        "protocol": "unknown",
+    }
+    db.link["pairing_expires_at"] = datetime.now(timezone.utc) + timedelta(minutes=5)
+    db.link["status"] = "linked"
+    assert _run(main.beneficiary_pairing_protocol_endpoint, payload, BENEFICIARY) == {
+        "protocol": "unknown",
+    }
+    db.link = None
+    assert _run(main.beneficiary_pairing_protocol_endpoint, payload, BENEFICIARY) == {
+        "protocol": "unknown",
+    }
+    assert db.commits == 0
 
 
 def test_v2_create_and_link_have_no_server_key_or_pin(monkeypatch):

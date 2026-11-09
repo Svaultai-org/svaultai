@@ -1032,6 +1032,25 @@ const bool kEnableZkBeneficiaryV2Pairing = bool.fromEnvironment(
   defaultValue: false,
 );
 
+// New invitations can use proof-only V2 pairing even when an older linked
+// inheritance prevents the server from offering a full beneficiary cutover.
+// Keep the full signed cutover off in this mixed state: older links retain
+// their existing actions. This does not switch, delete, or claim an old link.
+const bool kEnableZkMixedBeneficiaryCreate = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_MIXED_BENEFICIARY_CREATE',
+  defaultValue: false,
+) && kEnableZkBeneficiaryProof && kEnableZkBeneficiaryV2Pairing &&
+    !kSignedBeneficiaryClientEnabled;
+
+// Resolve the protocol of a code before linking in a mixed old/V2 account.
+// The server lookup must be enabled with this client flag. An unknown lookup
+// fails without falling through to a PIN-bearing link request.
+const bool kEnableZkMixedBeneficiaryLink = bool.fromEnvironment(
+  'VAULTAI_ENABLE_ZK_MIXED_BENEFICIARY_LINK',
+  defaultValue: false,
+) && kEnableZkBeneficiaryProof && kEnableZkBeneficiaryV2Pairing &&
+    !kSignedBeneficiaryClientEnabled;
+
 // Separate, explicit beneficiary action for a released old link. All linked
 // proof and saved-item routes must be present in the same test build.
 const bool kEnableLinkedOldInheritanceBeneficiaryUi = bool.fromEnvironment(
@@ -1158,6 +1177,22 @@ bool _privateBeneficiarySession(AppState app, String token) =>
     (kPrivateOnlyUnlockEnabled ||
         kEnableZkPendingBeneficiaryUpgrade ||
         hasSignedBeneficiaryOffer(token));
+
+bool _privateBeneficiaryCreateSession(AppState app, String token) =>
+    _privateBeneficiarySession(app, token) ||
+    (kEnableZkMixedBeneficiaryCreate &&
+        app.vaultHandle?.isNotEmpty == true &&
+        app.vaultId != null &&
+        zk_mvk_store.ZkActiveMvk.current() != null &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == app.vaultId);
+
+bool _mixedBeneficiaryLinkLookupSession(AppState app, String token) =>
+    !_privateBeneficiarySession(app, token) &&
+    kEnableZkMixedBeneficiaryLink &&
+    app.vaultHandle?.isNotEmpty == true &&
+    app.vaultId != null &&
+    zk_mvk_store.ZkActiveMvk.current() != null &&
+    zk_mvk_store.ZkActiveMvk.currentVaultId() == app.vaultId;
 
 bool _privateLegacyInheritanceUnavailable(String token) =>
     kPrivateOnlyUnlockEnabled ||
@@ -4466,12 +4501,29 @@ String inferAssetTypeForUpload({
   return (detectedType: dt, detectedService: ds);
 }
 
-Future<String> encryptZkBeneficiaryLabelCiphertext(String label) async {
-  final mvk = zk_mvk_store.ZkActiveMvk.current();
+Future<String> encryptZkBeneficiaryLabelCiphertext(
+  String label, {
+  SecretKey? expectedMvk,
+  String? expectedVaultId,
+  bool Function()? accessIsCurrent,
+}) async {
+  final mvk = expectedMvk ?? zk_mvk_store.ZkActiveMvk.current();
   if (mvk == null) throw StateError('Private vault key is unavailable.');
+  void checkAccess() {
+    if (accessIsCurrent?.call() == false ||
+        (expectedMvk != null &&
+            !identical(zk_mvk_store.ZkActiveMvk.current(), expectedMvk)) ||
+        (expectedVaultId != null &&
+            zk_mvk_store.ZkActiveMvk.currentVaultId() != expectedVaultId)) {
+      throw StateError('Private vault access changed.');
+    }
+  }
+  checkAccess();
   final hierarchy = vk_hier.VaultKeyHierarchy(mvk);
   final metaKey = await hierarchy.metadataKey();
+  checkAccess();
   final ct = await vk_hier.aesGcmWrap(metaKey, utf8.encode(label));
+  checkAccess();
   return vk_hier.b64urlEncode(ct);
 }
 
@@ -11141,10 +11193,35 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                       VaultAIClient(baseUrl: backendBaseUrl);
                                   final labelText = labelCtrl.text.trim();
                                   late final Map<String, dynamic> result;
-                                  _requireAvailableBeneficiaryOffer(app, token);
-                                  if (_privateBeneficiarySession(app, token)) {
+                                  final privateCreate =
+                                      _privateBeneficiaryCreateSession(app, token);
+                                  if (!privateCreate) {
+                                    _requireAvailableBeneficiaryOffer(app, token);
+                                  }
+                                  if (privateCreate) {
                                     if (!kEnableZkBeneficiaryV2Pairing) {
                                       throw StateError('Beneficiary pairing is not available in this build.');
+                                    }
+                                    final boundVaultId = app.vaultId;
+                                    final boundMvk =
+                                        zk_mvk_store.ZkActiveMvk.current();
+                                    final boundHandle = app.vaultHandle;
+                                    final epoch = app._sessionEpoch;
+                                    if (boundVaultId == null ||
+                                        boundMvk == null ||
+                                        boundHandle == null) {
+                                      throw StateError('Unlock this private vault before pairing.');
+                                    }
+                                    bool current() => app.unlocked &&
+                                        app._sessionForeground &&
+                                        !app.sessionVerificationBlocked &&
+                                        app._isCurrentSession(token, epoch) &&
+                                        app.vaultId == boundVaultId &&
+                                        app.vaultHandle == boundHandle &&
+                                        identical(zk_mvk_store.ZkActiveMvk.current(), boundMvk) &&
+                                        zk_mvk_store.ZkActiveMvk.currentVaultId() == boundVaultId;
+                                    if (!current()) {
+                                      throw StateError('Private vault access changed.');
                                     }
                                     final entered = await _promptForActionPin(
                                       context, 'Verify beneficiary pairing',
@@ -11153,17 +11230,33 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                       setLocal(() => creating = false);
                                       return;
                                     }
+                                    if (!current()) {
+                                      throw StateError('Private vault access changed.');
+                                    }
                                     final proof = await _zkActionProof(app, token, entered);
                                     final labelCiphertext =
-                                        await encryptZkBeneficiaryLabelCiphertext(labelText);
-                                    if (app.sessionToken != token) {
+                                        await encryptZkBeneficiaryLabelCiphertext(
+                                      labelText,
+                                      expectedMvk: boundMvk,
+                                      expectedVaultId: boundVaultId,
+                                      accessIsCurrent: current,
+                                    );
+                                    if (!current()) {
                                       throw StateError('Vault access changed.');
                                     }
                                     result = await client.createZkBeneficiary(
                                       passerLabelCiphertext: labelCiphertext,
                                       zkProofToken: proof,
                                       authToken: token,
+                                      accessGuard: () {
+                                        if (!current()) {
+                                          throw StateError('Private vault access changed.');
+                                        }
+                                      },
                                     );
+                                    if (!current()) {
+                                      throw StateError('Private vault access changed.');
+                                    }
                                   } else {
                                     requireLegacyBeneficiaryPinActionAllowed(
                                         vaultHandle: app.vaultHandle);
@@ -11189,7 +11282,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                   // an unlabelled row (the beneficiary
                                   // list would be unreadable). Show
                                   // the error and let the user retry.
-                                  if (!_privateBeneficiarySession(app, token) &&
+                                  if (!privateCreate &&
                                       zk_mvk_store.ZkActiveMvk.current() != null) {
                                     final linkId =
                                         (result['link_id'] as num?)?.toInt();
@@ -11390,19 +11483,74 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                   final client =
                                       VaultAIClient(baseUrl: backendBaseUrl);
                                   late final Map<String, dynamic> result;
-                                  _requireAvailableBeneficiaryOffer(app, token);
-                                  if (_privateBeneficiarySession(app, token)) {
+                                  String? mixedProtocol;
+                                  if (_mixedBeneficiaryLinkLookupSession(app, token)) {
+                                    final boundVaultId = app.vaultId!;
+                                    final boundMvk =
+                                        zk_mvk_store.ZkActiveMvk.current()!;
+                                    final epoch = app._sessionEpoch;
+                                    void checkLookupAccess() {
+                                      if (!app.unlocked ||
+                                          !app._sessionForeground ||
+                                          app.sessionVerificationBlocked ||
+                                          !app._isCurrentSession(token, epoch) ||
+                                          app.vaultId != boundVaultId ||
+                                          !identical(zk_mvk_store.ZkActiveMvk.current(), boundMvk) ||
+                                          zk_mvk_store.ZkActiveMvk.currentVaultId() != boundVaultId) {
+                                        throw StateError('Private vault access changed.');
+                                      }
+                                    }
+                                    mixedProtocol =
+                                        await client.beneficiaryPairingProtocol(
+                                      pairingCode: code,
+                                      authToken: token,
+                                      accessGuard: checkLookupAccess,
+                                    );
+                                    if (mixedProtocol == 'unknown') {
+                                      throw Exception('Invalid or expired pairing code.');
+                                    }
+                                  } else {
+                                    _requireAvailableBeneficiaryOffer(app, token);
+                                  }
+                                  if (_privateBeneficiarySession(app, token) ||
+                                      mixedProtocol == 'private') {
                                     if (!kEnableZkBeneficiaryV2Pairing) {
                                       throw StateError('Beneficiary pairing is not available in this build.');
                                     }
                                     final beneficiarySk =
                                         zk_sk_store.ZkActiveSkVault.current();
+                                    final boundMvk = mixedProtocol == 'private'
+                                        ? zk_mvk_store.ZkActiveMvk.current()
+                                        : null;
+                                    final boundVaultId = app.vaultId;
+                                    final boundHandle = app.vaultHandle;
+                                    final epoch = app._sessionEpoch;
                                     if (beneficiarySk == null ||
-                                        zk_sk_store.ZkActiveSkVault.currentVaultId() != app.vaultId) {
+                                        boundVaultId == null ||
+                                        boundHandle == null ||
+                                        (mixedProtocol == 'private' && boundMvk == null) ||
+                                        zk_sk_store.ZkActiveSkVault.currentVaultId() != boundVaultId) {
                                       throw StateError('Unlock this vault before pairing.');
+                                    }
+                                    bool current() => app.unlocked &&
+                                        app._sessionForeground &&
+                                        !app.sessionVerificationBlocked &&
+                                        app._isCurrentSession(token, epoch) &&
+                                        app.vaultId == boundVaultId &&
+                                        app.vaultHandle == boundHandle &&
+                                        (mixedProtocol != 'private' ||
+                                            (identical(zk_mvk_store.ZkActiveMvk.current(), boundMvk) &&
+                                                zk_mvk_store.ZkActiveMvk.currentVaultId() == boundVaultId)) &&
+                                        identical(zk_sk_store.ZkActiveSkVault.current(), beneficiarySk) &&
+                                        zk_sk_store.ZkActiveSkVault.currentVaultId() == boundVaultId;
+                                    if (!current()) {
+                                      throw StateError('Private vault access changed.');
                                     }
                                     final fingerprint = await inh_mvk
                                         .beneficiaryPrivateKeyFingerprint(beneficiarySk);
+                                    if (!current()) {
+                                      throw StateError('Private vault access changed.');
+                                    }
                                     final entered = await _promptForActionPin(
                                       context, 'Verify inheritance pairing',
                                     );
@@ -11410,15 +11558,26 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                       setLocal(() => linking = false);
                                       return;
                                     }
+                                    if (!current()) {
+                                      throw StateError('Private vault access changed.');
+                                    }
                                     final proof = await _zkActionProof(app, token, entered);
-                                    if (app.sessionToken != token) {
+                                    if (!current()) {
                                       throw StateError('Vault access changed.');
                                     }
                                     result = await client.linkZkBeneficiary(
                                       pairingCode: code,
                                       zkProofToken: proof,
                                       authToken: token,
+                                      accessGuard: () {
+                                        if (!current()) {
+                                          throw StateError('Private vault access changed.');
+                                        }
+                                      },
                                     );
+                                    if (!current()) {
+                                      throw StateError('Private vault access changed.');
+                                    }
                                     linkedFingerprint = fingerprint;
                                   } else {
                                     requireLegacyBeneficiaryPinActionAllowed(
