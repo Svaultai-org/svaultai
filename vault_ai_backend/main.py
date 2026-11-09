@@ -77,6 +77,9 @@ from routes.vault_ciphertext_write_routes import (
 )
 from routes.file_v2_routes import router as file_v2_router
 from routes.file_v2_new_upload_routes import router as file_v2_new_upload_router
+from routes.file_private_conflict_backfill_routes import (
+    router as file_private_conflict_backfill_router,
+)
 from routes.credential_v2_routes import router as credential_v2_router
 from routes.wallet_backup_v2_routes import router as wallet_backup_v2_router
 from routes.wallet_v2_routes import router as wallet_v2_router
@@ -463,6 +466,7 @@ app.include_router(auth_zk_router)
 app.include_router(legacy_ciphertext_export_router)
 app.include_router(zk_general_chat_router)
 app.include_router(legacy_ciphertext_migration_router)
+app.include_router(file_private_conflict_backfill_router)
 app.include_router(legacy_memory_v2_copy_router)
 app.include_router(zk_metadata_inventory_router)
 app.include_router(vault_metadata_migration_router)
