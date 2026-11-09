@@ -199,6 +199,38 @@ def test_publishes_exact_ciphertext_once_and_retries_without_double_charge(harne
                for sql in db.cur.sql)
 
 
+def test_inherited_publish_needs_one_beneficiary_proof(harness, monkeypatch):
+    db, _ = harness
+    monkeypatch.setattr(route.inheritance_files, "_enabled", lambda: None)
+    release = mock.Mock()
+    monkeypatch.setattr(route, "_require_inheritance_release_for_publish",
+                        release)
+    consume = mock.Mock()
+    monkeypatch.setattr(route, "consume_recent_zk_proof_on_cursor", consume)
+    inherited = {
+        "inheritance_link_id": 17,
+        "inheritance_source_file_id": "synthetic-owner-file",
+    }
+    with pytest.raises(HTTPException) as missing:
+        route.publish_new_file(
+            FILE, route.PublishNewFile(confirm=True, **inherited), PRINCIPAL,
+        )
+    assert missing.value.status_code == 400
+    assert db.commits == 0 and db.cur.sql == []
+    assert release.call_count == 0 and consume.call_count == 0
+
+    payload = route.PublishNewFile(
+        confirm=True, zk_proof_token="synthetic-opaque-proof", **inherited,
+    )
+    first = route.publish_new_file(FILE, payload, PRINCIPAL)
+    second = route.publish_new_file(FILE, payload, PRINCIPAL)
+    assert first["status"] == "published"
+    assert second["status"] == "already_published"
+    assert release.call_count == 2
+    consume.assert_called_once_with("synthetic-opaque-proof", PRINCIPAL, db.cur)
+    assert db.commits == 2
+
+
 def test_512_mib_private_file_framing_is_bounded_without_file_allocation():
     assert route.MAX_NEW_FILE_BYTES == 512 * 1024 * 1024
     payload = staging.Manifest(

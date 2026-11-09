@@ -30,7 +30,10 @@ from routes.file_v2_routes import (
 )
 from subscription_entitlement import require_content_write
 from vault_core import MAX_VAULT_BYTES, get_db, is_vault_zk_adopted
-from routes.auth_zk_routes import consume_recent_zk_proof
+from routes.auth_zk_routes import (
+    consume_recent_zk_proof,
+    consume_recent_zk_proof_on_cursor,
+)
 from routes import inheritance_v2_file_export_routes as inheritance_files
 
 
@@ -49,6 +52,7 @@ class PublishNewFile(BaseModel):
     inheritance_source_file_id: str | None = Field(
         default=None, min_length=1, max_length=128,
     )
+    zk_proof_token: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class DeleteNewFile(BaseModel):
@@ -170,6 +174,10 @@ def publish_new_file(
         raise HTTPException(400, detail="inheritance_source_required")
     if payload.inheritance_link_id is not None:
         inheritance_files._enabled()
+        if payload.zk_proof_token is None:
+            raise HTTPException(400, detail="inheritance_beneficiary_proof_required")
+    elif payload.zk_proof_token is not None:
+        raise HTTPException(400, detail="unexpected_beneficiary_proof")
     vault_id = principal["vault_id"]
     if not is_vault_zk_adopted(vault_id):
         raise HTTPException(409, detail="zk_vault_required")
@@ -250,6 +258,17 @@ def publish_new_file(
                 "requested_bytes": total,
                 "limit_bytes": limit,
             })
+
+        # The release state authorizes the beneficiary to copy the source;
+        # publishing a new destination file also requires a fresh proof of
+        # control of this beneficiary vault. Consume it in this transaction so
+        # a failed quota or framing check does not waste the one-use proof.
+        # The already-published retry above is read-only and does not consume
+        # a second proof after a lost response.
+        if payload.inheritance_link_id is not None:
+            consume_recent_zk_proof_on_cursor(
+                payload.zk_proof_token, principal, cur,
+            )
 
         # NULL filename/content type are intentional: the only human-readable
         # metadata is inside the MVK-encrypted manifest already staged.

@@ -25,6 +25,8 @@ class SyntheticTransfer {
   int targetManifestPosts = 0;
   int targetChunkPuts = 0;
   int publishCalls = 0;
+  int proofCalls = 0;
+  String proofToken = 'synthetic-opaque-proof';
   int? failPutAt;
   int? revokeAfterSourceReads;
   bool revokeOnFinalManifest = false;
@@ -164,6 +166,7 @@ class SyntheticTransfer {
     }
     if (method == 'POST' && path.endsWith('/publish-new')) {
       publishCalls++;
+      expect(body?['zk_proof_token'], 'synthetic-opaque-proof');
       if (targetChunks.length != sourceManifest.chunkCount) {
         fail('Published incomplete synthetic file');
       }
@@ -184,6 +187,12 @@ class SyntheticTransfer {
   Future<Map<String, dynamic>> transfer() => transferReleasedV2FileStreamed(
         linkId: 31,
         sourceFileId: sourceFileId,
+        freshBeneficiaryProof: () async {
+          proofCalls++;
+          expect(sourceChunkReads,
+              greaterThanOrEqualTo(sourceManifest.chunkCount * 2));
+          return proofToken;
+        },
         beneficiaryPrivateKey: beneficiaryPrivateKey,
         beneficiaryMvk: beneficiaryMvk,
         releasedPackage: releasedPackage,
@@ -208,6 +217,7 @@ void main() {
     expect(fixture.targetManifestPosts, 1);
     expect(fixture.targetChunkPuts, fixture.sourceManifest.chunkCount);
     expect(fixture.sourceChunkReads, fixture.sourceManifest.chunkCount * 2);
+    expect(fixture.proofCalls, 1);
     expect(fixture.targetPaths.join(' '), isNot(contains('private-synthetic')));
   });
 
@@ -237,6 +247,7 @@ void main() {
     await expectLater(fixture.transfer(), throwsA(anything));
     expect(fixture.published, isFalse);
     expect(fixture.publishCalls, 0);
+    expect(fixture.proofCalls, 0);
   });
 
   test('lost publish acknowledgement resumes without another file', () async {
@@ -263,6 +274,7 @@ void main() {
     expect(fixture.targetChunks.length, fixture.sourceManifest.chunkCount);
     expect(fixture.published, isFalse);
     expect(fixture.publishCalls, 0);
+    expect(fixture.proofCalls, 0);
   });
 
   test('revocation at final release check blocks publish', () async {
@@ -274,6 +286,17 @@ void main() {
       throwsA(isA<FileV2ReadException>()),
     );
     expect(fixture.sourceManifestReads, 2);
+    expect(fixture.publishCalls, 0);
+    expect(fixture.published, isFalse);
+  });
+
+  test('PIN-shaped substitute is rejected after readback before publish',
+      () async {
+    final fixture = SyntheticTransfer(totalBytes: 29, chunkSize: 8);
+    await fixture.initialize();
+    fixture.proofToken = '123456';
+    await expectLater(fixture.transfer(), throwsArgumentError);
+    expect(fixture.proofCalls, 1);
     expect(fixture.publishCalls, 0);
     expect(fixture.published, isFalse);
   });

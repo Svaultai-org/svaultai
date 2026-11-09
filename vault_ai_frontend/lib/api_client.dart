@@ -5413,12 +5413,15 @@ class VaultAIClient {
 
   /// Transfer a released owner's V2 file one chunk at a time. The owner key
   /// and clear bytes stay on this device; only beneficiary-MVK ciphertext is
-  /// sent to the existing V2 upload routes. The server's inheritance export
-  /// gate is separately default-off, so this is not a user-visible flow yet.
+  /// sent to the existing V2 upload routes. A fresh beneficiary OPAQUE proof
+  /// is obtained after readback, just before publication. The server's
+  /// inheritance export gate is separately default-off, so this is not a
+  /// user-visible flow yet.
   Future<Map<String, dynamic>> transferInheritedV2File({
     required String authToken,
     required int linkId,
     required String sourceFileId,
+    required Future<String> Function() freshBeneficiaryProof,
     required SecretKey beneficiaryPrivateKey,
     required SecretKey beneficiaryMvk,
     required Map<String, dynamic> releasedPackage,
@@ -5483,6 +5486,7 @@ class VaultAIClient {
     return transferReleasedV2FileStreamed(
       linkId: linkId,
       sourceFileId: sourceFileId,
+      freshBeneficiaryProof: freshBeneficiaryProof,
       beneficiaryPrivateKey: beneficiaryPrivateKey,
       beneficiaryMvk: beneficiaryMvk,
       releasedPackage: releasedPackage,

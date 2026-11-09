@@ -16,6 +16,7 @@ import 'file_v2_writer.dart';
 import 'inheritance_v2_file_reader.dart';
 import 'inheritance_v2_file_stage.dart';
 import 'vault_key_hierarchy.dart';
+import 'zk_proof_token_guard.dart';
 
 typedef InheritedV2TargetRequest = Future<Map<String, dynamic>?> Function(
   String method,
@@ -114,6 +115,7 @@ Future<void> _compareEncryptedTargetChunk({
 Future<Map<String, dynamic>> transferReleasedV2FileStreamed({
   required int linkId,
   required String sourceFileId,
+  required Future<String> Function() freshBeneficiaryProof,
   required SecretKey beneficiaryPrivateKey,
   required SecretKey beneficiaryMvk,
   required Map<String, dynamic> releasedPackage,
@@ -282,6 +284,14 @@ Future<Map<String, dynamic>> transferReleasedV2FileStreamed({
   }
   await source.assertUnchanged();
   checkAccess();
+  // A large transfer can outlive a short-lived proof. Obtain it only after
+  // all ciphertext has been checked, immediately before publication.
+  final beneficiaryProofToken =
+      rejectPinShapedZkProof(await freshBeneficiaryProof());
+  if (beneficiaryProofToken.isEmpty) {
+    throw StateError('Beneficiary action proof required');
+  }
+  checkAccess();
   final published = await request(
     'POST',
     '/vault/file-v2/$targetId/publish-new',
@@ -289,6 +299,7 @@ Future<Map<String, dynamic>> transferReleasedV2FileStreamed({
       'confirm': true,
       'inheritance_link_id': linkId,
       'inheritance_source_file_id': sourceFileId,
+      'zk_proof_token': beneficiaryProofToken,
     },
   );
   if (published == null ||

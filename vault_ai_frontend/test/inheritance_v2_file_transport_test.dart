@@ -146,6 +146,7 @@ void main() {
             'confirm': true,
             'inheritance_link_id': 37,
             'inheritance_source_file_id': source.fileId,
+            'zk_proof_token': 'synthetic-opaque-proof',
           });
           expect(targetChunks.length, 1);
           publishCalls++;
@@ -165,6 +166,7 @@ void main() {
       authToken: 'synthetic-session',
       linkId: 37,
       sourceFileId: source.fileId,
+      freshBeneficiaryProof: () async => 'synthetic-opaque-proof',
       beneficiaryPrivateKey: privateKey,
       beneficiaryMvk: beneficiaryMvk,
       releasedPackage: package,
