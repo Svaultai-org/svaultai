@@ -30,6 +30,38 @@ void main() {
     }
   });
 
+  test('strict client version covers login and signup finalize only', () {
+    for (final path in <String>[
+      '/auth/zk-login-finalize',
+      '/auth/zk-register-finalize',
+    ]) {
+      expect(
+        strictPinFreeAuthHeaders(
+          path,
+          privateOnlyBuild: true,
+          clientReady: true,
+        ),
+        {'X-SVaultAI-Strict-Pin-Free-Client': 'v1'},
+      );
+      expect(
+        strictPinFreeAuthHeaders(
+          path,
+          privateOnlyBuild: false,
+          clientReady: true,
+        ),
+        isEmpty,
+      );
+    }
+    expect(
+      strictPinFreeAuthHeaders(
+        '/auth/zk-register-init',
+        privateOnlyBuild: true,
+        clientReady: true,
+      ),
+      isEmpty,
+    );
+  });
+
   test('only coded 426 is classified as a required client update', () {
     const required =
         '{"detail":{"code":"client_upgrade_required","message":"ignored"}}';

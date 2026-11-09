@@ -181,7 +181,10 @@ class StrictRawPinIngressGate:
             old_finalize = (
                 strict and
                 method == "POST" and
-                path.rstrip("/") == "/auth/zk-login-finalize" and
+                path.rstrip("/") in {
+                    "/auth/zk-login-finalize",
+                    "/auth/zk-register-finalize",
+                } and
                 not _has_strict_private_client_signal(scope.get("headers", ()))
             )
             old_login = (

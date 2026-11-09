@@ -5533,8 +5533,10 @@ Future<Map<String, dynamic>> _zkHttpPost(
     }
     headers['X-SVaultAI-Pin-Free-Memory'] = '1';
   }
-  if (path == '/auth/zk-login-finalize') {
-    headers.addAll(strictPinFreeClientHeaders(
+  if (path == '/auth/zk-login-finalize' ||
+      path == '/auth/zk-register-finalize') {
+    headers.addAll(strictPinFreeAuthHeaders(
+      path,
       privateOnlyBuild: kPrivateOnlyUnlockEnabled,
       clientReady:
           kZkPrivateOnlyClientReady && kPrivateWalletFeatureParityReady,

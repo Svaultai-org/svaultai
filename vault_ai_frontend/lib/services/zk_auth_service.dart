@@ -102,6 +102,24 @@ Map<String, String> strictPinFreeClientHeaders({
 }) => privateOnlyBuild && clientReady
     ? const <String, String>{'X-SVaultAI-Strict-Pin-Free-Client': 'v1'}
     : const <String, String>{};
+
+/// Both final authentication steps must carry the strict-version signal.
+/// Registration starts without a session, so the server checks this header
+/// before it reads a stale client's verifier-bearing finalize body.
+Map<String, String> strictPinFreeAuthHeaders(
+  String path, {
+  required bool privateOnlyBuild,
+  required bool clientReady,
+}) {
+  if (path != '/auth/zk-login-finalize' &&
+      path != '/auth/zk-register-finalize') {
+    return const <String, String>{};
+  }
+  return strictPinFreeClientHeaders(
+    privateOnlyBuild: privateOnlyBuild,
+    clientReady: clientReady,
+  );
+}
 // Build 77 has no complete older-chat/media reader. A later integration must
 // prove those readers before a client may request the irreversible offer.
 const bool kSignedPrivateChatLocalReadersReady = false;

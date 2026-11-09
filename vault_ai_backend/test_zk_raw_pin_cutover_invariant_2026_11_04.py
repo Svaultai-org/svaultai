@@ -52,6 +52,37 @@ def test_zk_signup_flag_matrix(
 
 
 @pytest.mark.parametrize(
+    "verifier_free,supplies_verifier,strict_client,status,stored",
+    [
+        (False, True, True, 503, False),
+        (True, False, False, 426, False),
+        (True, True, True, 409, False),
+        (True, False, True, 200, True),
+    ],
+)
+def test_strict_signup_requires_private_client_and_no_pin_oracle(
+    verifier_free, supplies_verifier, strict_client, status, stored,
+):
+    payload = _base_payload()
+    if not supplies_verifier:
+        payload.pop("pin_verifier")
+    response, conn = _run_register(
+        payload,
+        verifier_free=verifier_free,
+        strict_ingress=True,
+        strict_client=strict_client,
+    )
+    assert response.status_code == status, response.text
+    inserts = [
+        params for cur in conn.cursors for sql, params in cur.calls
+        if "INSERT INTO vaults" in sql
+    ]
+    assert bool(inserts) is stored
+    if stored:
+        assert inserts[0][2] == ""
+
+
+@pytest.mark.parametrize(
     "raw_pin_disabled,verifier_free,blocked",
     [
         (False, False, False),

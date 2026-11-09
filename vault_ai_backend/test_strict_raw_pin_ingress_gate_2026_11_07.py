@@ -266,26 +266,25 @@ def test_gate_does_not_intercept_private_routes_or_other_methods(monkeypatch):
 
 def test_old_opaque_finalize_is_rejected_before_body_read(monkeypatch):
     monkeypatch.setenv(FLAG_NAME, "true")
-    for values in ((), (b"other",), (b"v1", b"v1")):
+    for path in ("/auth/zk-login-finalize", "/auth/zk-register-finalize"):
+        for values in ((), (b"other",), (b"v1", b"v1")):
+            reads, starts, body = asyncio.run(_probe(
+                StrictRawPinIngressGate(_inner), "POST", path,
+                headers=tuple(
+                    (b"x-svaultai-strict-pin-free-client", value)
+                    for value in values
+                ),
+            ))
+            assert reads == []
+            assert [start["status"] for start in starts] == [426]
+            assert json.loads(body)["detail"]["code"] == "client_upgrade_required"
         reads, starts, body = asyncio.run(_probe(
-            StrictRawPinIngressGate(_inner), "POST",
-            "/auth/zk-login-finalize",
-            headers=tuple(
-                (b"x-svaultai-strict-pin-free-client", value)
-                for value in values
-            ),
+            StrictRawPinIngressGate(_inner), "POST", path,
+            headers=((b"x-svaultai-strict-pin-free-client", b"v1"),),
         ))
-        assert reads == []
-        assert [start["status"] for start in starts] == [426]
-        assert json.loads(body)["detail"]["code"] == "client_upgrade_required"
-    reads, starts, body = asyncio.run(_probe(
-        StrictRawPinIngressGate(_inner), "POST",
-        "/auth/zk-login-finalize",
-        headers=((b"x-svaultai-strict-pin-free-client", b"v1"),),
-    ))
-    assert len(reads) == 1
-    assert [start["status"] for start in starts] == [200]
-    assert body == b"passed"
+        assert len(reads) == 1
+        assert [start["status"] for start in starts] == [200]
+        assert body == b"passed"
 
 
 def test_integrated_middleware_order_keeps_cors_outside_strict_fence():
@@ -318,6 +317,7 @@ def test_integrated_app_rejects_before_body_and_keeps_browser_upgrade_visible(
         ("POST", "/auth/login", b"application/json"),
         ("POST", "/auth/signup", b"application/json"),
         ("POST", "/auth/zk-login-finalize", b"application/json"),
+        ("POST", "/auth/zk-register-finalize", b"application/json"),
         ("POST", "/upload-file", b"multipart/form-data; boundary=synthetic"),
         ("PATCH", "/manage/file", b"application/json"),
         ("DELETE", "/delete-file", b"application/json"),
