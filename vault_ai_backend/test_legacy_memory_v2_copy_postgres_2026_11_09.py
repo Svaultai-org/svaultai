@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 import psycopg2
@@ -319,7 +319,8 @@ def test_owner_copy_is_source_bound_and_keeps_legacy_active(monkeypatch):
         native_v2 = v2_memory.ai_memory_ciphertext_list(
             request=Request({"type": "http", "headers": [
                 (b"x-svaultai-memory-active-copy", b"1"),
-            ]}), memory_lookup_hash=None, principal=principal,
+            ]}), http_response=Response(), memory_lookup_hash=None,
+            principal=principal,
         )
         assert len(native_v2) == 1
         assert native_v2[0].payload_ciphertext == encoded_copy
