@@ -7,6 +7,7 @@ library;
 
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography/cryptography.dart';
 
 import 'file_private_conflict_tokens.dart';
@@ -15,11 +16,25 @@ import 'legacy_content_migration_stager.dart';
 import 'vault_key_hierarchy.dart';
 import 'zk_proof_token_guard.dart';
 
-typedef FileConflictBackfillGet =
-    Future<Map<String, dynamic>> Function(String bearer, String path);
-typedef FileConflictBackfillPost =
-    Future<Map<String, dynamic>> Function(
-        String bearer, String path, Map<String, dynamic> body);
+typedef FileConflictBackfillGet = Future<Map<String, dynamic>> Function(
+    String bearer, String path);
+typedef FileConflictBackfillPost = Future<Map<String, dynamic>> Function(
+    String bearer, String path, Map<String, dynamic> body);
+
+class _DigestCapture implements Sink<crypto.Digest> {
+  crypto.Digest? value;
+
+  @override
+  void add(crypto.Digest data) {
+    if (value != null) throw StateError('File digest already completed');
+    value = data;
+  }
+
+  @override
+  void close() {
+    if (value == null) throw StateError('File digest is incomplete');
+  }
+}
 
 class FilePrivateConflictBackfill {
   static const int maxFileBytes = 64 * 1024 * 1024;
@@ -53,8 +68,11 @@ class FilePrivateConflictBackfill {
   });
 
   void _requireCurrent() {
-    if (!enabled || bearer.isEmpty || vaultId.isEmpty ||
-        currentBearer() != bearer || currentVaultId() != vaultId ||
+    if (!enabled ||
+        bearer.isEmpty ||
+        vaultId.isEmpty ||
+        currentBearer() != bearer ||
+        currentVaultId() != vaultId ||
         currentSessionEpoch() != sessionEpoch ||
         !identical(currentMvk(), mvk)) {
       throw StateError('Private file indexing session changed');
@@ -65,9 +83,10 @@ class FilePrivateConflictBackfill {
       LegacyStageReadbackEvidence evidence) async {
     _requireCurrent();
     final fileId = evidence.recordId;
-    if (!evidence.isFile || fileId.isEmpty || fileId.length > 128 ||
-        !RegExp(r'^[A-Za-z0-9_-]{43}$')
-            .hasMatch(evidence.sourceSnapshot) ||
+    if (!evidence.isFile ||
+        fileId.isEmpty ||
+        fileId.length > 128 ||
+        !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(evidence.sourceSnapshot) ||
         evidence.readbackReceipt.isEmpty ||
         !evidence.receiptExpiresAt.isAfter(DateTime.now().toUtc())) {
       throw const FormatException('Verified old-file readback is unavailable');
@@ -88,8 +107,7 @@ class FilePrivateConflictBackfill {
           manifest.totalBytes != download.bytes.length ||
           (manifest.fileName?.trim().isEmpty ?? true) &&
               (manifest.savedName?.trim().isEmpty ?? true) ||
-          (manifest.relativePath != null &&
-              !evidence.verifiedExtraFields)) {
+          (manifest.relativePath != null && !evidence.verifiedExtraFields)) {
         throw const FormatException('Old-file readback identity changed');
       }
       final staged = await get(
@@ -157,6 +175,109 @@ class FilePrivateConflictBackfill {
     }
   }
 
+  /// Index a previously retired or newly ready V2 file, including files too
+  /// large for the old-source migration codec. Only a streaming digest and
+  /// MVK-blinded name/content tags leave this client; plaintext stays local.
+  Future<void> indexReadyV2File(String fileId) async {
+    _requireCurrent();
+    if (fileId.isEmpty || fileId.length > 128) {
+      throw const FormatException('Invalid private file ID');
+    }
+    final path = '/vault/file-conflict/ready-source/'
+        '${Uri.encodeComponent(fileId)}';
+    Future<Map<String, dynamic>> source() async {
+      _requireCurrent();
+      final value = await get(bearer, path);
+      _requireCurrent();
+      if (value['file_id'] != fileId ||
+          value['source_revision'] is! String ||
+          !RegExp(r'^[A-Za-z0-9_-]{43}$')
+              .hasMatch(value['source_revision'] as String) ||
+          value['file_size'] is! int ||
+          value['name_version'] is! int) {
+        throw const FormatException('Invalid ready file source');
+      }
+      return value;
+    }
+
+    final first = await source();
+    final reader = FileV2Reader(
+      mvk: mvk,
+      get: (requestPath) async {
+        _requireCurrent();
+        final response = await get(bearer, requestPath);
+        _requireCurrent();
+        return response;
+      },
+    );
+    final manifest = await reader.readManifest(fileId, requireReady: true);
+    _requireCurrent();
+    if (manifest.totalBytes != first['file_size'] ||
+        manifest.nameVersion != first['name_version'] ||
+        (manifest.fileName?.trim().isEmpty ?? true) &&
+            (manifest.savedName?.trim().isEmpty ?? true)) {
+      throw const FormatException('Ready file identity changed');
+    }
+    final digestCapture = _DigestCapture();
+    final digestInput = crypto.sha256.startChunkedConversion(digestCapture);
+    for (var index = 0; index < manifest.chunkCount; index++) {
+      _requireCurrent();
+      final clear = await reader.readChunk(manifest, index);
+      try {
+        _requireCurrent();
+        digestInput.add(clear);
+      } finally {
+        clear.fillRange(0, clear.length, 0);
+      }
+    }
+    digestInput.close();
+    final finalSource = await source();
+    if (finalSource['source_revision'] != first['source_revision'] ||
+        finalSource['file_size'] != manifest.totalBytes ||
+        finalSource['name_version'] != manifest.nameVersion) {
+      throw const FormatException('Ready file changed during readback');
+    }
+    final digest = Uint8List.fromList(digestCapture.value!.bytes);
+    late final FilePrivateConflictTokens tags;
+    try {
+      tags = await FilePrivateConflictTokenMaker(
+        mvk: mvk,
+        vaultId: vaultId,
+      ).make(
+        wholeFileSha256: digest,
+        fileSize: manifest.totalBytes,
+        fileName: manifest.fileName ?? '',
+        savedName: manifest.savedName,
+        relativePath: manifest.relativePath,
+      );
+    } finally {
+      digest.fillRange(0, digest.length, 0);
+    }
+    _requireCurrent();
+    final proof = rejectPinShapedZkProof(await proofProvider());
+    _requireCurrent();
+    final reply = await post(
+      bearer,
+      '/vault/file-conflict/index-ready',
+      <String, dynamic>{
+        'file_id': fileId,
+        'source_revision': first['source_revision'],
+        'content_token': b64urlEncode(tags.contentToken),
+        'name_tokens': <String>[
+          for (final token in tags.nameTokens) b64urlEncode(token),
+        ],
+        'zk_proof_token': proof,
+        'client_verified_exact_bytes': true,
+      },
+    );
+    _requireCurrent();
+    if (reply['file_id'] != fileId ||
+        reply['source_revision'] != first['source_revision'] ||
+        reply['indexed'] != true) {
+      throw const FormatException('Ready file index was not confirmed');
+    }
+  }
+
   Future<int> finishIndex() async {
     _requireCurrent();
     final proof = rejectPinShapedZkProof(await proofProvider());
@@ -170,7 +291,8 @@ class FilePrivateConflictBackfill {
     final generation = reply['inventory_generation'];
     if (reply['indexed'] != true ||
         reply['private_upload_enabled'] != false ||
-        generation is! int || generation < 0) {
+        generation is! int ||
+        generation < 0) {
       throw const FormatException('Private file index is incomplete');
     }
     return generation;

@@ -9,6 +9,8 @@ The new-file release gate stays closed until client and old-file parity exist.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 from dataclasses import dataclass
 
 from fastapi import HTTPException
@@ -79,6 +81,81 @@ def index_existing_file(
         "ON CONFLICT (vault_id,file_id) DO UPDATE SET "
         "file_size=EXCLUDED.file_size, content_token=EXCLUDED.content_token",
         (vault_id, file_id, file_size, content_token),
+    )
+    cur.execute(
+        "DELETE FROM file_private_conflict_names "
+        "WHERE vault_id=%s AND file_id=%s",
+        (vault_id, file_id),
+    )
+    for token in names:
+        cur.execute(
+            "INSERT INTO file_private_conflict_names "
+            "(vault_id,file_id,name_token) VALUES (%s,%s,%s)",
+            (vault_id, file_id, token),
+        )
+    cur.execute(
+        "UPDATE file_private_conflict_state SET indexed_generation=NULL "
+        "WHERE vault_id=%s",
+        (vault_id,),
+    )
+
+
+def ready_file_source_revision(
+    row: dict, *, vault_id: str, file_id: str,
+) -> str:
+    """Bind a ready V2 file's immutable ciphertext and current name override.
+
+    Ready chunks cannot be changed through the file API. The manifest and
+    versioned name override are sufficient to detect an owner rename or file
+    replacement between client readback and blinded-tag submission.
+    """
+    if (row is None or row["file_id"] != file_id or
+            row["verification_state"] != "client_verified" or
+            row["lifecycle_state"] not in
+            ("legacy_migration_retired", "client_v2_ready") or
+            bool(row["migrating_legacy"]) !=
+            (row["lifecycle_state"] == "legacy_migration_retired") or
+            row["has_legacy"] is not False or
+            row["upload_status"] != "complete" or
+            row["storage_mode"] != "inline" or
+            int(row["marker_size"]) != int(row["total_bytes"]) or
+            any(row[field] is not None for field in
+                ("file_name", "saved_name", "content_type", "relative_path"))):
+        raise HTTPException(409, detail="private_file_ready_source_unavailable")
+    digest = hashlib.sha256(b"private-file-ready-source/v1\x00")
+    for value in (
+        vault_id, file_id, row["manifest_ciphertext"],
+        row["saved_name_override_ciphertext"], row["name_version"],
+        row["total_bytes"], row["chunk_size"], row["chunk_count"],
+        row["migration_metadata_version"], row["lifecycle_state"],
+    ):
+        if value is None:
+            digest.update(b"\x00")
+            continue
+        raw = (bytes(value) if isinstance(value, (bytes, bytearray, memoryview))
+               else str(value).encode("utf-8"))
+        digest.update(b"\x01" + len(raw).to_bytes(8, "big") + raw)
+    return base64.urlsafe_b64encode(digest.digest()).decode("ascii").rstrip("=")
+
+
+def index_ready_file(
+    cur, *, vault_id: str, file_id: str, source_row: dict,
+    expected_source_revision: str, content_token: bytes,
+    name_tokens: tuple[bytes, ...],
+) -> None:
+    """Index a locked, client-read V2 file without exposing its contents."""
+    names = _tokens(content_token, name_tokens)
+    if ready_file_source_revision(
+        source_row, vault_id=vault_id, file_id=file_id,
+    ) != expected_source_revision:
+        raise HTTPException(409, detail="private_file_ready_source_changed")
+    _state_lock(cur, vault_id)
+    cur.execute(
+        "INSERT INTO file_private_conflict_index "
+        "(vault_id,file_id,file_size,content_token) VALUES (%s,%s,%s,%s) "
+        "ON CONFLICT (vault_id,file_id) DO UPDATE SET "
+        "file_size=EXCLUDED.file_size, content_token=EXCLUDED.content_token",
+        (vault_id, file_id, int(source_row["total_bytes"]), content_token),
     )
     cur.execute(
         "DELETE FROM file_private_conflict_names "

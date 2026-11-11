@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import os
 import secrets
+from unittest import mock
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -13,8 +14,118 @@ from psycopg2.extras import RealDictCursor
 import pytest
 
 from legacy_source_snapshot import source_snapshot
+from file_private_conflict_index import ready_file_source_revision
 from routes import file_private_conflict_backfill_routes as route
 from routes import legacy_ciphertext_migration_routes as migration
+
+
+def _ready_row():
+    return {
+        "file_id": "ready-synthetic", "manifest_ciphertext": b"sealed-manifest",
+        "saved_name_override_ciphertext": None, "name_version": 0,
+        "total_bytes": 3, "chunk_size": 3, "chunk_count": 1,
+        "migration_metadata_version": 1,
+        "lifecycle_state": "legacy_migration_retired",
+        "verification_state": "client_verified", "migrating_legacy": True,
+        "marker_size": 3, "upload_status": "complete",
+        "storage_mode": "inline", "has_legacy": False,
+        "file_name": None, "saved_name": None,
+        "content_type": None, "relative_path": None,
+    }
+
+
+def test_ready_source_revision_binds_current_encrypted_name_and_state():
+    row = _ready_row()
+    vault_id = str(uuid4())
+    original = ready_file_source_revision(
+        row, vault_id=vault_id, file_id=row["file_id"],
+    )
+    assert len(original) == 43
+    row["saved_name_override_ciphertext"] = b"sealed-new-name"
+    row["name_version"] = 1
+    assert ready_file_source_revision(
+        row, vault_id=vault_id, file_id=row["file_id"],
+    ) != original
+    row["has_legacy"] = True
+    with pytest.raises(HTTPException) as invalid:
+        ready_file_source_revision(
+            row, vault_id=vault_id, file_id=row["file_id"],
+        )
+    assert invalid.value.detail == "private_file_ready_source_unavailable"
+
+
+def test_ready_file_index_rechecks_source_before_proof_or_write(monkeypatch):
+    row = _ready_row()
+    vault_id = str(uuid4())
+    principal = {"vault_id": vault_id, "token_id": "synthetic-session",
+                 "file_v2_reader_capable": True}
+
+    class Cursor:
+        result = None
+
+        def execute(self, sql, params):
+            if "FROM file_v2_records r JOIN uploaded_files u" in sql:
+                self.result = row if params == (row["file_id"], vault_id) else None
+            elif "pg_advisory_xact_lock" in sql:
+                self.result = None
+            else:
+                raise AssertionError(sql)
+
+        def fetchone(self):
+            return self.result
+
+    class Db:
+        def __init__(self):
+            self.cur = Cursor()
+            self.commits = 0
+            self.rollbacks = 0
+
+        def cursor(self, **_):
+            return self.cur
+
+        def commit(self):
+            self.commits += 1
+
+        def rollback(self):
+            self.rollbacks += 1
+
+        def close(self):
+            pass
+
+    db = Db()
+    monkeypatch.setattr(route, "_enabled", lambda: None)
+    monkeypatch.setattr(route, "_require_live_owner", lambda *_: None)
+    monkeypatch.setattr(route, "get_db", lambda: db)
+    consume = mock.Mock()
+    index = mock.Mock()
+    monkeypatch.setattr(route, "consume_recent_zk_proof_on_cursor", consume)
+    monkeypatch.setattr(route, "index_ready_file", index)
+    source = route.ready_file_source(row["file_id"], principal)
+    assert source["file_size"] == 3
+    payload = route.IndexReadyFile(
+        file_id=row["file_id"], source_revision=source["source_revision"],
+        content_token=base64.urlsafe_b64encode(b"c" * 32).decode().rstrip("="),
+        name_tokens=[base64.urlsafe_b64encode(b"n" * 32).decode().rstrip("=")],
+        zk_proof_token="synthetic-proof", client_verified_exact_bytes=True,
+    )
+    row["name_version"] = 1
+    row["saved_name_override_ciphertext"] = b"new-name"
+    with pytest.raises(HTTPException) as changed:
+        route.index_ready_v2_file(payload, principal)
+    assert changed.value.detail == "private_file_ready_source_changed"
+    consume.assert_not_called()
+    index.assert_not_called()
+    assert db.rollbacks == 1 and db.commits == 0
+
+    fresh = route.ready_file_source(row["file_id"], principal)
+    success = route.index_ready_v2_file(
+        payload.model_copy(update={"source_revision": fresh["source_revision"]}),
+        principal,
+    )
+    assert success["indexed"] is True
+    consume.assert_called_once_with("synthetic-proof", principal, db.cur)
+    assert index.call_args.kwargs["source_row"] is row
+    assert db.commits == 1
 
 
 def test_disabled_route_does_not_open_database(monkeypatch):
