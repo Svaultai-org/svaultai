@@ -80,6 +80,29 @@ class PreparedLinkedLegacyItems {
   int get itemCount => _sources.length;
 }
 
+class LinkedV2LegacySavedItemImport {
+  final int itemCount;
+  final int newItems;
+  final String sourceInventorySha256;
+
+  const LinkedV2LegacySavedItemImport({
+    required this.itemCount,
+    required this.newItems,
+    required this.sourceInventorySha256,
+  });
+}
+
+typedef FetchLinkedLegacyItemExport = Future<Map<String, dynamic>> Function(
+  int linkId,
+);
+typedef WriteLinkedLegacyItemCopy = Future<Map<String, dynamic>> Function(
+  Map<String, dynamic> body,
+);
+typedef ReadbackLinkedLegacyItemCopies = Future<Map<String, dynamic>> Function(
+  int linkId,
+  String sourceInventorySha256,
+);
+
 String _b64(List<int> raw) => base64Url.encode(raw).replaceAll('=', '');
 
 void _feed(BytesBuilder builder, Object value) {
@@ -409,4 +432,84 @@ Future<Set<int>> verifyLinkedLegacyItemCopies({
     }
   }
   return seen;
+}
+
+Future<LinkedV2LegacySavedItemImport> importReleasedLinkedLegacyItems({
+  required ReleasedLinkedInheritanceV2 released,
+  required LinkedReadbackReceipt readbackReceipt,
+  required String beneficiaryVaultId,
+  required SecretKey beneficiaryMvk,
+  required FetchLinkedLegacyItemExport fetchExport,
+  required WriteLinkedLegacyItemCopy copyItem,
+  required ReadbackLinkedLegacyItemCopies readbackCopies,
+  required bool Function() accessIsCurrent,
+}) async {
+  void checkAccess() {
+    if (!accessIsCurrent()) {
+      throw StateError('Beneficiary vault access changed');
+    }
+  }
+
+  checkAccess();
+  final exported = await fetchExport(released.linkId);
+  checkAccess();
+  final prepared = await prepareReleasedLinkedLegacyItems(
+    released: released,
+    readbackReceipt: readbackReceipt,
+    beneficiaryVaultId: beneficiaryVaultId,
+    beneficiaryMvk: beneficiaryMvk,
+    exported: exported,
+    accessIsCurrent: accessIsCurrent,
+  );
+  checkAccess();
+  final existing = await readbackCopies(
+    released.linkId,
+    prepared.sourceInventorySha256,
+  );
+  checkAccess();
+  final copied = await verifyLinkedLegacyItemCopies(
+    prepared: prepared,
+    readback: existing,
+    beneficiaryMvk: beneficiaryMvk,
+    accessIsCurrent: accessIsCurrent,
+  );
+  var newItems = 0;
+  for (final body in prepared.copyBodies) {
+    checkAccess();
+    final sourceId = body['source_item_id'] as int;
+    if (copied.contains(sourceId)) continue;
+    final result = await copyItem(Map<String, dynamic>.from(body));
+    checkAccess();
+    if (result['beneficiary_link_id'] != released.linkId ||
+        result['source_item_id'] != sourceId ||
+        result['beneficiary_item_id'] is! int ||
+        (result['beneficiary_item_id'] as int) <= 0 ||
+        result['source_inventory_sha256'] != prepared.sourceInventorySha256 ||
+        result['legacy_package_preserved'] != true ||
+        result['created'] is! bool) {
+      throw StateError('Inherited legacy item copy was not confirmed');
+    }
+    if (result['created'] == true) newItems++;
+    copied.add(sourceId);
+  }
+  final readback = await readbackCopies(
+    released.linkId,
+    prepared.sourceInventorySha256,
+  );
+  checkAccess();
+  final verified = await verifyLinkedLegacyItemCopies(
+    prepared: prepared,
+    readback: readback,
+    beneficiaryMvk: beneficiaryMvk,
+    accessIsCurrent: accessIsCurrent,
+  );
+  if (verified.length != prepared.itemCount ||
+      readback['all_items_copied'] != true) {
+    throw StateError('Inherited legacy item copy is incomplete');
+  }
+  return LinkedV2LegacySavedItemImport(
+    itemCount: prepared.itemCount,
+    newItems: newItems,
+    sourceInventorySha256: prepared.sourceInventorySha256,
+  );
 }

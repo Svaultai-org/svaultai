@@ -250,4 +250,56 @@ void main() {
       throwsStateError,
     );
   });
+
+  test('callback import verifies every copy and retries without duplication',
+      () async {
+    final copied = <Map<String, Object>>[];
+    var writes = 0;
+    Future<LinkedV2LegacySavedItemImport> run() =>
+        importReleasedLinkedLegacyItems(
+          released: released,
+          readbackReceipt: receipt,
+          beneficiaryVaultId: _beneficiary,
+          beneficiaryMvk: beneficiaryMvk,
+          fetchExport: (id) async {
+            expect(id, 41);
+            return exported;
+          },
+          copyItem: (body) async {
+            writes++;
+            final wire = jsonEncode(body);
+            expect(wire, isNot(contains(_secret)));
+            expect(wire, isNot(contains('private notes')));
+            expect(wire, isNot(contains('Recovery')));
+            expect(wire, isNot(contains('pin')));
+            copied.add({
+              ...Map<String, Object>.from(body),
+              'beneficiary_item_id': 100,
+            });
+            return {
+              'beneficiary_link_id': 41,
+              'source_item_id': 7,
+              'beneficiary_item_id': 100,
+              'source_inventory_sha256': exported['source_inventory_sha256'],
+              'created': true,
+              'legacy_package_preserved': true,
+            };
+          },
+          readbackCopies: (id, digest) async {
+            expect(id, 41);
+            expect(digest, exported['source_inventory_sha256']);
+            final prepared = await prepare();
+            return _readback(prepared, copied);
+          },
+          accessIsCurrent: () => true,
+        );
+    final first = await run();
+    expect(first.itemCount, 1);
+    expect(first.newItems, 1);
+    expect(writes, 1);
+    final retry = await run();
+    expect(retry.itemCount, 1);
+    expect(retry.newItems, 0);
+    expect(writes, 1);
+  });
 }
