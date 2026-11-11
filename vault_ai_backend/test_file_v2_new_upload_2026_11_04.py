@@ -186,7 +186,7 @@ def harness(monkeypatch):
                         lambda *_: (b"c" * 32, (b"n" * 32,)))
     monkeypatch.setattr(route, "inspect_and_reserve_new_file",
                         lambda *_args, **_kwargs: FileConflict("available"))
-    monkeypatch.setattr(route, "consume_recent_zk_proof", proof)
+    monkeypatch.setattr(route, "consume_recent_zk_proof_on_cursor", proof)
     return db, proof
 
 
@@ -404,7 +404,7 @@ def test_new_file_delete_consumes_proof_and_decrements_once(harness):
         PRINCIPAL,
     )
     assert result == {"file_id": FILE, "deleted": True}
-    proof.assert_called_once_with("synthetic-proof", PRINCIPAL)
+    proof.assert_called_once_with("synthetic-proof", PRINCIPAL, db.cur)
     assert db.record is None and db.marker is None
     assert db.vault_bytes == 100 and db.account_bytes == 100
     with pytest.raises(HTTPException) as replay:
@@ -415,6 +415,23 @@ def test_new_file_delete_consumes_proof_and_decrements_once(harness):
         )
     assert replay.value.status_code == 404
     proof.assert_called_once()
+
+
+def test_new_file_delete_rejects_revoked_session_before_consuming_proof(harness):
+    db, proof = harness
+    route.publish_new_file(FILE, _publish(), PRINCIPAL)
+    db.session_current = False
+    with pytest.raises(HTTPException) as raised:
+        route.delete_new_file(
+            FILE,
+            route.DeleteNewFile(confirm=True, zk_proof_token="synthetic-proof"),
+            PRINCIPAL,
+        )
+    assert raised.value.status_code == 401
+    assert raised.value.detail == "session_expired"
+    proof.assert_not_called()
+    assert db.record is not None and db.marker is not None
+    assert db.vault_bytes == 105 and db.account_bytes == 105
 
 
 def test_models_reject_plaintext_fields_and_routes_require_trusted_device():

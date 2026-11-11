@@ -32,7 +32,6 @@ from subscription_entitlement import require_content_write
 from vault_core import MAX_VAULT_BYTES, get_db, is_vault_zk_adopted
 from file_private_conflict_index import inspect_and_reserve_new_file
 from routes.auth_zk_routes import (
-    consume_recent_zk_proof,
     consume_recent_zk_proof_on_cursor,
 )
 from routes import inheritance_v2_file_export_routes as inheritance_files
@@ -449,13 +448,27 @@ def delete_new_file(
         vault = cur.fetchone()
         if vault is None:
             raise HTTPException(404, detail="vault_not_found")
+        # A newer login can revoke this session after the request dependency
+        # authenticates it. The vault row lock serializes this check with login.
+        cur.execute(
+            "SELECT 1 FROM auth_sessions WHERE token_id=%s AND vault_id=%s "
+            "AND file_v2_reader_capable=TRUE AND revoked_at IS NULL "
+            "AND expires_at>NOW() LIMIT 1",
+            (principal["token_id"], vault_id),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(401, detail="session_expired")
         account_id = str(vault["account_id"]) if vault["account_id"] else None
         if account_id is not None:
             cur.execute("SELECT account_id FROM accounts WHERE account_id=%s "
                         "FOR UPDATE", (account_id,))
             if cur.fetchone() is None:
                 raise HTTPException(503, detail="account_quota_unavailable")
-        consume_recent_zk_proof(payload.zk_proof_token, principal)
+        # Consume the one-use proof in this transaction so any failed delete
+        # leaves both the file and its proof intact for a safe retry.
+        consume_recent_zk_proof_on_cursor(
+            payload.zk_proof_token, principal, cur,
+        )
         cur.execute("DELETE FROM file_v2_records WHERE file_id=%s AND vault_id=%s",
                     (file_id, vault_id))
         if cur.rowcount != 1:
