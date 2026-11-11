@@ -11,10 +11,12 @@ import hmac
 import os
 import re
 import secrets
+import base64
+import binascii
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 from psycopg2.errors import UniqueViolation
 from psycopg2.extras import RealDictCursor
@@ -33,6 +35,7 @@ from routes.linked_inheritance_v2_upgrade_routes import (
 
 router = APIRouter(tags=["linked-inheritance-v2-item-import"])
 FLAG_NAME = "VAULTAI_ZK_LINKED_BENEFICIARY_ITEM_IMPORT_ENABLED"
+LEGACY_EXPORT_FLAG_NAME = "VAULTAI_ZK_LINKED_BENEFICIARY_LEGACY_ITEM_EXPORT_ENABLED"
 _MAX_ITEMS = 100
 _MAX_SOURCE_BYTES = 1024 * 1024
 _MAX_FIELD_BYTES = 128 * 1024
@@ -97,6 +100,15 @@ def _restart_enabled() -> None:
     _enabled()
     if (os.getenv("VAULTAI_ZK_LINKED_BENEFICIARY_ITEM_RESTART_ENABLED", "false")
             .strip().lower() != "true"):
+        raise HTTPException(status_code=404, detail="not_found")
+
+
+def _legacy_export_enabled() -> None:
+    # A released link and a verified device-side readback are both required.
+    # Keep this separate from private-item copying until legacy rows have a
+    # complete client-side decrypt, re-encrypt, and readback implementation.
+    _readback_proof_enabled()
+    if os.getenv(LEGACY_EXPORT_FLAG_NAME, "false").strip().lower() != "true":
         raise HTTPException(status_code=404, detail="not_found")
 
 
@@ -205,6 +217,90 @@ def _export_body(
             }
             for row in rows
         ],
+    }
+
+
+def _legacy_item_inventory(
+    cur, *, link_id: int, link: dict, stage: dict,
+) -> dict:
+    """Export bounded, still-encrypted old items after the release ceremony.
+
+    The owner key is never reconstructed here. The beneficiary's released
+    envelope may contain that key, but only their device can open it.
+    """
+    owner_id = str(link["passer_vault_id"])
+    cur.execute(
+        """SELECT id,item_type,service,
+                  octet_length(encrypted_data) AS ciphertext_bytes,
+                  CASE WHEN octet_length(encrypted_data) <= %s
+                       THEN encrypted_data ELSE NULL END AS encrypted_data
+             FROM vault_items
+            WHERE vault_id=%s AND encrypted_data IS NOT NULL
+            ORDER BY id ASC LIMIT %s FOR SHARE""",
+        (_MAX_SOURCE_BYTES, owner_id, _MAX_ITEMS + 1),
+    )
+    source = cur.fetchall() or []
+    if len(source) > _MAX_ITEMS:
+        raise HTTPException(status_code=409, detail="owner_items_exceed_import_limit")
+    digest = hashlib.sha256(b"linked-old-v2-legacy-item-inventory/v1\x00")
+    for value in (
+        link_id, owner_id, str(link["beneficiary_vault_id"]),
+        int(stage["stage_revision"]),
+    ):
+        _feed(digest, value)
+    rendered = []
+    total = 0
+    previous_id = 0
+    for row in source:
+        item_id = row.get("id")
+        item_type = row.get("item_type")
+        service = row.get("service")
+        ciphertext = row.get("encrypted_data")
+        declared_size = row.get("ciphertext_bytes")
+        if (not isinstance(item_id, int) or item_id <= previous_id or
+                not isinstance(item_type, str) or
+                not isinstance(service, str) or
+                len(item_type.encode("utf-8")) > 256 or
+                len(service.encode("utf-8")) > 256 or
+                not isinstance(ciphertext, str) or
+                not isinstance(declared_size, int) or
+                declared_size != len(ciphertext.encode("utf-8")) or
+                declared_size > _MAX_SOURCE_BYTES):
+            raise HTTPException(status_code=409, detail="owner_legacy_item_invalid")
+        try:
+            decoded = base64.b64decode(ciphertext, validate=True)
+        except (ValueError, binascii.Error):
+            raise HTTPException(status_code=409, detail="owner_legacy_item_invalid")
+        if len(decoded) < 28:
+            raise HTTPException(status_code=409, detail="owner_legacy_item_invalid")
+        total += declared_size
+        if total > _MAX_SOURCE_BYTES:
+            raise HTTPException(status_code=409, detail="owner_items_exceed_import_limit")
+        previous_id = item_id
+        row_hash = hashlib.sha256(b"linked-old-v2-legacy-item-source/v1\x00")
+        for value in (item_id, item_type, service, ciphertext):
+            _feed(row_hash, value)
+        _feed(digest, item_id)
+        _feed(digest, row_hash.digest())
+        rendered.append({
+            "item_id": item_id,
+            "item_type": item_type,
+            "service": service,
+            "encrypted_data": ciphertext,
+            "source_row_sha256": _b64(row_hash.digest()),
+        })
+    return {
+        "beneficiary_link_id": link_id,
+        "owner_vault_id": owner_id,
+        "beneficiary_vault_id": str(link["beneficiary_vault_id"]),
+        "stage_revision": int(stage["stage_revision"]),
+        "offer_commitment": _offer_commitment(link_id, stage),
+        "content_scope": "legacy_saved_items_only",
+        "owner_content_complete": False,
+        "source_inventory_sha256": _b64(digest.digest()),
+        "item_count": len(rendered),
+        "ciphertext_bytes": total,
+        "items": rendered,
     }
 
 
@@ -390,6 +486,33 @@ def export_linked_v2_items(
             link_id=link_id, link=link, stage=stage,
             rows=rows, digest=digest, total=total,
         )
+    finally:
+        conn.close()
+
+
+@router.get("/inheritance/old-link-v2/{link_id}/legacy-vault-items")
+def export_linked_v2_legacy_items(
+    link_id: int,
+    response: Response,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    """Release-gated legacy ciphertext for a future local rewrap flow."""
+    _legacy_export_enabled()
+    if link_id <= 0:
+        raise HTTPException(status_code=404, detail="not_found")
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        link, stage = _context(
+            cur, link_id=link_id,
+            beneficiary_vault_id=str(principal["vault_id"]),
+        )
+        enforce_export_rate_limit(vault_id=str(principal["vault_id"]))
+        result = _legacy_item_inventory(
+            cur, link_id=link_id, link=link, stage=stage,
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return result
     finally:
         conn.close()
 
