@@ -253,11 +253,12 @@ def _legacy_item_inventory(
     owner_id = str(link["passer_vault_id"])
     cur.execute(
         """SELECT id,item_type,service,
+                  encrypted_data IS NULL AS has_private,
                   octet_length(encrypted_data) AS ciphertext_bytes,
                   CASE WHEN octet_length(encrypted_data) <= %s
                        THEN encrypted_data ELSE NULL END AS encrypted_data
              FROM vault_items
-            WHERE vault_id=%s AND encrypted_data IS NOT NULL
+            WHERE vault_id=%s
             ORDER BY id ASC LIMIT %s FOR SHARE""",
         (_MAX_SOURCE_BYTES, owner_id, _MAX_ITEMS + 1),
     )
@@ -274,6 +275,10 @@ def _legacy_item_inventory(
     total = 0
     previous_id = 0
     for row in source:
+        if row.get("has_private"):
+            raise HTTPException(
+                status_code=409, detail="mixed_saved_item_modes_unsupported",
+            )
         item_id = row.get("id")
         item_type = row.get("item_type")
         service = row.get("service")

@@ -251,3 +251,28 @@ def test_legacy_copy_stops_on_revocation_stale_source_or_oversized_write(
         items.copy_linked_v2_legacy_item(too_large, BENEFICIARY)
     assert oversized.value.status_code == 409
     assert db.destination == {}
+
+
+def test_legacy_paths_reject_mixed_owner_saved_item_modes(ready, monkeypatch):
+    db = ready
+    db.source = [_old_item(), {"id": 8, "has_private": True}]
+    _install_legacy_cursor(db, monkeypatch)
+    monkeypatch.setenv(items.LEGACY_EXPORT_FLAG_NAME, "true")
+    monkeypatch.setenv(items.LEGACY_COPY_FLAG_NAME, "true")
+    with pytest.raises(HTTPException) as mixed_export:
+        _export(db)
+    assert mixed_export.value.detail == "mixed_saved_item_modes_unsupported"
+
+    db.source = [_old_item()]
+    exported, _ = _export(db)
+    payload = _copy_payload(exported)
+    db.source.append({"id": 8, "has_private": True})
+    with pytest.raises(HTTPException) as mixed_copy:
+        items.copy_linked_v2_legacy_item(payload, BENEFICIARY)
+    assert mixed_copy.value.detail == "mixed_saved_item_modes_unsupported"
+    with pytest.raises(HTTPException) as mixed_readback:
+        items.readback_linked_v2_legacy_item_copies(
+            41, Response(), exported["source_inventory_sha256"], BENEFICIARY,
+        )
+    assert mixed_readback.value.detail == "mixed_saved_item_modes_unsupported"
+    assert db.destination == {}
