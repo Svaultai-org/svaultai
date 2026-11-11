@@ -38,6 +38,10 @@ def _export(db) -> tuple[dict, Response]:
 
 class LegacyCursor(ItemCursor):
     def execute(self, sql, params):
+        if "FROM vaults WHERE vault_id=%s FOR UPDATE" in sql:
+            assert params == (OWNER["vault_id"],)
+            self.value = {"vault_id": OWNER["vault_id"]}
+            return
         if "octet_length(encrypted_data)" in sql:
             assert params == (
                 items._MAX_SOURCE_BYTES, OWNER["vault_id"], items._MAX_ITEMS + 1,

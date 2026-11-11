@@ -251,6 +251,15 @@ def _legacy_item_inventory(
     envelope may contain that key, but only their device can open it.
     """
     owner_id = str(link["passer_vault_id"])
+    # FK inserts take a key-share lock on the owner vault. This lock blocks
+    # new items while the complete source inventory is checked and a copy or
+    # readback is committed; row locks below block edits and deletes.
+    cur.execute(
+        "SELECT vault_id FROM vaults WHERE vault_id=%s FOR UPDATE",
+        (owner_id,),
+    )
+    if not cur.fetchone():
+        raise HTTPException(status_code=409, detail="owner_vault_changed")
     cur.execute(
         """SELECT id,item_type,service,
                   encrypted_data IS NULL AS has_private,
