@@ -54,6 +54,7 @@ import 'services/legacy_private_migration_transport.dart' as private_stage;
 import 'services/legacy_stage_pin_lease.dart';
 import 'services/zk_pin_gate_migration_handoff.dart';
 import 'services/file_v2_writer.dart';
+import 'services/file_private_versioned_name.dart';
 import 'services/wallet_v2_active_client.dart';
 import 'services/wallet_v2_migration.dart';
 import 'services/wallet_v2_owner_upgrade.dart';
@@ -16303,14 +16304,51 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (job.importId != null) {
         throw StateError('Private file cannot use a legacy import session');
       }
-      if (job.duplicateAction != null || job.duplicateDetail != null) {
-        throw StateError('Private file cannot reuse a legacy conflict decision');
+      if (job.duplicateAction != null && job.duplicateAction != 'keep_both') {
+        throw StateError('Private file conflict decision changed');
+      }
+      final privateFileName = job.privateNameVersion == 0
+          ? job.name
+          : privateVersionedFileName(job.name, job.privateNameVersion);
+      final privateSavedName = job.displayName?.trim().isNotEmpty != true ||
+              job.privateNameVersion == 0
+          ? job.displayName
+          : privateVersionedFileName(
+              job.displayName!, job.privateNameVersion,
+            );
+      Map<String, dynamic> conflictDetail(Map<String, dynamic> detail) {
+        final existingId = detail['existing_file_id'];
+        _VaultStoredFile? existing;
+        for (final file in vaultFiles) {
+          if (file.id == existingId) {
+            existing = file;
+            break;
+          }
+        }
+        return <String, dynamic>{
+          ...detail,
+          'private_file_v2': true,
+          'incoming_file_name': privateFileName,
+          'incoming_size': bytes.length,
+          if (existing != null) ...<String, dynamic>{
+            'existing_file_name': existing.fileName,
+            'existing_saved_name': existing.savedName,
+            'existing_relative_path': existing.relativePath,
+          },
+          if (job.privateNameVersion < 100)
+            'proposed_versioned_name': privateVersionedFileName(
+              job.displayName?.trim().isNotEmpty == true
+                  ? job.displayName! : job.name,
+              job.privateNameVersion == 0
+                  ? 2 : job.privateNameVersion + 1,
+            ),
+        };
       }
       final writer = FileV2Writer(ctx.v2Mvk!, vaultId: ctx.vaultId);
       final prepared = job.preparedNewV2 ??= await writer.prepare(
         fileId: FileV2Writer.newFileId(),
-        fileName: job.name,
-        savedName: job.displayName,
+        fileName: privateFileName,
+        savedName: privateSavedName,
         contentType: job.mimeType,
         relativePath: job.relativePath,
         bytes: bytes,
@@ -16324,7 +16362,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           prepared: prepared,
           originalBytes: bytes,
           mvk: ctx.v2Mvk!,
-          duplicateAction: ctx.isBatchUpload ? 'skip' : 'prompt',
+          duplicateAction: job.duplicateAction ??
+              (ctx.isBatchUpload ? 'skip' : 'prompt'),
           responseIsCurrent: accessIsCurrent,
           onProgress: reportProgress,
         );
@@ -16347,6 +16386,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           'Server rate-limited the upload (retrying in ${pauseSec}s)',
           pauseFor: Duration(seconds: pauseSec),
         );
+      } on DuplicateFoundUploadException catch (e) {
+        throw DuplicateUploadDecisionRequired(conflictDetail(e.detail));
+      } on NameConflictUploadException catch (e) {
+        throw NameConflictDecisionRequired(conflictDetail(e.detail));
       }
       if (!accessIsCurrent()) {
         throw StateError('Private upload session changed');

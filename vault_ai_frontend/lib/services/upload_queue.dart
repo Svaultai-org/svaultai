@@ -87,6 +87,10 @@ class UploadJob {
   /// Stable encrypted upload across automatic retry of this job.
   PreparedNewFileV2? preparedNewV2;
 
+  /// A user-approved private keep-both retry encrypts this versioned name
+  /// into a fresh V2 manifest. Zero means the original name.
+  int privateNameVersion = 0;
+
   /// Bind a retry to the vault session that prepared this encrypted upload.
   final String? scopeSessionToken;
   final String? scopeVaultId;
@@ -574,8 +578,21 @@ class UploadQueueController extends ChangeNotifier {
             return;
           }
           if (decision == NameConflictDecision.keepBoth) {
-            
-            
+            if (e.detail['private_file_v2'] == true) {
+              final next = job.privateNameVersion == 0
+                  ? 2 : job.privateNameVersion + 1;
+              if (next > 100) {
+                job.status = UploadJobStatus.failed;
+                job.errorMessage = 'No available private file name was found.';
+                job.cachedBytes = null;
+                notifyListeners();
+                return;
+              }
+              // The conflicting stage was discarded before the dialog. A
+              // changed encrypted name needs a new random file ID and tags.
+              job.privateNameVersion = next;
+              job.preparedNewV2 = null;
+            }
             job.duplicateAction = 'keep_both';
             job.status = UploadJobStatus.pending;
             job.attempts -= 1;  

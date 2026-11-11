@@ -5799,6 +5799,26 @@ class VaultAIClient {
       }
       return decoded;
     }
+    Future<void> discardConflictingStage() async {
+      checkAccess();
+      final response = await _sessionHttpWithGuard(checkAccess).delete(
+        Uri.parse('$baseUrl/vault/file-v2/${Uri.encodeComponent(prepared.fileId)}'),
+        headers: _defaultHeaders(authToken: authToken),
+      );
+      checkAccess();
+      if (response.statusCode == 404) return;
+      if (response.statusCode != 200) {
+        _throwIfAuthExpired(response.statusCode, response.body);
+        _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        throw FileV2ReadException(response.statusCode);
+      }
+      final result = jsonDecode(response.body);
+      if (result is! Map<String, dynamic> ||
+          result['file_id'] != prepared.fileId ||
+          result['deleted'] != true) {
+        throw const FormatException('Private file stage cleanup failed');
+      }
+    }
     Future<Map<String, dynamic>> mutate(
       String method, String path, Map<String, Object> body,
     ) async {
@@ -5816,6 +5836,29 @@ class VaultAIClient {
       }
       if (response.statusCode == 429) {
         throw _rateLimitedFromBody(response.body);
+      }
+      if (response.statusCode == 409 && path.endsWith('/publish-new')) {
+        Map<String, dynamic>? detail;
+        try {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map<String, dynamic> &&
+              decoded['detail'] is Map<String, dynamic>) {
+            detail = decoded['detail'] as Map<String, dynamic>;
+          }
+        } catch (_) {
+          // An unrelated malformed 409 takes the ordinary error path.
+        }
+        final code = detail?['code'];
+        if (code == 'duplicate_found' || code == 'name_conflict') {
+          // A rejected stage is invisible and uncharged. Remove it before
+          // offering a different name or a duplicate decision; never rebind
+          // its immutable encrypted manifest to a new name.
+          await discardConflictingStage();
+          if (code == 'duplicate_found') {
+            throw DuplicateFoundUploadException(detail!);
+          }
+          throw NameConflictUploadException(detail!);
+        }
       }
       if (response.statusCode != 200) {
         _throwIfAuthExpired(response.statusCode, response.body);
