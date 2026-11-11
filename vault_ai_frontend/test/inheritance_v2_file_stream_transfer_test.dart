@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vault_ai_frontend/services/file_private_conflict_tokens.dart';
 import 'package:vault_ai_frontend/services/file_v2_reader.dart';
 import 'package:vault_ai_frontend/services/file_v2_writer.dart';
 import 'package:vault_ai_frontend/services/inheritance_mvk_v2.dart';
@@ -34,6 +36,7 @@ class SyntheticTransfer {
   bool renameTargetAfterPublish = false;
   int sourceManifestReads = 0;
   String? targetFileId;
+  Map<String, Object>? publishBody;
   int targetNameVersion = 0;
   String? targetNameOverride;
   Map<String, Object>? targetManifestBody;
@@ -174,6 +177,7 @@ class SyntheticTransfer {
     }
     if (method == 'POST' && path.endsWith('/publish-new')) {
       publishCalls++;
+      publishBody = body;
       expect(body?['zk_proof_token'], 'synthetic-opaque-proof');
       expect(body?['inheritance_source_revision'], List.filled(64, 'a').join());
       if (targetChunks.length != sourceManifest.chunkCount) {
@@ -200,6 +204,7 @@ class SyntheticTransfer {
   Future<Map<String, dynamic>> transfer() => transferReleasedV2FileStreamed(
         linkId: 31,
         sourceFileId: sourceFileId,
+        beneficiaryVaultId: 'synthetic-beneficiary',
         freshBeneficiaryProof: () async {
           proofCalls++;
           expect(sourceChunkReads,
@@ -216,6 +221,32 @@ class SyntheticTransfer {
 }
 
 void main() {
+  test('inherited publish binds blind tags to streamed clear bytes', () async {
+    final fixture = SyntheticTransfer(totalBytes: 29, chunkSize: 8);
+    await fixture.initialize();
+    await fixture.transfer();
+    final wholeFile = Uint8List.fromList([
+      for (var i = 0; i < fixture.sourceManifest.chunkCount; i++)
+        ...fixture.plainChunk(i),
+    ]);
+    final expected = await FilePrivateConflictTokenMaker(
+      mvk: fixture.beneficiaryMvk,
+      vaultId: 'synthetic-beneficiary',
+    ).make(
+      wholeFileSha256: Uint8List.fromList(crypto.sha256.convert(wholeFile).bytes),
+      fileSize: wholeFile.length,
+      fileName: 'private-synthetic.bin',
+      savedName: 'Synthetic vault file',
+    );
+    wholeFile.fillRange(0, wholeFile.length, 0);
+    expect(fixture.publishBody?['content_token'],
+        b64urlEncode(expected.contentToken));
+    expect(fixture.publishBody?['name_tokens'],
+        expected.nameTokens.map(b64urlEncode).toList());
+    expect(fixture.publishBody?['duplicate_action'], 'keep_both');
+    expect(jsonEncode(fixture.publishBody), isNot(contains('private-synthetic')));
+  });
+
   test('streams a file above the in-memory cap and publishes after readback',
       () async {
     final fixture = SyntheticTransfer(

@@ -5551,8 +5551,15 @@ class VaultAIClient {
     bool Function()? responseIsCurrent,
     void Function(double progress)? onProgress,
   }) async {
+    final beneficiaryVaultId = zk_mvk_store.ZkActiveMvk.currentVaultId();
+    if (beneficiaryVaultId == null || beneficiaryVaultId.isEmpty) {
+      throw StateError('Beneficiary vault is unavailable');
+    }
     void checkAccess() {
       _requireSavedItemKey(beneficiaryMvk);
+      if (zk_mvk_store.ZkActiveMvk.currentVaultId() != beneficiaryVaultId) {
+        throw StateError('Beneficiary vault changed');
+      }
       if (responseIsCurrent?.call() == false) {
         throw StateError('Private inheritance access changed');
       }
@@ -5622,6 +5629,7 @@ class VaultAIClient {
     return transferReleasedV2FileStreamed(
       linkId: linkId,
       sourceFileId: sourceFileId,
+      beneficiaryVaultId: beneficiaryVaultId,
       freshBeneficiaryProof: freshBeneficiaryProof,
       beneficiaryPrivateKey: beneficiaryPrivateKey,
       beneficiaryMvk: beneficiaryMvk,

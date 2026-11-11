@@ -145,13 +145,17 @@ void main() {
         }
         if (path == '/vault/file-v2/$targetId/publish-new' &&
             request.method == 'POST') {
-          expect(jsonDecode(request.body), <String, dynamic>{
-            'confirm': true,
-            'inheritance_link_id': 37,
-            'inheritance_source_file_id': source.fileId,
-            'inheritance_source_revision': List.filled(64, 'a').join(),
-            'zk_proof_token': 'synthetic-opaque-proof',
-          });
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          expect(body['confirm'], true);
+          expect(body['inheritance_link_id'], 37);
+          expect(body['inheritance_source_file_id'], source.fileId);
+          expect(body['inheritance_source_revision'],
+              List.filled(64, 'a').join());
+          expect(body['zk_proof_token'], 'synthetic-opaque-proof');
+          expect(body['content_token'],
+              matches(RegExp(r'^[A-Za-z0-9_-]{43}$')));
+          expect(body['name_tokens'], hasLength(1));
+          expect(body['duplicate_action'], 'keep_both');
           expect(targetChunks.length, 1);
           publishCalls++;
           if (rejectStaleRevision) {

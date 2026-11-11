@@ -9,8 +9,10 @@ library;
 
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography/cryptography.dart';
 
+import 'file_private_conflict_tokens.dart';
 import 'file_v2_reader.dart';
 import 'file_v2_writer.dart';
 import 'inheritance_v2_file_reader.dart';
@@ -25,6 +27,21 @@ typedef InheritedV2TargetRequest = Future<Map<String, dynamic>?> Function(
 );
 
 const int _gcmFramingBytes = 29;
+
+class _DigestCapture implements Sink<crypto.Digest> {
+  crypto.Digest? value;
+
+  @override
+  void add(crypto.Digest data) {
+    if (value != null) throw StateError('File digest already completed');
+    value = data;
+  }
+
+  @override
+  void close() {
+    if (value == null) throw StateError('File digest is incomplete');
+  }
+}
 
 /// A prior beneficiary copy exists, but its saved name no longer matches the
 /// released source (or the beneficiary renamed it independently). Never make
@@ -150,6 +167,7 @@ Future<void> _compareEncryptedTargetChunk({
 Future<Map<String, dynamic>> transferReleasedV2FileStreamed({
   required int linkId,
   required String sourceFileId,
+  required String beneficiaryVaultId,
   required Future<String> Function() freshBeneficiaryProof,
   required SecretKey beneficiaryPrivateKey,
   required SecretKey beneficiaryMvk,
@@ -159,6 +177,9 @@ Future<Map<String, dynamic>> transferReleasedV2FileStreamed({
   required bool Function() accessIsCurrent,
   void Function(double progress)? onProgress,
 }) async {
+  if (beneficiaryVaultId.isEmpty) {
+    throw ArgumentError.value(beneficiaryVaultId, 'beneficiaryVaultId');
+  }
   void checkAccess() {
     if (!accessIsCurrent()) throw StateError('Vault access changed');
   }
@@ -259,6 +280,8 @@ Future<Map<String, dynamic>> transferReleasedV2FileStreamed({
   checkAccess();
   final count = source.manifest.chunkCount;
   final chunkPath = '/vault/file-v2/$targetId/chunk/';
+  final digestCapture = _DigestCapture();
+  final digestInput = crypto.sha256.startChunkedConversion(digestCapture);
   for (var i = 0; i < count; i++) {
     final sourceBytes = await source.readChunk(i);
     try {
@@ -324,12 +347,25 @@ Future<Map<String, dynamic>> transferReleasedV2FileStreamed({
         sourceBytes: sourceBytes,
         contentKey: targetKey,
       );
+      digestInput.add(sourceBytes);
     } finally {
       sourceBytes.fillRange(0, sourceBytes.length, 0);
     }
     onProgress?.call(count == 0 ? 0.95 : 0.8 + 0.15 * (i + 1) / count);
   }
+  digestInput.close();
   await source.assertUnchanged();
+  checkAccess();
+  final tags = await FilePrivateConflictTokenMaker(
+    mvk: beneficiaryMvk,
+    vaultId: beneficiaryVaultId,
+  ).make(
+    wholeFileSha256: Uint8List.fromList(digestCapture.value!.bytes),
+    fileSize: source.manifest.totalBytes,
+    fileName: source.manifest.fileName!,
+    savedName: source.manifest.savedName,
+    relativePath: source.manifest.relativePath,
+  );
   checkAccess();
   // A large transfer can outlive a short-lived proof. Obtain it only after
   // all ciphertext has been checked, immediately before publication.
@@ -348,6 +384,9 @@ Future<Map<String, dynamic>> transferReleasedV2FileStreamed({
       'inheritance_source_file_id': sourceFileId,
       'inheritance_source_revision': source.sourceRevision,
       'zk_proof_token': beneficiaryProofToken,
+      'content_token': b64urlEncode(tags.contentToken),
+      'name_tokens': tags.nameTokens.map(b64urlEncode).toList(growable: false),
+      'duplicate_action': 'keep_both',
     },
   );
   if (published == null ||
