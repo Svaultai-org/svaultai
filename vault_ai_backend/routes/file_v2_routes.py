@@ -5,7 +5,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from psycopg2.extras import RealDictCursor
 from auth_local import SessionPrincipal
 from device_gate import verify_trusted_device
-from routes.auth_zk_routes import consume_recent_zk_proof
+from routes.auth_zk_routes import (
+    consume_recent_zk_proof, consume_recent_zk_proof_on_cursor,
+)
 from vault_core import get_db, is_vault_zk_adopted
 from legacy_source_snapshot import (
     FILE_SOURCE_FIELDS, MAX_SOURCE_CIPHERTEXT_CHARS,
@@ -379,6 +381,21 @@ def rename_ready_file(
         raise HTTPException(400, detail='invalid_encrypted_saved_name')
     conn = get_db(); cur = conn.cursor()
     try:
+        # Lock in the same order as ready-file indexing: vault/session first,
+        # then per-file advisory/rows, then the blind-index state row.
+        cur.execute(
+            'SELECT 1 FROM vaults WHERE vault_id=%s FOR UPDATE',
+            (principal['vault_id'],),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(404, detail='vault_not_found')
+        cur.execute(
+            'SELECT 1 FROM auth_sessions WHERE token_id=%s AND vault_id=%s '
+            'AND revoked_at IS NULL AND expires_at>NOW() LIMIT 1',
+            (principal['token_id'], principal['vault_id']),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(401, detail='session_expired')
         cur.execute(
             'SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))',
             (principal['vault_id'], file_id),
@@ -403,7 +420,25 @@ def rename_ready_file(
         )
         if cur.fetchone() is None:
             raise HTTPException(409, detail='file_v2_marker_missing')
-        consume_recent_zk_proof(payload.zk_proof_token, principal)
+        cur.execute("SELECT to_regclass('file_private_conflict_state')")
+        has_conflict_index = cur.fetchone()[0] is not None
+        if has_conflict_index:
+            # Serialize with private publication. Enforced indexes require a
+            # future rename protocol that atomically supplies blind new-name
+            # tags; the ciphertext-only legacy V2 rename cannot be offered.
+            cur.execute(
+                'SELECT enforced FROM file_private_conflict_state '
+                'WHERE vault_id=%s FOR UPDATE',
+                (principal['vault_id'],),
+            )
+            index_state = cur.fetchone()
+            if index_state is not None and index_state[0]:
+                raise HTTPException(
+                    409, detail='private_file_rename_index_maintenance_required',
+                )
+        consume_recent_zk_proof_on_cursor(
+            payload.zk_proof_token, principal, cur,
+        )
         cur.execute(
             'UPDATE file_v2_records SET saved_name_override_ciphertext=%s, '
             'name_version=name_version+1 '
@@ -416,6 +451,20 @@ def rename_ready_file(
         updated = cur.fetchone()
         if updated is None:
             raise HTTPException(409, detail='file_v2_name_version_conflict')
+        # A ready-file rename changes its effective blind name. Remove the
+        # stale tags so a simple finish-index call cannot mark it complete.
+        # The table check above preserves older deployments before migration.
+        if has_conflict_index:
+            cur.execute(
+                'DELETE FROM file_private_conflict_index '
+                'WHERE vault_id=%s AND file_id=%s',
+                (principal['vault_id'], file_id),
+            )
+            cur.execute(
+                'UPDATE file_private_conflict_state '
+                'SET indexed_generation=NULL WHERE vault_id=%s',
+                (principal['vault_id'],),
+            )
         conn.commit()
     except Exception:
         conn.rollback()

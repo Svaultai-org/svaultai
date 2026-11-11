@@ -14,6 +14,9 @@ from pydantic import ValidationError
 
 import main
 import vault_core
+from file_private_conflict_index import (
+    index_ready_file, mark_index_complete, ready_file_source_revision,
+)
 from routes import file_v2_routes as routes
 from routes import vault_manage_routes
 from routes import zk_metadata_inventory_routes as inventory
@@ -35,6 +38,11 @@ class _State:
         self.lifecycle = "client_v2_ready"
         self.verified = "client_verified"
         self.marker = True
+        self.session_current = True
+        self.index_table_available = True
+        self.index_enforced = False
+        self.index_complete = True
+        self.index_present = True
         self.sql = []
 
 
@@ -48,7 +56,7 @@ class _Connection:
     def cursor(self, **_kwargs):
         return self
 
-    def execute(self, sql, params):
+    def execute(self, sql, params=None):
         self.state.sql.append(sql)
         if "pg_advisory_xact_lock" in sql:
             self.state.lock.acquire()
@@ -61,6 +69,12 @@ class _Connection:
             )
         elif "SELECT 1 FROM uploaded_files" in sql:
             self.next_row = (1,) if self.state.marker else None
+        elif "SELECT 1 FROM vaults" in sql:
+            self.next_row = (
+                (1,) if params == (PRINCIPAL["vault_id"],) else None
+            )
+        elif "SELECT 1 FROM auth_sessions" in sql:
+            self.next_row = (1,) if self.state.session_current else None
         elif "UPDATE file_v2_records SET saved_name_override_ciphertext" in sql:
             if params[3] == self.state.version:
                 self.state.ciphertext = params[0]
@@ -68,6 +82,20 @@ class _Connection:
                 self.next_row = (self.state.version,)
             else:
                 self.next_row = None
+        elif "SELECT to_regclass('file_private_conflict_state')" in sql:
+            self.next_row = (
+                "file_private_conflict_state" if self.state.index_table_available
+                else None,
+            )
+        elif "SELECT enforced FROM file_private_conflict_state" in sql:
+            assert params == (PRINCIPAL["vault_id"],)
+            self.next_row = (self.state.index_enforced,)
+        elif "DELETE FROM file_private_conflict_index" in sql:
+            assert params == (PRINCIPAL["vault_id"], "synthetic-file")
+            self.state.index_present = False
+        elif "UPDATE file_private_conflict_state" in sql:
+            assert params == (PRINCIPAL["vault_id"],)
+            self.state.index_complete = False
         else:
             raise AssertionError(sql)
 
@@ -103,7 +131,7 @@ def rename_gate(monkeypatch):
     monkeypatch.setattr(routes, "is_vault_zk_adopted", lambda *_: True)
     monkeypatch.setattr(vault_core, "is_vault_zk_adopted", lambda *_: True)
     consume = mock.Mock()
-    monkeypatch.setattr(routes, "consume_recent_zk_proof", consume)
+    monkeypatch.setattr(routes, "consume_recent_zk_proof_on_cursor", consume)
     state = _State()
     monkeypatch.setattr(routes, "get_db", lambda: _Connection(state))
     return state, consume
@@ -125,9 +153,106 @@ def test_encrypted_rename_is_versioned_and_proof_gated(rename_gate):
     }
     assert state.version == 1
     assert state.ciphertext == b"\x00" * 32
+    assert "FROM vaults" in state.sql[0]
+    assert "FROM auth_sessions" in state.sql[1]
+    assert "pg_advisory_xact_lock" in state.sql[2]
     assert any("FOR UPDATE" in sql for sql in state.sql)
     assert any("name_version=%s" in sql for sql in state.sql)
-    consume.assert_called_once_with("proof-one", PRINCIPAL)
+    assert state.index_complete is False
+    assert state.index_present is False
+    consume.assert_called_once()
+    assert consume.call_args.args[:2] == ("proof-one", PRINCIPAL)
+
+
+def test_indexed_file_rename_requires_readback_reindex_before_completion(
+    rename_gate,
+):
+    state, _ = rename_gate
+    routes.rename_ready_file("synthetic-file", _payload(), PRINCIPAL)
+
+    class IndexCursor:
+        result = None
+
+        def execute(self, sql, params):
+            if sql.startswith("INSERT INTO file_private_conflict_state"):
+                self.result = None
+            elif sql.startswith("SELECT inventory_generation"):
+                self.result = {
+                    "inventory_generation": 7,
+                    "indexed_generation": 7 if state.index_complete else None,
+                    "enforced": False,
+                }
+            elif sql.startswith("SELECT uf.id FROM uploaded_files"):
+                self.result = None if state.index_present else ("synthetic-file",)
+            elif sql.startswith("INSERT INTO file_private_conflict_index"):
+                state.index_present = True
+                self.result = None
+            elif sql.startswith("DELETE FROM file_private_conflict_names"):
+                self.result = None
+            elif sql.startswith("INSERT INTO file_private_conflict_names"):
+                self.result = None
+            elif sql.startswith("UPDATE file_private_conflict_state"):
+                state.index_complete = "indexed_generation=inventory_generation" in sql
+                self.result = None
+            else:
+                raise AssertionError(sql)
+
+        def fetchone(self):
+            return self.result
+
+    cur = IndexCursor()
+    with pytest.raises(HTTPException) as incomplete:
+        mark_index_complete(cur, vault_id=PRINCIPAL["vault_id"])
+    assert incomplete.value.detail == "private_file_index_incomplete"
+
+    row = {
+        "file_id": "synthetic-file", "manifest_ciphertext": b"sealed-manifest",
+        "saved_name_override_ciphertext": state.ciphertext,
+        "name_version": state.version, "total_bytes": 3,
+        "chunk_size": 3, "chunk_count": 1,
+        "migration_metadata_version": 1,
+        "lifecycle_state": "client_v2_ready",
+        "verification_state": "client_verified", "migrating_legacy": False,
+        "marker_size": 3, "upload_status": "complete",
+        "storage_mode": "inline", "has_legacy": False,
+        "file_name": None, "saved_name": None,
+        "content_type": None, "relative_path": None,
+    }
+    revision = ready_file_source_revision(
+        row, vault_id=PRINCIPAL["vault_id"], file_id="synthetic-file",
+    )
+    index_ready_file(
+        cur, vault_id=PRINCIPAL["vault_id"], file_id="synthetic-file",
+        source_row=row, expected_source_revision=revision,
+        content_token=b"c" * 32, name_tokens=(b"n" * 32,),
+    )
+    assert mark_index_complete(cur, vault_id=PRINCIPAL["vault_id"]) == 7
+    assert state.index_present is True
+    assert state.index_complete is True
+
+
+def test_enforced_private_index_blocks_ciphertext_only_rename_before_proof(
+    rename_gate,
+):
+    state, consume = rename_gate
+    state.index_enforced = True
+    with pytest.raises(HTTPException) as blocked:
+        routes.rename_ready_file("synthetic-file", _payload(), PRINCIPAL)
+    assert blocked.value.detail == "private_file_rename_index_maintenance_required"
+    assert state.version == 0 and state.ciphertext is None
+    assert state.index_present is True and state.index_complete is True
+    consume.assert_not_called()
+
+
+def test_revoked_session_cannot_rename_or_spend_proof(rename_gate):
+    state, consume = rename_gate
+    state.session_current = False
+    with pytest.raises(HTTPException) as blocked:
+        routes.rename_ready_file("synthetic-file", _payload(), PRINCIPAL)
+    assert blocked.value.status_code == 401
+    assert blocked.value.detail == "session_expired"
+    assert state.version == 0 and state.index_present is True
+    consume.assert_not_called()
 
 
 def test_two_concurrent_renames_with_same_version_have_one_winner(rename_gate):
@@ -253,7 +378,7 @@ def test_manifest_and_inventory_read_back_same_override(monkeypatch, rename_gate
 
     monkeypatch.setattr(inventory, "_require_inventory", lambda *_: None)
     monkeypatch.setattr(inventory, "get_db", InventoryConn)
-    listed = inventory.file_metadata_inventory("", 100, PRINCIPAL)
+    listed = inventory.file_metadata_inventory("", 100, False, PRINCIPAL)
     assert listed["records"][0]["saved_name_ciphertext"] == encoded
     assert listed["records"][0]["name_version"] == 1
 
