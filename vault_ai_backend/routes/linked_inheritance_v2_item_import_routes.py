@@ -621,18 +621,18 @@ def _legacy_copies(
     source_bytes = inventory["ciphertext_bytes"] + sum(
         len(row[field].encode("utf-8"))
         for row in inventory["items"] for field in ("item_type", "service")
+        if field in row
     )
     if destination_bytes > source_bytes + len(copies) * _MAX_DESTINATION_GROWTH:
         raise HTTPException(status_code=409, detail="item_copy_exceeds_bound")
     return copies
 
 
-@router.post("/inheritance/old-link-v2/legacy-item-copy")
-def copy_linked_v2_legacy_item(
+def _copy_bounded_source_item(
     payload: CopyLinkedV2LegacyItem,
-    principal: SessionPrincipal = Depends(verify_trusted_device),
+    principal: SessionPrincipal,
+    inventory_loader,
 ) -> dict:
-    _legacy_copy_enabled()
     require_content_write(principal)
     destination = _destination_fields(payload)
     beneficiary_id = str(principal["vault_id"])
@@ -643,7 +643,7 @@ def copy_linked_v2_legacy_item(
             cur, link_id=payload.beneficiary_link_id,
             beneficiary_vault_id=beneficiary_id,
         )
-        inventory = _legacy_item_inventory(
+        inventory = inventory_loader(
             cur, link_id=payload.beneficiary_link_id,
             link=link, stage=stage,
         )
@@ -659,9 +659,16 @@ def copy_linked_v2_legacy_item(
         if (source is None or payload.source_row_sha256 !=
                 source["source_row_sha256"]):
             raise HTTPException(status_code=409, detail="source_item_changed")
-        source_bytes = sum(len(value.encode("utf-8")) for value in (
-            source["encrypted_data"], source["item_type"], source["service"],
-        ))
+        if source.get("source_kind") == "private":
+            source_bytes = sum(
+                len(_decode(source[field], low=29, high=_MAX_FIELD_BYTES))
+                for field in _ITEM_FIELDS
+            )
+        else:
+            source_bytes = sum(len(value.encode("utf-8")) for value in (
+                source["encrypted_data"], source["item_type"],
+                source["service"],
+            ))
         if sum(len(destination[field]) for field in _ITEM_FIELDS) > (
                 source_bytes + _MAX_DESTINATION_GROWTH):
             raise HTTPException(status_code=409, detail="item_copy_exceeds_bound")
@@ -755,14 +762,24 @@ def copy_linked_v2_legacy_item(
         conn.close()
 
 
-@router.get("/inheritance/old-link-v2/{link_id}/legacy-item-copies")
-def readback_linked_v2_legacy_item_copies(
-    link_id: int,
-    response: Response,
-    source_inventory_sha256: str = Query(pattern=r"^[A-Za-z0-9_-]{43}$"),
+@router.post("/inheritance/old-link-v2/legacy-item-copy")
+def copy_linked_v2_legacy_item(
+    payload: CopyLinkedV2LegacyItem,
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     _legacy_copy_enabled()
+    return _copy_bounded_source_item(
+        payload, principal, _legacy_item_inventory,
+    )
+
+
+def _readback_bounded_source_item_copies(
+    link_id: int,
+    response: Response,
+    source_inventory_sha256: str,
+    principal: SessionPrincipal,
+    inventory_loader,
+) -> dict:
     if link_id <= 0:
         raise HTTPException(status_code=404, detail="not_found")
     if (not isinstance(source_inventory_sha256, str) or
@@ -776,7 +793,7 @@ def readback_linked_v2_legacy_item_copies(
             cur, link_id=link_id, beneficiary_vault_id=beneficiary_id,
         )
         enforce_export_rate_limit(vault_id=beneficiary_id)
-        inventory = _legacy_item_inventory(
+        inventory = inventory_loader(
             cur, link_id=link_id, link=link, stage=stage,
         )
         if inventory["source_inventory_sha256"] != source_inventory_sha256:
@@ -809,6 +826,20 @@ def readback_linked_v2_legacy_item_copies(
         }
     finally:
         conn.close()
+
+
+@router.get("/inheritance/old-link-v2/{link_id}/legacy-item-copies")
+def readback_linked_v2_legacy_item_copies(
+    link_id: int,
+    response: Response,
+    source_inventory_sha256: str = Query(pattern=r"^[A-Za-z0-9_-]{43}$"),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    _legacy_copy_enabled()
+    return _readback_bounded_source_item_copies(
+        link_id, response, source_inventory_sha256, principal,
+        _legacy_item_inventory,
+    )
 
 
 @router.post("/inheritance/old-link-v2/item-copy")
