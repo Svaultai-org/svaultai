@@ -36,6 +36,7 @@ from routes.linked_inheritance_v2_upgrade_routes import (
 router = APIRouter(tags=["linked-inheritance-v2-item-import"])
 FLAG_NAME = "VAULTAI_ZK_LINKED_BENEFICIARY_ITEM_IMPORT_ENABLED"
 LEGACY_EXPORT_FLAG_NAME = "VAULTAI_ZK_LINKED_BENEFICIARY_LEGACY_ITEM_EXPORT_ENABLED"
+LEGACY_COPY_FLAG_NAME = "VAULTAI_ZK_LINKED_BENEFICIARY_LEGACY_ITEM_COPY_ENABLED"
 _MAX_ITEMS = 100
 _MAX_SOURCE_BYTES = 1024 * 1024
 _MAX_FIELD_BYTES = 128 * 1024
@@ -74,6 +75,21 @@ class CopyLinkedV2Item(BaseModel):
     content_scope: Literal["saved_items_only"]
 
 
+class CopyLinkedV2LegacyItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    beneficiary_link_id: int = Field(gt=0)
+    source_item_id: int = Field(gt=0)
+    stage_revision: int = Field(gt=0)
+    offer_commitment: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    source_inventory_sha256: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    source_row_sha256: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    item_type_ciphertext: str = Field(min_length=1, max_length=175000)
+    service_ciphertext: str = Field(min_length=1, max_length=175000)
+    payload_ciphertext: str = Field(min_length=1, max_length=175000)
+    title_lookup_hash: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    content_scope: Literal["legacy_saved_items_only"]
+
+
 class ConfirmLinkedV2ItemRestart(BaseModel):
     """A separate, explicit destructive action after a prepared review."""
 
@@ -109,6 +125,12 @@ def _legacy_export_enabled() -> None:
     # complete client-side decrypt, re-encrypt, and readback implementation.
     _readback_proof_enabled()
     if os.getenv(LEGACY_EXPORT_FLAG_NAME, "false").strip().lower() != "true":
+        raise HTTPException(status_code=404, detail="not_found")
+
+
+def _legacy_copy_enabled() -> None:
+    _legacy_export_enabled()
+    if os.getenv(LEGACY_COPY_FLAG_NAME, "false").strip().lower() != "true":
         raise HTTPException(status_code=404, detail="not_found")
 
 
@@ -304,7 +326,9 @@ def _legacy_item_inventory(
     }
 
 
-def _destination_fields(payload: CopyLinkedV2Item) -> dict[str, bytes]:
+def _destination_fields(
+    payload: CopyLinkedV2Item | CopyLinkedV2LegacyItem,
+) -> dict[str, bytes]:
     fields = {}
     for field in _ITEM_FIELDS:
         raw = _decode(getattr(payload, field), low=29, high=_MAX_FIELD_BYTES)
@@ -513,6 +537,262 @@ def export_linked_v2_legacy_items(
         )
         response.headers["Cache-Control"] = "no-store"
         return result
+    finally:
+        conn.close()
+
+
+def _legacy_copies(
+    cur, *, link_id: int, inventory: dict, beneficiary_vault_id: str,
+    for_update: bool,
+) -> list[dict]:
+    lock = "UPDATE" if for_update else "SHARE"
+    cur.execute(
+        f"""SELECT c.source_item_id,c.beneficiary_item_id,
+                   c.beneficiary_vault_id,c.stage_revision,
+                   c.source_inventory_sha256,c.source_row_sha256,
+                   c.destination_ciphertext_sha256,
+                   v.vault_id AS destination_vault_id,
+                   v.item_type,v.service,v.encrypted_data,
+                   v.title_revision,v.legacy_item_rename_active,
+                   v.title_lookup_hash,v.item_type_ciphertext,
+                   v.service_ciphertext,v.payload_ciphertext
+              FROM linked_inheritance_v2_item_copies c
+              JOIN vault_items v ON v.id=c.beneficiary_item_id
+             WHERE c.old_link_id=%s ORDER BY c.source_item_id
+             FOR {lock} OF c,v""",
+        (link_id,),
+    )
+    copies = cur.fetchall() or []
+    sources = {row["item_id"]: row for row in inventory["items"]}
+    if len(copies) > len(sources):
+        raise HTTPException(status_code=409, detail="legacy_item_copy_mismatch")
+    seen = set()
+    destination_bytes = 0
+    for copy in copies:
+        source_id = copy["source_item_id"]
+        source = sources.get(source_id)
+        if (source is None or source_id in seen or
+                str(copy["beneficiary_vault_id"]) != beneficiary_vault_id or
+                str(copy["destination_vault_id"]) != beneficiary_vault_id or
+                int(copy["stage_revision"]) != inventory["stage_revision"] or
+                copy["source_inventory_sha256"] !=
+                inventory["source_inventory_sha256"] or
+                bytes(copy["source_row_sha256"]) !=
+                _decode(source["source_row_sha256"], low=32, high=32) or
+                copy.get("item_type") is not None or
+                copy.get("service") is not None or
+                copy.get("encrypted_data") is not None):
+            raise HTTPException(status_code=409, detail="legacy_item_copy_mismatch")
+        seen.add(source_id)
+        title_hash = copy.get("title_lookup_hash")
+        original_hash = copy.get("destination_ciphertext_sha256")
+        if (title_hash is None or len(bytes(title_hash)) != 32 or
+                original_hash is None or len(bytes(original_hash)) != 32):
+            raise HTTPException(status_code=409, detail="legacy_item_copy_mismatch")
+        for field in _ITEM_FIELDS:
+            raw = copy.get(field)
+            if (raw is None or not 29 <= len(bytes(raw)) <= _MAX_FIELD_BYTES or
+                    bytes(raw)[0] != 1):
+                raise HTTPException(
+                    status_code=409, detail="legacy_item_copy_mismatch",
+                )
+            destination_bytes += len(bytes(raw))
+        expected_hash = _destination_hash(
+            link_id=link_id, source_item_id=source_id,
+            beneficiary_vault_id=beneficiary_vault_id,
+            beneficiary_item_id=copy["beneficiary_item_id"], row=copy,
+        )
+        if not hmac.compare_digest(bytes(original_hash), expected_hash):
+            raise HTTPException(status_code=409, detail="legacy_item_copy_changed")
+    source_bytes = inventory["ciphertext_bytes"] + sum(
+        len(row[field].encode("utf-8"))
+        for row in inventory["items"] for field in ("item_type", "service")
+    )
+    if destination_bytes > source_bytes + len(copies) * _MAX_DESTINATION_GROWTH:
+        raise HTTPException(status_code=409, detail="item_copy_exceeds_bound")
+    return copies
+
+
+@router.post("/inheritance/old-link-v2/legacy-item-copy")
+def copy_linked_v2_legacy_item(
+    payload: CopyLinkedV2LegacyItem,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    _legacy_copy_enabled()
+    require_content_write(principal)
+    destination = _destination_fields(payload)
+    beneficiary_id = str(principal["vault_id"])
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        link, stage = _context(
+            cur, link_id=payload.beneficiary_link_id,
+            beneficiary_vault_id=beneficiary_id,
+        )
+        inventory = _legacy_item_inventory(
+            cur, link_id=payload.beneficiary_link_id,
+            link=link, stage=stage,
+        )
+        if (payload.stage_revision != inventory["stage_revision"] or
+                payload.offer_commitment != inventory["offer_commitment"] or
+                payload.source_inventory_sha256 !=
+                inventory["source_inventory_sha256"]):
+            raise HTTPException(status_code=409, detail="source_inventory_changed")
+        source = next(
+            (row for row in inventory["items"] if
+             row["item_id"] == payload.source_item_id), None,
+        )
+        if (source is None or payload.source_row_sha256 !=
+                source["source_row_sha256"]):
+            raise HTTPException(status_code=409, detail="source_item_changed")
+        source_bytes = sum(len(value.encode("utf-8")) for value in (
+            source["encrypted_data"], source["item_type"], source["service"],
+        ))
+        if sum(len(destination[field]) for field in _ITEM_FIELDS) > (
+                source_bytes + _MAX_DESTINATION_GROWTH):
+            raise HTTPException(status_code=409, detail="item_copy_exceeds_bound")
+        prior = _legacy_copies(
+            cur, link_id=payload.beneficiary_link_id,
+            inventory=inventory, beneficiary_vault_id=beneficiary_id,
+            for_update=True,
+        )
+        existing = next(
+            (row for row in prior if
+             row["source_item_id"] == payload.source_item_id), None,
+        )
+        if existing is not None:
+            conn.commit()
+            return {
+                "beneficiary_link_id": payload.beneficiary_link_id,
+                "source_item_id": payload.source_item_id,
+                "beneficiary_item_id": int(existing["beneficiary_item_id"]),
+                "source_inventory_sha256": inventory["source_inventory_sha256"],
+                "created": False,
+                "legacy_package_preserved": True,
+            }
+        cur.execute(
+            """SELECT 1 FROM vault_items
+                WHERE vault_id=%s AND encrypted_data IS NULL
+                  AND item_type_ciphertext IS NOT NULL
+                  AND service_ciphertext IS NOT NULL
+                  AND payload_ciphertext IS NOT NULL
+                  AND title_lookup_hash IS NULL LIMIT 1""",
+            (beneficiary_id,),
+        )
+        if cur.fetchone():
+            raise HTTPException(
+                status_code=409, detail="beneficiary_item_index_required",
+            )
+        cur.execute(
+            """INSERT INTO vault_items (
+                  vault_id,item_type,service,encrypted_data,
+                  item_type_ciphertext,service_ciphertext,
+                  payload_ciphertext,title_lookup_hash)
+                VALUES (%s,NULL,NULL,NULL,%s,%s,%s,%s)
+                RETURNING id,title_revision,legacy_item_rename_active""",
+            (beneficiary_id,
+             *(destination[field] for field in _ITEM_FIELDS),
+             destination["title_lookup_hash"]),
+        )
+        inserted = cur.fetchone()
+        item_id = int(inserted["id"])
+        original_hash = _destination_hash(
+            link_id=payload.beneficiary_link_id,
+            source_item_id=payload.source_item_id,
+            beneficiary_vault_id=beneficiary_id,
+            beneficiary_item_id=item_id,
+            row={
+                **destination,
+                "item_type": None, "service": None, "encrypted_data": None,
+                "title_revision": inserted["title_revision"],
+                "legacy_item_rename_active":
+                    inserted["legacy_item_rename_active"],
+            },
+        )
+        cur.execute(
+            """INSERT INTO linked_inheritance_v2_item_copies (
+                  old_link_id,source_item_id,beneficiary_vault_id,
+                  beneficiary_item_id,stage_revision,
+                  source_inventory_sha256,source_row_sha256,
+                  destination_ciphertext_sha256)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (payload.beneficiary_link_id, payload.source_item_id,
+             beneficiary_id, item_id, payload.stage_revision,
+             inventory["source_inventory_sha256"],
+             _decode(source["source_row_sha256"], low=32, high=32),
+             original_hash),
+        )
+        conn.commit()
+        return {
+            "beneficiary_link_id": payload.beneficiary_link_id,
+            "source_item_id": payload.source_item_id,
+            "beneficiary_item_id": item_id,
+            "source_inventory_sha256": inventory["source_inventory_sha256"],
+            "created": True,
+            "legacy_package_preserved": True,
+        }
+    except UniqueViolation as exc:
+        conn.rollback()
+        raise HTTPException(status_code=409, detail="item_copy_conflict") from exc
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@router.get("/inheritance/old-link-v2/{link_id}/legacy-item-copies")
+def readback_linked_v2_legacy_item_copies(
+    link_id: int,
+    response: Response,
+    source_inventory_sha256: str = Query(pattern=r"^[A-Za-z0-9_-]{43}$"),
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    _legacy_copy_enabled()
+    if link_id <= 0:
+        raise HTTPException(status_code=404, detail="not_found")
+    if (not isinstance(source_inventory_sha256, str) or
+            not re.fullmatch(r"[A-Za-z0-9_-]{43}", source_inventory_sha256)):
+        raise HTTPException(status_code=400, detail="invalid_source_inventory")
+    beneficiary_id = str(principal["vault_id"])
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        link, stage = _context(
+            cur, link_id=link_id, beneficiary_vault_id=beneficiary_id,
+        )
+        enforce_export_rate_limit(vault_id=beneficiary_id)
+        inventory = _legacy_item_inventory(
+            cur, link_id=link_id, link=link, stage=stage,
+        )
+        if inventory["source_inventory_sha256"] != source_inventory_sha256:
+            raise HTTPException(status_code=409, detail="source_inventory_changed")
+        copies = _legacy_copies(
+            cur, link_id=link_id, inventory=inventory,
+            beneficiary_vault_id=beneficiary_id, for_update=False,
+        )
+        rendered = [
+            {
+                "source_item_id": int(row["source_item_id"]),
+                "beneficiary_item_id": int(row["beneficiary_item_id"]),
+                "source_row_sha256": _b64(bytes(row["source_row_sha256"])),
+                "title_lookup_hash": _b64(bytes(row["title_lookup_hash"])),
+                **{field: _b64(bytes(row[field])) for field in _ITEM_FIELDS},
+            }
+            for row in copies
+        ]
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            **{key: inventory[key] for key in (
+                "beneficiary_link_id", "owner_vault_id",
+                "beneficiary_vault_id", "stage_revision", "offer_commitment",
+                "content_scope", "owner_content_complete",
+                "source_inventory_sha256", "item_count",
+            )},
+            "copies": rendered,
+            "all_items_copied": len(rendered) == inventory["item_count"],
+            "legacy_package_preserved": True,
+        }
     finally:
         conn.close()
 

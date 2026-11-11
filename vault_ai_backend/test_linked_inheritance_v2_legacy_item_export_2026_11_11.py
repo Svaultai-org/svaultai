@@ -7,6 +7,7 @@ from copy import deepcopy
 
 import pytest
 from fastapi import HTTPException, Response
+from pydantic import ValidationError
 
 from routes import linked_inheritance_v2_item_import_routes as items
 from test_linked_inheritance_v2_item_import_2026_11_09 import (
@@ -47,7 +48,29 @@ class LegacyCursor(ItemCursor):
 
 
 def _install_legacy_cursor(db, monkeypatch):
-    monkeypatch.setattr(db, "cursor", lambda **_kwargs: LegacyCursor(db))
+    original = db.cursor
+
+    def cursor(**kwargs):
+        original(**kwargs)  # Keep the fixture's transaction snapshot.
+        return LegacyCursor(db)
+
+    monkeypatch.setattr(db, "cursor", cursor)
+
+
+def _copy_payload(exported: dict) -> items.CopyLinkedV2LegacyItem:
+    return items.CopyLinkedV2LegacyItem(
+        beneficiary_link_id=41,
+        source_item_id=7,
+        stage_revision=1,
+        offer_commitment=exported["offer_commitment"],
+        source_inventory_sha256=exported["source_inventory_sha256"],
+        source_row_sha256=exported["items"][0]["source_row_sha256"],
+        item_type_ciphertext=items._b64(b"\x01" + b"t" * 39),
+        service_ciphertext=items._b64(b"\x01" + b"s" * 39),
+        payload_ciphertext=items._b64(b"\x01" + b"p" * 79),
+        title_lookup_hash=items._b64(b"h" * 32),
+        content_scope="legacy_saved_items_only",
+    )
 
 
 def test_older_item_export_is_default_off_and_release_bound(ready, monkeypatch):
@@ -128,3 +151,103 @@ def test_older_item_export_rejects_malformed_and_oversized_rows(
     with pytest.raises(HTTPException) as too_many:
         _export(db)
     assert too_many.value.status_code == 409
+
+
+def test_legacy_copy_is_default_off_and_rejects_plaintext_fields(
+    ready, monkeypatch,
+):
+    db = ready
+    db.source = [_old_item()]
+    _install_legacy_cursor(db, monkeypatch)
+    monkeypatch.setenv(items.LEGACY_EXPORT_FLAG_NAME, "true")
+    exported, _ = _export(db)
+    payload = _copy_payload(exported)
+    with pytest.raises(HTTPException) as disabled:
+        items.copy_linked_v2_legacy_item(payload, BENEFICIARY)
+    assert disabled.value.status_code == 404
+    with pytest.raises(ValidationError):
+        items.CopyLinkedV2LegacyItem(**{
+            **payload.model_dump(), "pin": "123456",
+        })
+    with pytest.raises(ValidationError):
+        items.CopyLinkedV2LegacyItem(**{
+            **payload.model_dump(), "service": "plaintext label",
+        })
+
+
+def test_legacy_copy_is_bounded_retry_safe_and_readback_is_exact(
+    ready, monkeypatch,
+):
+    db = ready
+    db.source = [_old_item()]
+    original = deepcopy(db.source)
+    _install_legacy_cursor(db, monkeypatch)
+    monkeypatch.setenv(items.LEGACY_EXPORT_FLAG_NAME, "true")
+    monkeypatch.setenv(items.LEGACY_COPY_FLAG_NAME, "true")
+    exported, _ = _export(db)
+    payload = _copy_payload(exported)
+    first = items.copy_linked_v2_legacy_item(payload, BENEFICIARY)
+    assert first["created"] is True
+    assert len(db.destination) == len(db.copies) == 1
+    assert db.source == original
+    again = items.copy_linked_v2_legacy_item(payload, BENEFICIARY)
+    assert again["created"] is False
+    assert again["beneficiary_item_id"] == first["beneficiary_item_id"]
+    response = Response()
+    readback = items.readback_linked_v2_legacy_item_copies(
+        41, response, exported["source_inventory_sha256"], BENEFICIARY,
+    )
+    assert response.headers["Cache-Control"] == "no-store"
+    assert readback["all_items_copied"] is True
+    assert readback["content_scope"] == "legacy_saved_items_only"
+    assert readback["copies"][0]["payload_ciphertext"] == (
+        payload.payload_ciphertext
+    )
+    assert "encrypted_data" not in str(readback)
+
+    db.destination[first["beneficiary_item_id"]]["payload_ciphertext"] = (
+        b"\x01" + b"x" * 79
+    )
+    with pytest.raises(HTTPException) as altered:
+        items.copy_linked_v2_legacy_item(payload, BENEFICIARY)
+    assert altered.value.status_code == 409
+    with pytest.raises(HTTPException) as readback_altered:
+        items.readback_linked_v2_legacy_item_copies(
+            41, Response(), exported["source_inventory_sha256"], BENEFICIARY,
+        )
+    assert readback_altered.value.status_code == 409
+
+
+def test_legacy_copy_stops_on_revocation_stale_source_or_oversized_write(
+    ready, monkeypatch,
+):
+    db = ready
+    db.source = [_old_item()]
+    _install_legacy_cursor(db, monkeypatch)
+    monkeypatch.setenv(items.LEGACY_EXPORT_FLAG_NAME, "true")
+    monkeypatch.setenv(items.LEGACY_COPY_FLAG_NAME, "true")
+    exported, _ = _export(db)
+    payload = _copy_payload(exported)
+    db.link["status"] = "revoked"
+    with pytest.raises(HTTPException) as revoked:
+        items.copy_linked_v2_legacy_item(payload, BENEFICIARY)
+    assert revoked.value.status_code == 404
+    db.link["status"] = "linked"
+    db.stage["beneficiary_readback_revision"] = None
+    with pytest.raises(HTTPException) as receipt:
+        items.copy_linked_v2_legacy_item(payload, BENEFICIARY)
+    assert receipt.value.status_code == 409
+    db.stage["beneficiary_readback_revision"] = 1
+    db.source = [_old_item(payload=b"changed")]
+    with pytest.raises(HTTPException) as changed:
+        items.copy_linked_v2_legacy_item(payload, BENEFICIARY)
+    assert changed.value.status_code == 409
+    db.source = [_old_item()]
+    too_large = items.CopyLinkedV2LegacyItem(**{
+        **payload.model_dump(),
+        "payload_ciphertext": items._b64(b"\x01" + b"x" * 5000),
+    })
+    with pytest.raises(HTTPException) as oversized:
+        items.copy_linked_v2_legacy_item(too_large, BENEFICIARY)
+    assert oversized.value.status_code == 409
+    assert db.destination == {}
