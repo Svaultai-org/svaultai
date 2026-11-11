@@ -194,9 +194,25 @@ def _publish():
     return route.PublishNewFile(confirm=True)
 
 
+def _assert_ready_file_lock_order(statements):
+    vault = next(i for i, sql in enumerate(statements)
+                 if sql.startswith("select ") and "from vaults" in sql
+                 and "for update" in sql)
+    session = next(i for i, sql in enumerate(statements)
+                   if sql.startswith("select 1 from auth_sessions"))
+    advisory = next(i for i, sql in enumerate(statements)
+                    if sql.startswith("select pg_advisory_xact_lock"))
+    file_row = next(i for i, sql in enumerate(statements)
+                    if "from file_v2_records" in sql and "for update" in sql)
+    marker = next(i for i, sql in enumerate(statements)
+                  if "from uploaded_files" in sql and "for update" in sql)
+    assert vault < session < advisory < file_row < marker
+
+
 def test_publishes_exact_ciphertext_once_and_retries_without_double_charge(harness):
     db, _ = harness
     first = route.publish_new_file(FILE, _publish(), PRINCIPAL)
+    _assert_ready_file_lock_order(db.cur.sql)
     second = route.publish_new_file(FILE, _publish(), PRINCIPAL)
     assert first == {"file_id": FILE, "status": "published"}
     assert second == {"file_id": FILE, "status": "already_published"}
@@ -399,11 +415,13 @@ def test_cross_vault_and_unconfirmed_requests_do_not_write(harness):
 def test_new_file_delete_consumes_proof_and_decrements_once(harness):
     db, proof = harness
     route.publish_new_file(FILE, _publish(), PRINCIPAL)
+    db.cur.sql.clear()
     result = route.delete_new_file(
         FILE, route.DeleteNewFile(confirm=True, zk_proof_token="synthetic-proof"),
         PRINCIPAL,
     )
     assert result == {"file_id": FILE, "deleted": True}
+    _assert_ready_file_lock_order(db.cur.sql)
     proof.assert_called_once_with("synthetic-proof", PRINCIPAL, db.cur)
     assert db.record is None and db.marker is None
     assert db.vault_bytes == 100 and db.account_bytes == 100

@@ -28,6 +28,12 @@ class _Cursor:
         self.queries.append(statement)
         self.result = None
         self.rowcount = 0
+        if statement.startswith("select 1 from vaults"):
+            self.result = (1,)
+            return
+        if statement.startswith("select 1 from auth_sessions"):
+            self.result = (1,) if self.db.session_current else None
+            return
         if statement.startswith("select pg_advisory_xact_lock"):
             return
         if statement.startswith("select verification_state, lifecycle_state"):
@@ -65,6 +71,7 @@ class _Db:
         self.legacy_ciphertext_exists = False
         self.state = ("client_verified", "legacy_migration_retired")
         self.vault_bytes = 100
+        self.session_current = True
         self.cur = _Cursor(self)
         self.commits = 0
         self.rollbacks = 0
@@ -99,7 +106,7 @@ def delete_harness(monkeypatch):
     monkeypatch.setattr(route, "get_db", lambda: db)
     monkeypatch.setattr(route, "_enabled", lambda write=False: None)
     monkeypatch.setattr(route, "require_content_write", mock.Mock())
-    monkeypatch.setattr(route, "consume_recent_zk_proof", proof)
+    monkeypatch.setattr(route, "consume_recent_zk_proof_on_cursor", proof)
     monkeypatch.setattr(billing, "get_account_id_for_vault", lambda _: "synthetic-account")
     monkeypatch.setattr(billing, "bump_account_total_bytes", account_bytes)
     monkeypatch.setattr(vault_relationship_graph, "cleanup_relationships_for_file", relationships)
@@ -120,13 +127,20 @@ def test_confirmed_delete_removes_both_copies_and_updates_quota(delete_harness):
     assert result == {"file_id": FILE_ID, "deleted": True}
     assert db.v2_exists is False and db.marker_exists is False
     assert db.vault_bytes == 60 and db.commits == 1
-    proof.assert_called_once_with("synthetic-one-time-proof", PRINCIPAL)
+    proof.assert_called_once_with("synthetic-one-time-proof", PRINCIPAL, db.cur)
     account_bytes.assert_called_once_with("synthetic-account", -40)
     relationships.assert_called_once_with(PRINCIPAL["vault_id"], FILE_ID)
     active_entity.assert_called_once_with(PRINCIPAL["vault_id"], FILE_ID)
     cache.assert_called_once_with(vault_id=PRINCIPAL["vault_id"], event="file_deleted")
-    assert "for update" in db.cur.queries[1]
-    assert "for update" in db.cur.queries[2]
+    vault_lock = next(i for i, sql in enumerate(db.cur.queries)
+                      if sql.startswith("select 1 from vaults"))
+    advisory_lock = next(i for i, sql in enumerate(db.cur.queries)
+                         if sql.startswith("select pg_advisory_xact_lock"))
+    file_lock = next(i for i, sql in enumerate(db.cur.queries)
+                     if sql.startswith("select verification_state"))
+    marker_lock = next(i for i, sql in enumerate(db.cur.queries)
+                       if sql.startswith("select file_size"))
+    assert vault_lock < advisory_lock < file_lock < marker_lock
 
 
 def test_delete_needs_confirmation_before_database_or_proof(delete_harness):
@@ -146,6 +160,19 @@ def test_failed_proof_cannot_delete_verified_file(delete_harness):
         route.delete_verified_file(FILE_ID, _request(route), PRINCIPAL)
     assert raised.value.status_code == 401
     assert db.v2_exists and db.marker_exists and db.vault_bytes == 100
+    account_bytes.assert_not_called()
+
+
+def test_revoked_session_cannot_consume_proof_or_delete(delete_harness):
+    route, db, proof, account_bytes, *_ = delete_harness
+    db.session_current = False
+    with pytest.raises(HTTPException) as raised:
+        route.delete_verified_file(FILE_ID, _request(route), PRINCIPAL)
+    assert raised.value.status_code == 401
+    assert db.v2_exists and db.marker_exists and db.vault_bytes == 100
+    assert not any(sql.startswith("select pg_advisory_xact_lock")
+                   for sql in db.cur.queries)
+    proof.assert_not_called()
     account_bytes.assert_not_called()
 
 

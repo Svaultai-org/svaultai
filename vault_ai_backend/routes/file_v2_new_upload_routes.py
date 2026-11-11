@@ -232,14 +232,10 @@ def publish_new_file(
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
-                    (vault_id, file_id))
-        _require_inheritance_release_for_publish(
-            cur, payload=payload, beneficiary_vault_id=vault_id,
-        )
         # Login takes the vault row lock before it revokes the current
-        # session. Take that same lock before making a file visible, then
-        # recheck the session: a login may have superseded it since the
+        # session. All ready-file mutators take vault before the per-file
+        # advisory lock and file rows, so they cannot deadlock each other.
+        # Recheck the session: a login may have superseded it since the
         # request dependency first authenticated this request.
         cur.execute(
             "SELECT total_bytes, account_id FROM vaults "
@@ -256,6 +252,11 @@ def publish_new_file(
         )
         if cur.fetchone() is None:
             raise HTTPException(401, detail="session_expired")
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+                    (vault_id, file_id))
+        _require_inheritance_release_for_publish(
+            cur, payload=payload, beneficiary_vault_id=vault_id,
+        )
         cur.execute(
             "SELECT file_id, manifest_ciphertext, total_bytes, chunk_size, "
             "chunk_count, lifecycle_state, verification_state "
@@ -416,6 +417,21 @@ def delete_new_file(
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        # Match publish, ready-file rename, and ready-file indexing: vault
+        # and current session first, then the per-file lock and file rows.
+        cur.execute("SELECT account_id FROM vaults WHERE vault_id=%s FOR UPDATE",
+                    (vault_id,))
+        vault = cur.fetchone()
+        if vault is None:
+            raise HTTPException(404, detail="vault_not_found")
+        cur.execute(
+            "SELECT 1 FROM auth_sessions WHERE token_id=%s AND vault_id=%s "
+            "AND file_v2_reader_capable=TRUE AND revoked_at IS NULL "
+            "AND expires_at>NOW() LIMIT 1",
+            (principal["token_id"], vault_id),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(401, detail="session_expired")
         cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
                     (vault_id, file_id))
         cur.execute(
@@ -443,21 +459,6 @@ def delete_new_file(
                 marker["storage_mode"] != "inline" or
                 int(marker["file_size"]) != total):
             raise HTTPException(409, detail="file_v2_marker_inconsistent")
-        cur.execute("SELECT account_id FROM vaults WHERE vault_id=%s FOR UPDATE",
-                    (vault_id,))
-        vault = cur.fetchone()
-        if vault is None:
-            raise HTTPException(404, detail="vault_not_found")
-        # A newer login can revoke this session after the request dependency
-        # authenticates it. The vault row lock serializes this check with login.
-        cur.execute(
-            "SELECT 1 FROM auth_sessions WHERE token_id=%s AND vault_id=%s "
-            "AND file_v2_reader_capable=TRUE AND revoked_at IS NULL "
-            "AND expires_at>NOW() LIMIT 1",
-            (principal["token_id"], vault_id),
-        )
-        if cur.fetchone() is None:
-            raise HTTPException(401, detail="session_expired")
         account_id = str(vault["account_id"]) if vault["account_id"] else None
         if account_id is not None:
             cur.execute("SELECT account_id FROM accounts WHERE account_id=%s "

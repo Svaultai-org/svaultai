@@ -5,9 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from psycopg2.extras import RealDictCursor
 from auth_local import SessionPrincipal
 from device_gate import verify_trusted_device
-from routes.auth_zk_routes import (
-    consume_recent_zk_proof, consume_recent_zk_proof_on_cursor,
-)
+from routes.auth_zk_routes import consume_recent_zk_proof_on_cursor
 from vault_core import get_db, is_vault_zk_adopted
 from legacy_source_snapshot import (
     FILE_SOURCE_FIELDS, MAX_SOURCE_CIPHERTEXT_CHARS,
@@ -518,6 +516,21 @@ def delete_verified_file(
         raise HTTPException(400, detail='file_delete_confirmation_required')
     conn = get_db(); cur = conn.cursor()
     try:
+        # Keep the same lock order as ready-file indexing, publish, delete-new
+        # and rename. This also serializes session revocation with the delete.
+        cur.execute(
+            'SELECT 1 FROM vaults WHERE vault_id=%s FOR UPDATE',
+            (principal['vault_id'],),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(404, detail='vault_not_found')
+        cur.execute(
+            'SELECT 1 FROM auth_sessions WHERE token_id=%s AND vault_id=%s '
+            'AND revoked_at IS NULL AND expires_at>NOW() LIMIT 1',
+            (principal['token_id'], principal['vault_id']),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(401, detail='session_expired')
         cur.execute(
             'SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))',
             (principal['vault_id'], file_id),
@@ -542,7 +555,10 @@ def delete_verified_file(
             raise HTTPException(409, detail='legacy_file_marker_missing')
         if legacy[1]:
             raise HTTPException(409, detail='legacy_file_still_present')
-        consume_recent_zk_proof(payload.zk_proof_token, principal)
+        # A failed delete must not consume its one-use proof.
+        consume_recent_zk_proof_on_cursor(
+            payload.zk_proof_token, principal, cur,
+        )
         cur.execute(
             'DELETE FROM file_v2_records WHERE file_id=%s AND vault_id=%s',
             (file_id, principal['vault_id']),
