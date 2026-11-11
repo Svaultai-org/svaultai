@@ -513,8 +513,8 @@ String? localFileMetadataFact(
   return null;
 }
 
-/// Conservative local title matches. These are not semantic relationships or
-/// media-content matches; callers must describe them as similar saved names.
+/// Conservative local saved-name and text-word matches. These are not
+/// semantic relationships or media-content matches.
 class ZkLocalFileRelations {
   static final RegExp _words = RegExp(r'[a-z0-9]{4,}');
   static const _ignored = <String>{
@@ -539,18 +539,42 @@ class ZkLocalFileRelations {
       .where((word) => !_ignored.contains(word))
       .toSet();
 
+  // This is a weak word-overlap signal, never a semantic or factual claim.
+  // Cap terms so a large locally decrypted document cannot dominate a tap.
+  static const _textIgnored = <String>{
+    'about', 'after', 'again', 'also', 'another', 'could', 'from', 'have',
+    'into', 'more', 'other', 'same', 'some', 'that', 'their', 'them', 'there',
+    'these', 'this', 'those', 'very', 'were', 'what', 'when', 'where', 'which',
+    'with', 'would',
+  };
+
+  static Set<String> _textTerms(String text) => _words
+      .allMatches(text.toLowerCase())
+      .take(512)
+      .map((match) => match.group(0)!)
+      .where((word) => !_textIgnored.contains(word))
+      .toSet();
+
+  static int _sharedTextTerms(ZkLocalChatRecord a, ZkLocalChatRecord b) {
+    if (a.searchText.isEmpty || b.searchText.isEmpty) return 0;
+    return _textTerms(a.searchText).intersection(_textTerms(b.searchText)).length;
+  }
+
   static List<ZkLocalChatRecord> related(
     ZkLocalChatRecord anchor,
     List<ZkLocalChatRecord> files,
   ) {
     if (anchor.kind != ZkLocalChatKind.file) return const [];
     final anchorTerms = _titleTerms(anchor.title);
-    if (anchorTerms.isEmpty) return const [];
+    if (anchorTerms.isEmpty && anchor.searchText.isEmpty) return const [];
     final scored = <(ZkLocalChatRecord, int)>[];
     for (final file in files) {
       if (file.id == anchor.id || file.kind != ZkLocalChatKind.file) continue;
-      final count = anchorTerms.intersection(_titleTerms(file.title)).length;
-      if (count > 0) scored.add((file, count));
+      final titleCount = anchorTerms.intersection(_titleTerms(file.title)).length;
+      final textCount = _sharedTextTerms(anchor, file);
+      if (titleCount > 0 || textCount >= 2) {
+        scored.add((file, titleCount * 3 + (textCount > 5 ? 5 : textCount)));
+      }
     }
     scored.sort((a, b) {
       final byScore = b.$2.compareTo(a.$2);
@@ -567,6 +591,9 @@ class ZkLocalFileRelations {
     if (anchor.kind != ZkLocalChatKind.file) {
       throw ArgumentError('Related-file anchor must be a file');
     }
+    final hasTextMatch = matches.any(
+      (file) => _sharedTextTerms(anchor, file) >= 2,
+    );
     return <String, dynamic>{
       'anchor': <String, dynamic>{
         'file_id': anchor.id,
@@ -582,14 +609,24 @@ class ZkLocalFileRelations {
               'mime_type': file.mimeType ?? '',
               if (!file.legacyProofRequired) 'zk_private_chat_v2': true,
             },
-            'relationship_type': 'similar_saved_name',
+            'relationship_type': _sharedTextTerms(anchor, file) >= 2
+                ? 'shared_local_text_words'
+                : 'similar_saved_name',
             'confidence_label': 'weak',
-            'reasons': <String>['Similar saved name'],
+            'reasons': <String>[
+              if (_titleTerms(anchor.title)
+                  .intersection(_titleTerms(file.title)).isNotEmpty)
+                'Similar saved name',
+              if (_sharedTextTerms(anchor, file) >= 2)
+                'Shared words in locally available text',
+            ],
           },
       ],
       'message': matches.isEmpty
-          ? 'No files with similar saved names were found locally.'
-          : 'These files have similar saved names. Their contents were not compared.',
+          ? 'No related files were found in the bounded local search.'
+          : hasTextMatch
+              ? 'These files share saved-name or locally available text words. Their meaning was not verified.'
+              : 'These files have similar saved names. Their contents were not compared.',
       'is_complete': !incomplete,
     };
   }

@@ -440,7 +440,9 @@ void main() {
     );
   });
 
-  test('related-file lookup uses only client-decrypted V2 names', () async {
+  test('related-file lookup keeps V2 names and text on the device', () async {
+    const noteText = 'Synthetic quarterly tax records.';
+    final contentKey = await VaultKeyHierarchy(_mvk).fileContentKey();
     final manifests = <String, Map<String, dynamic>>{
       'front': await _fileManifest(
         id: 'front', name: 'holiday-front.jpg', mime: 'image/jpeg', size: 0,
@@ -449,7 +451,8 @@ void main() {
         id: 'back', name: 'holiday-back.jpg', mime: 'image/jpeg', size: 0,
       ),
       'note': await _fileManifest(
-        id: 'note', name: 'tax-note.txt', mime: 'text/plain', size: 32,
+        id: 'note', name: 'tax-note.txt', mime: 'text/plain',
+        size: utf8.encode(noteText).length,
       ),
     };
     final requested = <String>[];
@@ -470,6 +473,15 @@ void main() {
       if (path.endsWith('/manifest')) {
         return manifests[path.split('/')[3]];
       }
+      if (path == '/vault/file-v2/note/chunk/0') {
+        return {
+          'file_id': 'note',
+          'chunk_index': 0,
+          'ciphertext': b64urlEncode(
+            await aesGcmWrap(contentKey, utf8.encode(noteText)),
+          ),
+        };
+      }
       fail('Unexpected request: $path');
     }
 
@@ -485,9 +497,71 @@ void main() {
       '/vault/file-v2/front/manifest',
       '/vault/file-v2/back/manifest',
       '/vault/file-v2/note/manifest',
+      '/vault/file-v2/note/manifest',
+      '/vault/file-v2/note/chunk/0',
     ]);
     expect(requested.join(' '), isNot(contains('holiday')));
-    expect(requested.every((path) => !path.contains('/chunk/')), isTrue);
+    expect(jsonEncode(envelope), isNot(contains(noteText)));
+  });
+
+  test('related V2 text uses local word overlap without exposing text',
+      () async {
+    const first = 'Project Cedar appears in the private quarterly report.';
+    const second = 'The Cedar project is mentioned in the quarterly plan.';
+    const third = 'Gardening advice for flowers in spring.';
+    final texts = <String, String>{'first': first, 'second': second,
+      'third': third};
+    final contentKey = await VaultKeyHierarchy(_mvk).fileContentKey();
+    final manifests = <String, Map<String, dynamic>>{};
+    for (final entry in texts.entries) {
+      manifests[entry.key] = await _fileManifest(
+        id: entry.key,
+        name: '${entry.key}.txt',
+        mime: 'text/plain',
+        size: utf8.encode(entry.value).length,
+      );
+    }
+    final requests = <String>[];
+    Future<Object?> get(String path) async {
+      requests.add(path);
+      if (path == '/vault/file-v2') {
+        return {
+          'files': [
+            for (final id in manifests.keys)
+              {
+                'file_id': id,
+                'verification_state': 'client_verified',
+                'lifecycle_state': 'client_v2_ready',
+              },
+          ],
+        };
+      }
+      if (path.endsWith('/manifest')) return manifests[path.split('/')[3]];
+      final match = RegExp(r'^/vault/file-v2/([^/]+)/chunk/0$').firstMatch(path);
+      if (match != null) {
+        final id = match.group(1)!;
+        return {
+          'file_id': id,
+          'chunk_index': 0,
+          'ciphertext': b64urlEncode(
+            await aesGcmWrap(contentKey, utf8.encode(texts[id]!)),
+          ),
+        };
+      }
+      fail('Unexpected request: $path');
+    }
+    final envelope = await loadZkLocalRelatedFilesEnvelope(
+      fileId: 'first', mvk: _mvk, get: get, accessIsCurrent: () => true,
+    );
+    final relationships = envelope['relationships'] as List;
+    expect(relationships, hasLength(1));
+    final relation = relationships.single as Map;
+    expect((relation['file'] as Map)['file_id'], 'second');
+    expect(relation['relationship_type'], 'shared_local_text_words');
+    expect(relation['confidence_label'], 'weak');
+    expect(envelope['is_complete'], true);
+    expect(jsonEncode(envelope), isNot(contains('Cedar')));
+    expect(requests.join(' '), isNot(contains('quarterly')));
   });
 
   test('unverified file cannot fall back to a PIN-based relation', () async {

@@ -331,8 +331,12 @@ class ZkPrivateChatIndexLoader {
             textFiles < textFileLimit &&
             textBytes + manifest.totalBytes <= totalTextByteLimit) {
           final download = await reader.download(manifest.fileId);
-          _checkAccess();
-          content = utf8.decode(download.bytes);
+          try {
+            _checkAccess();
+            content = utf8.decode(download.bytes);
+          } finally {
+            download.bytes.fillRange(0, download.bytes.length, 0);
+          }
           fullTextRead = true;
           textFiles++;
           textBytes += manifest.totalBytes;
@@ -722,7 +726,7 @@ class ZkPrivateChatIndexLoader {
 }
 
 /// Suggest verified V2 files and, when offered, older files by comparing
-/// their saved names only on the current device.
+/// saved names and bounded locally available V2 text on the current device.
 /// No PIN, query, MVK, filename, or decrypted content is sent to the server.
 Future<Map<String, dynamic>> loadZkLocalRelatedFilesEnvelope({
   required String fileId,
@@ -739,7 +743,14 @@ Future<Map<String, dynamic>> loadZkLocalRelatedFilesEnvelope({
     legacyFileInventory: legacyFileInventory,
     includeLegacyDocumentsForRelations: true,
     includeSavedItems: false,
-    indexTextContent: false,
+    // Keep this tap bounded; only ciphertext crosses the wire and text is
+    // compared on the device. Older files without a proof reader stay at
+    // saved-name-only relations.
+    indexTextContent: true,
+    textFileLimit: 16,
+    textFileByteLimit: 64 * 1024,
+    extractedTextByteLimit: 64 * 1024,
+    totalTextByteLimit: 512 * 1024,
   ).load();
   if (!accessIsCurrent()) throw StateError('Vault access changed');
   final anchors = index.files.where((file) => file.id == fileId).toList();
