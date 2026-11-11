@@ -43,6 +43,8 @@ import 'services/linked_inheritance_v2_item_import.dart'
     as linked_inh_items;
 import 'services/linked_inheritance_v2_legacy_item_import.dart'
     as linked_inh_legacy_items;
+import 'services/linked_inheritance_v2_mixed_item_import.dart'
+    as linked_inh_mixed_items;
 import 'services/linked_inheritance_v2_memory_import.dart'
     as linked_inh_memory;
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
@@ -3606,6 +3608,91 @@ class VaultAIClient {
       ),
       readbackCopies: (id, digest) => request(
         'GET', Uri.parse('$baseUrl/inheritance/old-link-v2/$id/legacy-item-copies')
+            .replace(queryParameters: {'source_inventory_sha256': digest}),
+      ),
+      accessIsCurrent: () {
+        try {
+          checkAccess();
+          return true;
+        } catch (_) {
+          return false;
+        }
+      },
+    );
+  }
+
+  /// Copy the complete mixed saved-item inventory after release. The owner
+  /// keys and decrypted content stay on the beneficiary device.
+  Future<linked_inh_mixed_items.LinkedV2MixedSavedItemImport>
+      importLinkedOldInheritanceV2MixedSavedItems({
+    required String authToken,
+    required String beneficiaryVaultId,
+    required SecretKey beneficiaryMvk,
+    required linked_inh_release.ReleasedLinkedInheritanceV2 released,
+    required linked_inh_proof.LinkedReadbackReceipt readbackReceipt,
+    bool Function()? responseIsCurrent,
+  }) async {
+    const enabled = bool.fromEnvironment(
+      'VAULTAI_ENABLE_LINKED_INHERITANCE_MIXED_ITEM_IMPORT',
+      defaultValue: false,
+    );
+    if (!enabled) {
+      throw StateError('Mixed inheritance item import is unavailable');
+    }
+    void checkAccess() {
+      _requireSavedItemKey(beneficiaryMvk);
+      if (zk_mvk_store.ZkActiveMvk.currentVaultId() !=
+              beneficiaryVaultId ||
+          !identical(zk_mvk_store.ZkActiveMvk.current(), beneficiaryMvk) ||
+          responseIsCurrent?.call() == false) {
+        throw StateError('Beneficiary vault access changed');
+      }
+    }
+
+    Future<Map<String, dynamic>> request(
+      String method, Uri uri, [Map<String, dynamic>? body]
+    ) async {
+      checkAccess();
+      final transport = _sessionHttpWithGuard(checkAccess);
+      final response = method == 'POST'
+          ? await transport.post(
+              uri,
+              headers: _defaultHeaders(authToken: authToken, json: true),
+              body: jsonEncode(body ?? <String, dynamic>{}),
+            )
+          : await transport.get(
+              uri, headers: _defaultHeaders(authToken: authToken),
+            );
+      checkAccess();
+      if (response.statusCode != 200) {
+        _throwIfAuthExpired(response.statusCode, response.body);
+        _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        throw StateError('Mixed inheritance item copy unavailable');
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Invalid mixed inheritance response');
+      }
+      return decoded;
+    }
+
+    checkAccess();
+    return linked_inh_mixed_items.importReleasedLinkedMixedSavedItems(
+      released: released,
+      readbackReceipt: readbackReceipt,
+      beneficiaryVaultId: beneficiaryVaultId,
+      beneficiaryMvk: beneficiaryMvk,
+      fetchExport: (id) => request(
+        'GET', Uri.parse(
+          '$baseUrl/inheritance/old-link-v2/$id/mixed-vault-items',
+        ),
+      ),
+      copyItem: (body) => request(
+        'POST', Uri.parse('$baseUrl/inheritance/old-link-v2/mixed-item-copy'),
+        body,
+      ),
+      readbackCopies: (id, digest) => request(
+        'GET', Uri.parse('$baseUrl/inheritance/old-link-v2/$id/mixed-item-copies')
             .replace(queryParameters: {'source_inventory_sha256': digest}),
       ),
       accessIsCurrent: () {
